@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>GlowStack — Beauty & Fashion Creator Platform</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --b50:#fdf2f8;--b100:#fce7f3;--b200:#fbcfe8;--b300:#f9a8d4;--b400:#f472b6;--b500:#ec4899;--b600:#db2777;--b700:#be185d;
+  --s50:#f8fafc;--s100:#f1f5f9;--s200:#e2e8f0;--s300:#cbd5e1;--s400:#94a3b8;--s500:#64748b;--s600:#475569;--s700:#334155;--s800:#1e293b;--s900:#0f172a;
+}
+body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background: var(--s50); color: var(--s800); height: 100vh; overflow: hidden; }
+.app { display: flex; height: 100vh; }
+
+/* Sidebar */
+.sidebar { width: 250px; background: #fff; border-right: 1px solid var(--s200); display: flex; flex-direction: column; flex-shrink: 0; }
+.logo { display: flex; align-items: center; gap: 10px; padding: 20px; border-bottom: 1px solid var(--s100); }
+.logo-icon { width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, var(--b400), var(--b600)); display: flex; align-items: center; justify-content: center; color: #fff; font-size: 16px; }
+.logo h1 { font-size: 15px; font-weight: 700; line-height: 1.2; }
+.logo p { font-size: 11px; color: var(--s400); }
+nav { flex: 1; padding: 12px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+.nav-btn { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; font-size: 14px; font-weight: 500; color: var(--s600); cursor: pointer; border: none; background: none; width: 100%; text-align: left; transition: all .15s; }
+.nav-btn:hover { background: var(--b50); color: var(--b600); }
+.nav-btn.active { background: var(--b50); color: var(--b600); }
+.nav-btn svg { width: 20px; height: 20px; flex-shrink: 0; }
+
+/* Main */
+.main { flex: 1; overflow-y: auto; }
+.page { padding: 28px 32px; max-width: 1200px; margin: 0 auto; }
+.page h1 { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
+.page .subtitle { font-size: 14px; color: var(--s500); margin-bottom: 24px; }
+
+/* Cards */
+.card { background: #fff; border-radius: 14px; border: 1px solid var(--s200); box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+.card-hover { background: #fff; border-radius: 14px; border: 1px solid var(--s200); box-shadow: 0 1px 2px rgba(0,0,0,.04); transition: all .2s; cursor: pointer; }
+.card-hover:hover { box-shadow: 0 4px 12px rgba(0,0,0,.08); border-color: var(--b200); }
+
+/* Buttons */
+.btn-primary { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: 10px; background: var(--b500); color: #fff; font-weight: 500; font-size: 13px; border: none; cursor: pointer; }
+.btn-primary:hover { background: var(--b600); }
+.btn-secondary { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: 10px; background: #fff; color: var(--s700); font-weight: 500; font-size: 13px; border: 1px solid var(--s200); cursor: pointer; }
+.btn-ghost { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 10px; color: var(--s600); font-weight: 500; font-size: 13px; border: none; background: none; cursor: pointer; }
+.btn-ghost:hover { background: var(--s100); }
+.badge { display: inline-flex; align-items: center; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 500; }
+.input { width: 100%; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--s200); font-size: 14px; font-family: inherit; outline: none; }
+.input:focus { border-color: var(--b400); box-shadow: 0 0 0 3px var(--b100); }
+
+/* Grids */
+.grid { display: grid; gap: 16px; }
+.g2 { grid-template-columns: 1fr 1fr; }
+.g3 { grid-template-columns: 1fr 1fr 1fr; }
+.g4 { grid-template-columns: repeat(4, 1fr); }
+
+/* Platform Icon */
+.plat { width: 28px; height: 28px; border-radius: 7px; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 9px; flex-shrink: 0; }
+
+/* Charts (pure CSS) */
+.bar-chart { display: flex; align-items: flex-end; gap: 8px; height: 190px; padding-top: 8px; }
+.bar-col { display: flex; flex-direction: column; align-items: center; flex: 1; gap: 4px; }
+.bar { width: 100%; border-radius: 6px 6px 0 0; transition: height .5s; min-width: 20px; }
+.bar-lbl { font-size: 11px; color: var(--s400); }
+.bar-val { font-size: 10px; font-weight: 600; color: var(--s700); }
+.line-chart { position: relative; height: 200px; }
+.line-chart svg { width: 100%; height: 100%; }
+.donut { position: relative; width: 130px; height: 130px; margin: 0 auto; }
+.donut svg { transform: rotate(-90deg); }
+.donut-center { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; }
+
+/* Chat */
+.chat-wrap { height: 100vh; display: flex; flex-direction: column; }
+.chat-header { padding: 16px 32px; border-bottom: 1px solid var(--s200); background: #fff; }
+.chat-msgs { flex: 1; overflow-y: auto; padding: 24px 32px; }
+.chat-input { padding: 16px 32px; border-top: 1px solid var(--s200); background: #fff; display: flex; gap: 8px; }
+.bubble { max-width: 75%; border-radius: 16px; padding: 12px 16px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
+.bubble-user { background: var(--b500); color: #fff; border-bottom-right-radius: 4px; margin-left: auto; }
+.bubble-ai { background: #fff; border: 1px solid var(--s200); border-bottom-left-radius: 4px; }
+.msg-row { display: flex; gap: 10px; margin-bottom: 16px; }
+.msg-row.user { flex-direction: row-reverse; }
+.avatar { width: 32px; height: 32px; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 14px; }
+
+/* Insight */
+.insight { border-radius: 10px; padding: 14px; display: flex; gap: 12px; }
+.insight h4 { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+.insight p { font-size: 11px; color: var(--s600); line-height: 1.5; }
+
+/* Animations */
+@keyframes pulse { 0%,80%,100% { opacity:.3; } 40% { opacity:1; } }
+.typing-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--b300); display: inline-block; animation: pulse 1.4s infinite ease-in-out; }
+.typing-dot:nth-child(2) { animation-delay: .16s; }
+.typing-dot:nth-child(3) { animation-delay: .32s; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-thumb { background: var(--s200); border-radius: 3px; }
+
+/* Responsive */
+@media (max-width: 1024px) { .sidebar { display: none; } .g4 { grid-template-columns: 1fr 1fr; } .g3 { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .g4,.g2 { grid-template-columns: 1fr; } .page { padding: 16px; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+    <div class="logo">
+      <div class="logo-icon">✦</div>
+      <div><h1>GlowStack</h1><p>Beauty & Fashion</p></div>
+    </div>
+    <nav id="nav"></nav>
+    <div style="padding:12px;border-top:1px solid var(--s100)">
+      <button class="nav-btn" onclick="go('chat')" style="background:linear-gradient(90deg,var(--b50),#faf5ff);color:var(--b600)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3L12 3z"/></svg>
+        Ask AI anything
+      </button>
+    </div>
+  </aside>
+  <!-- MAIN -->
+  <main class="main" id="main"></main>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+// PURE VANILLA JS — ZERO DEPENDENCIES
+// ═══════════════════════════════════════════════════════════
+
+// ── State ─────────────────────────────────────────────────
+let currentPage = 'dashboard';
+let chatMessages = [
+  { role: 'ai', text: "Hey! 👋 I'm your AI assistant for GlowStack — your beauty & fashion creator platform at glowstack.net. I can help with analytics, content planning, media management, and more. What would you like to work on?" }
+];
+
+// ── Data ──────────────────────────────────────────────────
+const now = Date.now();
+const daysAgo = n => new Date(now - n*864e5);
+const fmt = n => n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'K':String(n);
+
+const platforms = [
+  {id:'instagram',name:'Instagram',bg:'linear-gradient(135deg,#833ab4,#e1306c,#f77737)',lbl:'IG',connected:true,user:'@glambycolby',followers:248000},
+  {id:'tiktok',name:'TikTok',bg:'#000',lbl:'TT',connected:true,user:'@glambycolby',followers:512000},
+  {id:'youtube',name:'YouTube',bg:'#FF0000',lbl:'YT',connected:true,user:'Glam by Colby',followers:89000},
+  {id:'pinterest',name:'Pinterest',bg:'#E60023',lbl:'Pi',connected:true,user:'@glambycolby',followers:67000},
+  {id:'facebook',name:'Facebook',bg:'#1877F2',lbl:'FB',connected:false},
+  {id:'shopmy',name:'ShopMy',bg:'#34d399',lbl:'SM',connected:true,user:'glambycolby'},
+  {id:'ltk',name:'LTK',bg:'#ec4899',lbl:'LK',connected:true,user:'glambycolby'},
+  {id:'walmart',name:'Walmart Creator',bg:'#3B82F6',lbl:'WM',connected:false},
+  {id:'amazon',name:'Amazon Influencer',bg:'#F97316',lbl:'AZ',connected:true,user:'glambycolby'},
+  {id:'google_photos',name:'Google Photos',bg:'#60A5FA',lbl:'GP',connected:true},
+];
+
+const posts = [
+  {id:'p1',platform:'instagram',type:'reel',caption:'Golden hour glam ✨ Full product list in bio!',likes:18420,comments:342,shares:1230,saves:2890,reach:285000,engagement:9.2,views:385000,revenue:0,date:daysAgo(2)},
+  {id:'p2',platform:'tiktok',type:'video',caption:'GRWM for date night 💋 this lip combo is EVERYTHING',likes:45200,comments:1820,shares:8900,saves:5200,reach:1200000,engagement:12.1,views:1650000,revenue:1240.50,date:daysAgo(4)},
+  {id:'p3',platform:'youtube',type:'video',caption:'Smokey Eye Tutorial — 5 min technique that WORKS',likes:4200,comments:580,shares:320,saves:1100,reach:68000,engagement:7.8,views:72000,revenue:890.25,date:daysAgo(7)},
+  {id:'p4',platform:'pinterest',type:'pin',caption:'Fall OOTD Inspiration — Cozy Knitwear Styling',likes:2800,comments:45,shares:4500,saves:8900,reach:125000,engagement:6.4,clicks:6200,revenue:2100,date:daysAgo(10)},
+  {id:'p5',platform:'instagram',type:'carousel',caption:'Sephora winter haul! Everything from the sale 🛍️',likes:12800,comments:890,shares:2100,saves:4300,reach:198000,engagement:8.1,revenue:3200.75,date:daysAgo(14)},
+  {id:'p6',platform:'tiktok',type:'video',caption:'Morning skincare routine — simple but effective 🧴',likes:32100,comments:1200,shares:5600,saves:3800,reach:890000,engagement:10.5,views:1100000,revenue:0,date:daysAgo(18)},
+];
+
+const media = [
+  {id:'m1',title:'Summer Glam Look — Golden Hour',type:'image',tags:['Makeup','Summer','Glam','Top Performer'],quality:94,desc:'Warm-toned summer makeup with golden eyeshadow and dewy skin',color:'#fce7f3',fav:true},
+  {id:'m2',title:'Morning Skincare Routine — Flatlay',type:'image',tags:['Skincare','Natural','Review'],quality:91,desc:'Organized flatlay of skincare products on marble',color:'#d1fae5'},
+  {id:'m3',title:'Fall OOTD — Central Park',type:'image',tags:['Fashion','OOTD'],quality:89,desc:'Full-body outfit shot in autumn park, layered knit',color:'#fef3c7',fav:true},
+  {id:'m4',title:'GRWM — Date Night',type:'video',tags:['GRWM','Makeup','Glam','Sponsored','Trending'],quality:96,desc:'Get ready with me, date night glam transformation',color:'#e0e7ff',fav:true,duration:'1:02'},
+  {id:'m5',title:'Chrome French Tips — Nail Art',type:'image',tags:['Nails','Trending'],quality:87,desc:'Close-up of chrome French tip manicure',color:'#f3e8ff'},
+  {id:'m6',title:'Sephora Winter Haul',type:'image',tags:['Haul','Makeup','Winter','Affiliate'],quality:88,desc:'Collection of Sephora beauty products',color:'#fee2e2'},
+  {id:'m7',title:'Smokey Eye Tutorial',type:'video',tags:['Tutorial','Makeup','Glam'],quality:93,desc:'Step-by-step smokey eye with blending close-ups',color:'#fce7f3',fav:true,duration:'3:05'},
+  {id:'m8',title:'Wash Day Routine — Curly Hair',type:'image',tags:['Haircare','Review'],quality:85,desc:'Curly hair wash day products and results',color:'#e0e7ff'},
+];
+
+const insights = [
+  {type:'opportunity',title:'TikTok GRWM outperforming by 3.2x',desc:'GRWM videos average 1.2M views vs 375K for other content. Consider increasing frequency.',action:'Schedule GRWM',bg:'#fdf2f8',border:'#fbcfe8',color:'#db2777'},
+  {type:'timing',title:'Optimal posting windows found',desc:'Instagram: Tue/Thu 6-8PM. TikTok: Fri 7-9PM. 3 of last 5 posts missed these windows.',action:'Adjust schedule',bg:'#eff6ff',border:'#bfdbfe',color:'#2563eb'},
+  {type:'revenue',title:'Pinterest driving highest $/impression',desc:'Pinterest generates $0.012/impression via LTK vs $0.004 on Instagram. OOTD converts 3.5x better.',action:'More Pinterest',bg:'#ecfdf5',border:'#a7f3d0',color:'#059669'},
+  {type:'trend',title:'"Clean girl" trending in your niche',desc:'#cleangirl saw 180% growth. Your "Natural" content historically performs well here.',action:'Plan content',bg:'#fffbeb',border:'#fde68a',color:'#d97706'},
+];
+
+const calEvents = [
+  {title:'Post: Wash Day Routine Reel',platform:'instagram',date:new Date(now+2*864e5),color:'#E1306C',status:'confirmed'},
+  {title:'Film: Spring Makeup Collection',date:new Date(now+4*864e5),color:'#a78bfa',status:'planned'},
+  {title:'TikTok: Spring Transition GRWM',platform:'tiktok',date:new Date(now+5*864e5),color:'#000',status:'planned',ai:true,reason:'Trending audio + audience peaks Friday 7PM'},
+  {title:'Brand Collab Deadline — Glossier',date:new Date(now+7*864e5),color:'#ef4444',status:'confirmed'},
+  {title:'YouTube: Full Skincare Routine',platform:'youtube',date:new Date(now+9*864e5),color:'#FF0000',status:'planned',ai:true,reason:'Skincare has 2.3x higher retention on your channel'},
+  {title:'Pinterest: Spring OOTD Board',platform:'pinterest',date:new Date(now+3*864e5),color:'#E60023',status:'planned'},
+];
+
+const chartData = Array.from({length:14},(_,i) => {
+  const d = new Date(now-(13-i)*864e5);
+  return { date:`${d.getMonth()+1}/${d.getDate()}`, followers:245000+i*100+Math.round(Math.random()*300), reach:Math.round(50+Math.random()*40), impressions:Math.round(80+Math.random()*60) };
+});
+
+const engData = [{name:'Instagram',val:9.2,fill:'#E1306C'},{name:'TikTok',val:12.1,fill:'#000'},{name:'YouTube',val:7.8,fill:'#FF0000'},{name:'Pinterest',val:6.4,fill:'#E60023'}];
+const revData = [{name:'ShopMy',val:4441,fill:'#34d399'},{name:'LTK',val:2100,fill:'#f472b6'},{name:'Amazon',val:890,fill:'#fb923c'}];
+
+// ── Helpers ───────────────────────────────────────────────
+function platIcon(id, size=28) {
+  const p = platforms.find(x=>x.id===id) || {bg:'#94a3b8',lbl:'?'};
+  return `<div class="plat" style="width:${size}px;height:${size}px;background:${p.bg};font-size:${size*.32}px">${p.lbl}</div>`;
+}
+
+function svgLine(data, lines, w=400, h=180) {
+  const allV = lines.flatMap(l => data.map(d => d[l.key]));
+  const max = Math.max(...allV), min = Math.min(...allV), range = max-min||1;
+  const pad = 10;
+  let svg = `<svg viewBox="0 0 ${w} ${h+30}" style="width:100%;height:100%">`;
+  // grid
+  for (let i=0;i<=4;i++) {
+    const y = pad+(h-2*pad)*(i/4);
+    svg += `<line x1="30" x2="${w}" y1="${y}" y2="${y}" stroke="#e2e8f0" stroke-width="0.5"/>`;
+    const v = Math.round(max - (i/4)*range);
+    svg += `<text x="26" y="${y+4}" text-anchor="end" fill="#94a3b8" font-size="9">${v>1000?(v/1000).toFixed(0)+'K':v}</text>`;
+  }
+  // lines
+  lines.forEach(line => {
+    const pts = data.map((d,i) => {
+      const x = 30 + (i/(data.length-1))*(w-40);
+      const y = pad + (h-2*pad)*(1-(d[line.key]-min)/range);
+      return `${x},${y}`;
+    }).join(' ');
+    svg += `<polyline points="${pts}" fill="none" stroke="${line.color}" stroke-width="2" stroke-linejoin="round"/>`;
+  });
+  // x labels
+  data.forEach((d,i) => {
+    if (i%3===0 || i===data.length-1) {
+      const x = 30+(i/(data.length-1))*(w-40);
+      svg += `<text x="${x}" y="${h+20}" text-anchor="middle" fill="#94a3b8" font-size="9">${d.date}</text>`;
+    }
+  });
+  svg += '</svg>';
+  // legend
+  svg += '<div style="display:flex;gap:16px;justify-content:center;margin-top:4px">';
+  lines.forEach(l => { svg += `<div style="display:flex;align-items:center;gap:4px;font-size:11px"><div style="width:14px;height:3px;border-radius:2px;background:${l.color}"></div><span style="color:var(--s500)">${l.label}</span></div>`; });
+  svg += '</div>';
+  return svg;
+}
+
+function svgBars(data, valKey, nameKey, colors, unit='') {
+  const max = Math.max(...data.map(d=>d[valKey]));
+  let html = '<div class="bar-chart">';
+  data.forEach((d,i) => {
+    const pct = (d[valKey]/max)*100;
+    html += `<div class="bar-col"><div class="bar-val">${d[valKey]}${unit}</div><div class="bar" style="height:${pct}%;background:${colors[i]}"></div><div class="bar-lbl">${d[nameKey]}</div></div>`;
+  });
+  return html + '</div>';
+}
+
+function svgDonut(data, size=130) {
+  const total = data.reduce((s,d)=>s+d.val,0);
+  const r=45, circ=2*Math.PI*r;
+  let off=0, svg=`<div class="donut" style="width:${size}px;height:${size}px"><svg width="${size}" height="${size}" viewBox="0 0 130 130">`;
+  data.forEach(d => {
+    const dash = circ*(d.val/total), gap = circ-dash;
+    svg += `<circle cx="65" cy="65" r="${r}" fill="none" stroke="${d.fill}" stroke-width="18" stroke-dasharray="${dash} ${gap}" stroke-dashoffset="${-off}"/>`;
+    off += dash;
+  });
+  svg += `</svg><div class="donut-center">$${(total/1000).toFixed(1)}K</div></div>`;
+  return svg;
+}
+
+// ── Navigation ────────────────────────────────────────────
+const pages = [
+  {id:'dashboard',icon:'<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>',label:'Dashboard'},
+  {id:'media',icon:'<rect x="1" y="3" width="22" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>',label:'Media Library'},
+  {id:'analytics',icon:'<path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/>',label:'Analytics'},
+  {id:'calendar',icon:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/>',label:'Calendar'},
+  {id:'chat',icon:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',label:'AI Assistant'},
+  {id:'settings',icon:'<circle cx="12" cy="12" r="3"/><path d="M12 1v4m0 14v4m-8.66-15l3.46 2m10.4 6l3.46 2m-17.32 0l3.46-2m10.4-6l3.46-2"/>',label:'Integrations'},
+];
+
+function buildNav() {
+  const nav = document.getElementById('nav');
+  nav.innerHTML = pages.map(p =>
+    `<button class="nav-btn ${currentPage===p.id?'active':''}" onclick="go('${p.id}')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p.icon}</svg>
+      ${p.label}
+    </button>`
+  ).join('');
+}
+
+function go(page) {
+  currentPage = page;
+  buildNav();
+  render();
+}
+
+// ── Page Renderers ────────────────────────────────────────
+
+function renderDashboard() {
+  const metrics = [
+    {label:'Total Followers',value:'916K',change:'+4.2%',pos:true},
+    {label:'Weekly Reach',value:'2.8M',change:'+12.8%',pos:true},
+    {label:'Avg Engagement',value:'8.6%',change:'+1.3%',pos:true},
+    {label:'Revenue (30d)',value:'$7,431',change:'+22.5%',pos:true},
+  ];
+
+  return `
+    <div class="page">
+      <h1>Dashboard</h1>
+      <p class="subtitle">Welcome back! Here's how you're performing.</p>
+
+      <div class="grid g4" style="margin-bottom:16px">
+        ${metrics.map(m=>`
+          <div class="card" style="padding:18px">
+            <div style="font-size:13px;font-weight:500;color:var(--s500);margin-bottom:8px">${m.label}</div>
+            <div style="font-size:24px;font-weight:700;color:var(--s900);margin-bottom:4px">${m.value}</div>
+            <div style="font-size:13px;font-weight:500;color:${m.pos?'#059669':'#ef4444'};display:flex;align-items:center;gap:4px">
+              ${m.pos?'↑':'↓'} ${m.change}
+              <span style="color:var(--s400);font-weight:400;margin-left:4px">vs last period</span>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+
+      <div class="grid g2" style="margin-bottom:16px">
+        <div class="card" style="padding:18px">
+          <h3 style="font-size:13px;font-weight:600;margin-bottom:12px">Follower Growth & Reach (14d)</h3>
+          <div class="line-chart">
+            ${svgLine(chartData, [
+              {key:'followers',color:'#ec4899',label:'Followers'},
+              {key:'reach',color:'#a78bfa',label:'Reach (K)'}
+            ])}
+          </div>
+        </div>
+        <div class="card" style="padding:18px">
+          <h3 style="font-size:13px;font-weight:600;margin-bottom:12px">Engagement by Platform</h3>
+          ${svgBars(engData,'val','name',engData.map(d=>d.fill),'%')}
+        </div>
+      </div>
+
+      <div class="grid g3">
+        <!-- AI Insights -->
+        <div class="card" style="padding:18px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+            <span style="color:var(--b500);font-size:16px">✦</span>
+            <h3 style="font-size:13px;font-weight:600">AI Insights</h3>
+          </div>
+          ${insights.map(ins=>`
+            <div class="insight" style="background:${ins.bg};border:1px solid ${ins.border};margin-bottom:8px">
+              <div style="color:${ins.color};font-size:16px;flex-shrink:0;margin-top:2px">⚡</div>
+              <div>
+                <h4>${ins.title}</h4>
+                <p>${ins.desc}</p>
+                <button style="margin-top:6px;font-size:11px;font-weight:500;color:${ins.color};background:none;border:none;cursor:pointer">${ins.action} →</button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+
+        <!-- Recent Posts -->
+        <div class="card" style="padding:18px">
+          <h3 style="font-size:13px;font-weight:600;margin-bottom:14px">Recent Posts</h3>
+          ${posts.slice(0,5).map(p=>`
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+              ${platIcon(p.platform,22)}
+              <div style="flex:1;min-width:0">
+                <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.caption.slice(0,42)}...</div>
+                <div style="font-size:11px;color:var(--s400)">${fmt(p.reach)} reach · ${p.engagement}% eng</div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+
+        <!-- Revenue -->
+        <div class="card" style="padding:18px">
+          <h3 style="font-size:13px;font-weight:600;margin-bottom:14px">Revenue by Source</h3>
+          ${svgDonut(revData)}
+          <div style="margin-top:12px">
+            ${revData.map(s=>`
+              <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="width:10px;height:10px;border-radius:5px;background:${s.fill}"></div>
+                  <span style="color:var(--s600)">${s.name}</span>
+                </div>
+                <span style="font-weight:600">$${s.val.toLocaleString()}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderMedia() {
+  return `
+    <div class="page">
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:24px">
+        <div>
+          <h1>Media Library</h1>
+          <p class="subtitle" style="margin-bottom:0">${media.length} assets · AI-tagged and searchable</p>
+        </div>
+        <button class="btn-primary">⬆ Upload</button>
+      </div>
+
+      <div style="position:relative;margin-bottom:20px">
+        <input class="input" style="padding-left:38px" placeholder="Search by title, tags, AI description, products..." id="media-search" oninput="filterMedia()"/>
+        <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--s400);font-size:16px">🔍</span>
+      </div>
+
+      <div class="grid g4" id="media-grid">
+        ${media.map(renderMediaCard).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderMediaCard(a) {
+  return `
+    <div class="card-hover" onclick="showMediaDetail('${a.id}')" style="overflow:hidden">
+      <div style="aspect-ratio:1;background:${a.color};display:flex;align-items:center;justify-content:center;position:relative;padding:12px">
+        <span style="font-size:13px;color:#555;font-weight:600;text-align:center">${a.title.split('—')[0].trim()}</span>
+        ${a.type==='video'?`<div style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,.7);color:#fff;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:500">▶ ${a.duration||'Video'}</div>`:''}
+        ${a.fav?'<div style="position:absolute;top:8px;right:8px;color:#ec4899;font-size:14px">♥</div>':''}
+        <div style="position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,.7);color:#fff;padding:2px 8px;border-radius:99px;font-size:10px">★ ${a.quality}</div>
+      </div>
+      <div style="padding:10px">
+        <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.title}</div>
+        <div style="font-size:11px;color:var(--s400);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.desc}</div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px">
+          ${a.tags.slice(0,3).map(t=>`<span class="badge" style="background:var(--b100);color:var(--b700);font-size:10px">${t}</span>`).join('')}
+          ${a.tags.length>3?`<span class="badge" style="background:var(--s100);color:var(--s500);font-size:10px">+${a.tags.length-3}</span>`:''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderAnalytics() {
+  return `
+    <div class="page">
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:24px">
+        <div><h1>Analytics</h1><p class="subtitle" style="margin-bottom:0">Deep dive into your performance across platforms</p></div>
+        <button class="btn-primary" onclick="alert('Report generated! In production, this creates a downloadable PDF.')">📋 Generate Report</button>
+      </div>
+
+      <div class="card" style="padding:18px;margin-bottom:16px">
+        <h3 style="font-size:13px;font-weight:600;margin-bottom:12px">Reach & Impressions (14d)</h3>
+        <div class="line-chart" style="height:240px">
+          ${svgLine(chartData, [
+            {key:'reach',color:'#ec4899',label:'Reach (K)'},
+            {key:'impressions',color:'#a78bfa',label:'Impressions (K)'}
+          ], 500, 220)}
+        </div>
+      </div>
+
+      <div class="grid g2">
+        <div class="card" style="padding:18px">
+          <h3 style="font-size:13px;font-weight:600;margin-bottom:14px">Top Performing Posts</h3>
+          ${posts.slice(0,6).map((p,i)=>`
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 0;${i<5?'border-bottom:1px solid var(--s100)':''}">
+              <span style="font-size:11px;font-weight:700;color:var(--s300);width:20px">#${i+1}</span>
+              ${platIcon(p.platform,22)}
+              <div style="flex:1;min-width:0">
+                <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.caption.slice(0,45)}</div>
+                <div style="font-size:11px;color:var(--s400)">${fmt(p.reach)} reach · ${fmt(p.likes)} likes · ${p.engagement}% eng</div>
+              </div>
+              ${p.revenue>0?`<span class="badge" style="background:#ecfdf5;color:#059669;font-size:10px">$${p.revenue.toLocaleString()}</span>`:''}
+            </div>
+          `).join('')}
+        </div>
+
+        <div>
+          <div class="card" style="padding:18px;margin-bottom:16px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+              <span style="color:var(--b500)">🕐</span>
+              <h3 style="font-size:13px;font-weight:600">Best Posting Times</h3>
+            </div>
+            ${[
+              {p:'instagram',time:'Tue/Thu 6-8PM EST'},
+              {p:'tiktok',time:'Fri/Sat 7-9PM EST'},
+              {p:'youtube',time:'Sat/Sun 10AM-2PM EST'},
+              {p:'pinterest',time:'Sun/Mon evenings EST'}
+            ].map(t=>`
+              <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--s100)">
+                ${platIcon(t.p,22)}
+                <div>
+                  <div style="font-size:12px;font-weight:500">${t.p.charAt(0).toUpperCase()+t.p.slice(1)}</div>
+                  <div style="font-size:11px;color:var(--s400)">${t.time}</div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+          <div class="card" style="padding:18px">
+            <h3 style="font-size:13px;font-weight:600;margin-bottom:8px">Quick Stats</h3>
+            ${[['Followers','916K'],['Weekly Reach','2.8M'],['Avg Engagement','8.6%'],['Revenue (30d)','$7,431'],['Posts (30d)','7']].map(([l,v])=>`
+              <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--s100);font-size:13px">
+                <span style="color:var(--s600)">${l}</span><span style="font-weight:600">${v}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderCalendar() {
+  return `
+    <div class="page">
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:24px">
+        <div><h1>Content Calendar</h1><p class="subtitle" style="margin-bottom:0">Plan, schedule, and track your content</p></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn-secondary">✦ AI Suggest</button>
+          <button class="btn-primary">+ New Event</button>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:2fr 1fr;gap:24px">
+        <div class="card" style="padding:18px">
+          <h3 style="font-size:14px;font-weight:600;margin-bottom:16px">Upcoming Events</h3>
+          ${calEvents.map(ev=>`
+            <div style="display:flex;align-items:center;gap:12px;padding:12px;border-radius:10px;border:1px solid var(--s100);margin-bottom:8px;cursor:pointer;transition:border-color .15s" onmouseover="this.style.borderColor='var(--b200)'" onmouseout="this.style.borderColor='var(--s100)'">
+              <div style="width:5px;height:48px;border-radius:3px;background:${ev.color};flex-shrink:0"></div>
+              ${ev.platform?platIcon(ev.platform,26):''}
+              <div style="flex:1">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <h4 style="font-size:13px;font-weight:500">${ev.title}</h4>
+                  ${ev.ai?'<span class="badge" style="background:#f3e8ff;color:#7c3aed;font-size:10px">✦ AI</span>':''}
+                </div>
+                <div style="font-size:11px;color:var(--s400);margin-top:2px">
+                  ${ev.date.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})} at ${ev.date.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}
+                </div>
+                ${ev.reason?`<div style="font-size:11px;color:#7c3aed;margin-top:4px">✦ ${ev.reason}</div>`:''}
+              </div>
+              <span class="badge" style="background:${ev.status==='confirmed'?'#ecfdf5':'#eff6ff'};color:${ev.status==='confirmed'?'#059669':'#2563eb'};font-size:10px">${ev.status}</span>
+            </div>
+          `).join('')}
+        </div>
+
+        <div>
+          <div class="card" style="padding:18px;background:linear-gradient(to bottom,#faf5ff,#fff);margin-bottom:16px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+              <span style="color:#7c3aed">✦</span>
+              <h3 style="font-size:13px;font-weight:600">AI Suggestions</h3>
+            </div>
+            ${calEvents.filter(e=>e.ai).map(ev=>`
+              <div style="padding:10px;border-radius:8px;background:#fff;border:1px solid #e9d5ff;margin-bottom:8px">
+                <div style="font-size:12px;font-weight:500">${ev.title}</div>
+                <div style="font-size:11px;color:#7c3aed;margin-top:4px">${ev.reason}</div>
+              </div>
+            `).join('')}
+          </div>
+          <div class="card" style="padding:18px">
+            <h3 style="font-size:13px;font-weight:600;margin-bottom:12px">This Week's Mix</h3>
+            ${[{l:'Posts',c:4,bg:'var(--b400)'},{l:'Shoots',c:1,bg:'#a78bfa'},{l:'Deadlines',c:1,bg:'#ef4444'}].map(i=>`
+              <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:12px">
+                <div style="display:flex;align-items:center;gap:8px"><div style="width:10px;height:10px;border-radius:5px;background:${i.bg}"></div><span style="color:var(--s600)">${i.l}</span></div>
+                <span style="font-weight:600">${i.c}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderChat() {
+  return `
+    <div class="chat-wrap">
+      <div class="chat-header">
+        <div style="display:flex;align-items:center;gap:12px;max-width:720px;margin:0 auto">
+          <div style="width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,var(--b400),#a855f7);display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px">✦</div>
+          <div><div style="font-size:18px;font-weight:700">AI Assistant</div><div style="font-size:12px;color:var(--s400)">Your personal analytics & content strategist</div></div>
+        </div>
+      </div>
+      <div class="chat-msgs" id="chat-messages">
+        <div style="max-width:720px;margin:0 auto">
+          ${chatMessages.map(m=>`
+            <div class="msg-row ${m.role==='user'?'user':''}">
+              <div class="avatar" style="background:${m.role==='user'?'var(--s200)':'linear-gradient(135deg,var(--b400),#a855f7)'};color:${m.role==='user'?'var(--s600)':'#fff'}">
+                ${m.role==='user'?'👤':'✦'}
+              </div>
+              <div class="bubble ${m.role==='user'?'bubble-user':'bubble-ai'}">${m.text}</div>
+            </div>
+          `).join('')}
+          ${chatMessages.length<=1?`
+            <div class="grid g2" style="margin-top:12px">
+              ${[
+                {icon:'📊',label:'How am I performing?',prompt:'How am I performing this month?'},
+                {icon:'📅',label:'Plan my content',prompt:'Help me plan content for this week'},
+                {icon:'✍️',label:'Write a caption',prompt:'Write caption ideas for my latest post'},
+                {icon:'🕐',label:'Best posting times',prompt:'When should I post for max engagement?'},
+                {icon:'🏷️',label:'Organize my media',prompt:'Help me organize and tag my media library'},
+                {icon:'📋',label:'Generate a report',prompt:'Generate a weekly performance report'},
+              ].map(q=>`
+                <div class="card-hover" style="padding:12px" onclick="sendChat('${q.prompt.replace(/'/g,"\\'")}')">
+                  <div style="font-size:16px;margin-bottom:6px">${q.icon}</div>
+                  <div style="font-size:12px;font-weight:500">${q.label}</div>
+                </div>
+              `).join('')}
+            </div>
+          `:''}
+        </div>
+      </div>
+      <div class="chat-input">
+        <div style="max-width:720px;margin:0 auto;display:flex;gap:8px;width:100%">
+          <input class="input" id="chat-input" placeholder="Ask about analytics, content ideas, scheduling..." onkeydown="if(event.key==='Enter')sendChat()"/>
+          <button class="btn-primary" onclick="sendChat()" style="padding:10px 16px">➤</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderSettings() {
+  const connected = platforms.filter(p=>p.connected).length;
+  const sections = [
+    {title:'Social Platforms',items:['instagram','tiktok','youtube','pinterest','facebook']},
+    {title:'Affiliate & Commerce',items:['shopmy','ltk','walmart','amazon']},
+    {title:'Media Sources',items:['google_photos']},
+  ];
+
+  return `
+    <div class="page" style="max-width:720px">
+      <h1>Integrations</h1>
+      <p class="subtitle">Connect platforms to unlock analytics and content management</p>
+
+      <div class="card" style="padding:18px;margin-bottom:24px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+          <span style="font-size:13px;font-weight:500">Setup Progress</span>
+          <span style="font-size:13px;font-weight:600;color:var(--b600)">${connected}/${platforms.length} connected</span>
+        </div>
+        <div style="height:10px;background:var(--s100);border-radius:5px;overflow:hidden">
+          <div style="height:100%;border-radius:5px;width:${(connected/platforms.length)*100}%;background:linear-gradient(90deg,var(--b400),var(--b600));transition:width .5s"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:11px;color:var(--s500)">🔒 Credentials encrypted and stored in Supabase</div>
+      </div>
+
+      ${sections.map(sec=>`
+        <h2 style="font-size:11px;font-weight:600;color:var(--s400);text-transform:uppercase;letter-spacing:1px;margin:20px 0 10px">${sec.title}</h2>
+        ${sec.items.map(pid=>{
+          const p = platforms.find(x=>x.id===pid);
+          if(!p) return '';
+          return `
+            <div class="card" style="margin-bottom:8px">
+              <div style="display:flex;align-items:center;gap:14px;padding:14px;cursor:pointer" onclick="togglePlatform('${p.id}')">
+                ${platIcon(p.id,38)}
+                <div style="flex:1">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <h3 style="font-weight:600;font-size:15px">${p.name}</h3>
+                    ${p.connected
+                      ?'<span class="badge" style="background:#ecfdf5;color:#059669;font-size:10px">✓ Connected</span>'
+                      :'<span class="badge" style="background:var(--s100);color:var(--s500);font-size:10px">Not Connected</span>'}
+                  </div>
+                  ${p.user?`<div style="font-size:12px;color:var(--b500);margin-top:2px">${p.user}</div>`:''}
+                  ${p.followers?`<div style="font-size:11px;color:var(--s400)">${fmt(p.followers)} followers</div>`:''}
+                </div>
+                <span style="color:var(--s300);font-size:18px">›</span>
+              </div>
+              <div id="plat-${p.id}" style="display:none;border-top:1px solid var(--s200);padding:14px">
+                ${p.connected?`
+                  <div style="display:flex;align-items:center;gap:10px;padding:12px;border-radius:10px;background:#ecfdf5;border:1px solid #a7f3d0">
+                    <span style="color:#059669;font-size:16px">✓</span>
+                    <div>
+                      <div style="font-size:13px;font-weight:500;color:#065f46">Connected successfully</div>
+                      ${p.user?`<div style="font-size:12px;color:#059669">Account: ${p.user}</div>`:''}
+                    </div>
+                  </div>
+                  <div style="display:flex;gap:8px;margin-top:12px">
+                    <button class="btn-secondary" style="font-size:12px">↻ Sync Now</button>
+                    <button class="btn-ghost" style="font-size:12px;color:#ef4444">⊘ Disconnect</button>
+                  </div>
+                `:`
+                  <p style="font-size:13px;color:var(--s600);margin-bottom:14px">Connect your ${p.name} account to import analytics and sync content.</p>
+                  <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px">
+                    ${['Create developer account','Configure API access','Generate access tokens','Enter credentials below'].map((s,i)=>`
+                      <div style="display:flex;gap:10px">
+                        <div style="width:22px;height:22px;border-radius:11px;background:var(--b100);color:var(--b600);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">${i+1}</div>
+                        <span style="font-size:13px;color:var(--s700)">${s}</span>
+                      </div>
+                    `).join('')}
+                  </div>
+                  <input class="input" placeholder="Client ID / App ID" style="margin-bottom:8px"/>
+                  <input class="input" placeholder="Client Secret / App Secret" type="password" style="margin-bottom:12px"/>
+                  <button class="btn-primary" style="width:100%">🔌 Connect ${p.name}</button>
+                `}
+              </div>
+            </div>
+          `;
+        }).join('')}
+      `).join('')}
+    </div>
+  `;
+}
+
+// ── Interactions ───────────────────────────────────────────
+function togglePlatform(id) {
+  const el = document.getElementById('plat-'+id);
+  if (el) el.style.display = el.style.display==='none'?'block':'none';
+}
+
+function filterMedia() {
+  const q = document.getElementById('media-search')?.value?.toLowerCase() || '';
+  const grid = document.getElementById('media-grid');
+  if (!grid) return;
+  const filtered = media.filter(m =>
+    !q || m.title.toLowerCase().includes(q) || m.desc.toLowerCase().includes(q) || m.tags.some(t=>t.toLowerCase().includes(q))
+  );
+  grid.innerHTML = filtered.map(renderMediaCard).join('');
+}
+
+function showMediaDetail(id) {
+  const a = media.find(m=>m.id===id);
+  if (!a) return;
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px';
+  modal.onclick = () => modal.remove();
+  modal.innerHTML = `
+    <div class="card" style="max-width:700px;width:100%;max-height:85vh;overflow:auto" onclick="event.stopPropagation()">
+      <div style="display:flex;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--s200)">
+        <h3 style="font-weight:600">${a.title}</h3>
+        <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;cursor:pointer;font-size:18px">✕</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr">
+        <div style="background:${a.color};display:flex;align-items:center;justify-content:center;padding:32px;min-height:250px">
+          <span style="font-size:16px;font-weight:600;color:#555;text-align:center">${a.title}</span>
+        </div>
+        <div style="padding:20px">
+          <div style="font-size:11px;font-weight:600;color:var(--s400);text-transform:uppercase;letter-spacing:1px">AI Description</div>
+          <p style="font-size:13px;color:var(--s700);margin:4px 0 16px">${a.desc}</p>
+          <div style="font-size:11px;font-weight:600;color:var(--s400);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Tags</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:16px">
+            ${a.tags.map(t=>`<span class="badge" style="background:var(--b100);color:var(--b700)">${t}</span>`).join('')}
+          </div>
+          <div style="font-size:11px;font-weight:600;color:var(--s400);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Quality Score</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+            <div style="flex:1;height:8px;background:var(--s100);border-radius:4px;overflow:hidden">
+              <div style="height:100%;border-radius:4px;width:${a.quality}%;background:linear-gradient(90deg,var(--b400),var(--b600))"></div>
+            </div>
+            <span style="font-size:14px;font-weight:600">${a.quality}%</span>
+          </div>
+          <button class="btn-primary" style="font-size:12px">✦ Generate AI Captions</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
+
+function aiRespond(msg) {
+  const l = msg.toLowerCase();
+  if (l.includes('perform')||l.includes('analytics')||l.includes('how am i')||l.includes('stats'))
+    return "Here's your performance snapshot:\n\n📊 This Month Overview:\n• Total reach: 2.8M across platforms\n• Average engagement: 8.6% (industry avg is 3-5%)\n• Top post: GRWM Date Night on TikTok — 1.65M views\n• Affiliate revenue: $7,431.50\n\n🔥 Key insight: TikTok GRWM content is your strongest format at 12.1% engagement. I'd recommend increasing from 2x to 3x per week.";
+  if (l.includes('best time')||l.includes('when should')||l.includes('when to post'))
+    return "Based on your audience data:\n\n📸 Instagram: Tue & Thu, 6-8 PM EST\n🎵 TikTok: Fri & Sat, 7-9 PM EST\n🎬 YouTube: Sat & Sun, 10 AM-2 PM EST\n📌 Pinterest: Sun & Mon evenings\n\nYour reels get 40% more reach in these windows. Want me to adjust your calendar?";
+  if (l.includes('caption')||l.includes('write'))
+    return 'Here are caption ideas for your brand voice:\n\n1. "Not me spending 45 minutes on a \'no-makeup\' look 💀✨ But this 5-product routine is *the one*."\n\n2. "POV: Your skincare finally cleared the group chat 🧴💫"\n\n3. "Spring transition outfit that works for brunch AND meetings 🌸"\n\nWant me to tailor these for a specific platform?';
+  if (l.includes('schedule')||l.includes('plan')||l.includes('calendar'))
+    return "Here's my suggested content plan:\n\n📅 Thu: Instagram Reel — Wash Day Routine ✅\n📅 Fri: TikTok GRWM — Spring Look (peak day)\n📅 Sat: YouTube Tutorial — Spring Smokey Eye\n📅 Sun: Pinterest Board — Spring OOTDs\n📅 Mon: Instagram Carousel — Product Reviews\n\nYou have 12 unused high-quality assets. Want me to match them?";
+  if (l.includes('report'))
+    return "I can generate these reports:\n\n1. 📊 Weekly Performance — engagement, reach, growth\n2. 📋 Monthly Overview — comprehensive with trends\n3. 🎯 Platform Deep Dive — single platform detail\n4. 💰 Revenue Report — affiliate earnings & conversions\n5. 🔍 Content Audit — what's working + recommendations\n\nWhich would you like?";
+  if (l.includes('tag')||l.includes('organize'))
+    return "I can help organize your media library!\n\n🏷️ Auto-Tagging: All 8 assets have AI tags for content type, products, mood, and season.\n\n📁 Suggestions:\n• 3 assets tagged 'Makeup' could also use 'Tutorial'\n• 'Top Performer' should be on 2 more posts\n• Consider a 'Spring 2026' campaign tag\n\nWant me to apply these suggestions?";
+  return "I can help with:\n\n📊 Analytics — performance reports, trends, revenue\n📅 Content Planning — scheduling, optimal times\n🏷️ Media — tagging, organizing, searching\n✍️ Captions — AI-generated ideas\n💡 Insights — growth recommendations\n📋 Reports — on-demand analytics\n\nWhat would you like to explore?";
+}
+
+function sendChat(text) {
+  const input = document.getElementById('chat-input');
+  const msg = text || (input?input.value.trim():'');
+  if (!msg) return;
+  if (input) input.value = '';
+
+  chatMessages.push({role:'user', text: msg});
+  render();
+
+  // Scroll to bottom
+  setTimeout(() => {
+    const el = document.getElementById('chat-messages');
+    if (el) el.scrollTop = el.scrollHeight;
+  }, 50);
+
+  // AI response after delay
+  setTimeout(() => {
+    chatMessages.push({role:'ai', text: aiRespond(msg)});
+    render();
+    setTimeout(() => {
+      const el = document.getElementById('chat-messages');
+      if (el) el.scrollTop = el.scrollHeight;
+    }, 50);
+  }, 600);
+}
+
+// ── Render ─────────────────────────────────────────────────
+function render() {
+  const main = document.getElementById('main');
+  const renderers = {
+    dashboard: renderDashboard,
+    media: renderMedia,
+    analytics: renderAnalytics,
+    calendar: renderCalendar,
+    chat: renderChat,
+    settings: renderSettings,
+  };
+  main.innerHTML = (renderers[currentPage] || renderDashboard)();
+}
+
+// Boot
+buildNav();
+render();
+</script>
+</body>
+</html>

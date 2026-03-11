@@ -1,0 +1,62 @@
+const API_BASE = '/api';
+
+async function request(path, options = {}) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { 'Content-Type': 'application/json', ...options.headers },
+    ...options,
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export const api = {
+  // Media
+  getMedia: (params) => request(`/media?${new URLSearchParams(params)}`),
+  getMediaById: (id) => request(`/media/${id}`),
+  uploadMedia: (data) => request('/media/upload', { method: 'POST', body: JSON.stringify(data) }),
+  tagMedia: (id, tagId) => request(`/media/${id}/tag`, { method: 'POST', body: JSON.stringify({ tag_id: tagId }) }),
+  toggleFavorite: (id) => request(`/media/${id}/favorite`, { method: 'POST' }),
+
+  // Analytics
+  getAnalyticsOverview: (params) => request(`/analytics/overview?${new URLSearchParams(params || {})}`),
+  getPlatformAnalytics: (platform) => request(`/analytics/platform/${platform}`),
+  getPostAnalytics: (params) => request(`/analytics/posts?${new URLSearchParams(params || {})}`),
+  getBestTimes: () => request('/analytics/best-times'),
+  getContentPerformance: () => request('/analytics/content-performance'),
+
+  // Posts
+  getPosts: (params) => request(`/posts?${new URLSearchParams(params || {})}`),
+  getPost: (id) => request(`/posts/${id}`),
+  createPost: (data) => request('/posts', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Calendar
+  getCalendarEvents: (params) => request(`/calendar?${new URLSearchParams(params || {})}`),
+  createCalendarEvent: (data) => request('/calendar', { method: 'POST', body: JSON.stringify(data) }),
+  updateCalendarEvent: (id, data) => request(`/calendar/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Chat
+  getChatMessages: () => request('/chat/messages'),
+  sendChatMessage: (message) => request('/chat/send', { method: 'POST', body: JSON.stringify({ message }) }),
+
+  // Platforms
+  getPlatforms: () => request('/platforms'),
+  getPlatformSetupGuide: (platform) => request(`/platforms/${platform}/setup-guide`),
+  connectPlatform: (platform, data) => request(`/platforms/${platform}/connect`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // Dashboard
+  getDashboardWidgets: () => request('/dashboard/widgets'),
+  getInsights: () => request('/dashboard/insights'),
+
+  // AI
+  aiTagMedia: (mediaId) => request('/ai/tag-media', { method: 'POST', body: JSON.stringify({ media_id: mediaId }) }),
+  aiGenerateCaptions: (mediaId, platform) => request('/ai/generate-captions', { method: 'POST', body: JSON.stringify({ media_id: mediaId, platform }) }),
+  aiSuggestPostTime: (platform) => request('/ai/suggest-posting-time', { method: 'POST', body: JSON.stringify({ platform }) }),
+  aiContentIdeas: () => request('/ai/content-ideas', { method: 'POST', body: JSON.stringify({}) }),
+
+  // Tags
+  getTags: (params) => request(`/tags?${new URLSearchParams(params || {})}`),
+  createTag: (data) => request('/tags', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Reports
+  generateReport: (data) => request('/reports/generate', { method: 'POST', body: JSON.stringify(data) }),
+};

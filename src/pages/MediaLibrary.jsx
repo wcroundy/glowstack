@@ -1,0 +1,344 @@
+import React, { useState, useEffect } from 'react';
+import {
+  Search, Filter, Grid3X3, List, Heart, Star, Tag, Upload,
+  Image as ImageIcon, Video, Sparkles, X, ChevronDown, Eye
+} from 'lucide-react';
+import { api } from '../services/api';
+
+function TagPill({ tag }) {
+  return (
+    <span
+      className="badge text-white text-[10px]"
+      style={{ backgroundColor: tag.color || '#ec4899' }}
+    >
+      {tag.name}
+    </span>
+  );
+}
+
+function MediaCard({ asset, onSelect }) {
+  const [hovered, setHovered] = useState(false);
+
+  return (
+    <div
+      className="card-hover group cursor-pointer overflow-hidden"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onClick={() => onSelect(asset)}
+    >
+      {/* Thumbnail */}
+      <div className="relative aspect-square bg-surface-100 overflow-hidden">
+        <img
+          src={asset.thumbnail_url || asset.file_url}
+          alt={asset.title}
+          className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+        />
+        {/* Overlays */}
+        {asset.file_type === 'video' && (
+          <div className="absolute top-2 left-2 badge bg-black/70 text-white">
+            <Video className="w-3 h-3 mr-1" />
+            {asset.duration_seconds ? `${Math.round(asset.duration_seconds)}s` : 'Video'}
+          </div>
+        )}
+        {asset.is_favorite && (
+          <div className="absolute top-2 right-2">
+            <Heart className="w-4 h-4 text-brand-500 fill-brand-500" />
+          </div>
+        )}
+        {asset.ai_quality_score && (
+          <div className="absolute bottom-2 right-2 badge bg-black/70 text-white text-[10px]">
+            <Star className="w-3 h-3 mr-0.5 text-yellow-400 fill-yellow-400" />
+            {(asset.ai_quality_score * 100).toFixed(0)}
+          </div>
+        )}
+        {/* Hover overlay */}
+        <div className={`absolute inset-0 bg-black/40 flex items-center justify-center transition-opacity ${hovered ? 'opacity-100' : 'opacity-0'}`}>
+          <Eye className="w-6 h-6 text-white" />
+        </div>
+      </div>
+
+      {/* Info */}
+      <div className="p-3">
+        <h4 className="text-xs font-medium text-surface-800 truncate">{asset.title || asset.file_name}</h4>
+        <p className="text-[11px] text-surface-400 mt-0.5 truncate">{asset.ai_description?.slice(0, 60)}</p>
+        {asset.tag_objects?.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-2">
+            {asset.tag_objects.slice(0, 3).map(t => <TagPill key={t.id} tag={t} />)}
+            {asset.tag_objects.length > 3 && (
+              <span className="badge bg-surface-100 text-surface-500 text-[10px]">+{asset.tag_objects.length - 3}</span>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MediaDetail({ asset, onClose }) {
+  const [captions, setCaptions] = useState(null);
+  const [loadingCaptions, setLoadingCaptions] = useState(false);
+
+  const generateCaptions = async () => {
+    setLoadingCaptions(true);
+    try {
+      const result = await api.aiGenerateCaptions(asset.id, 'instagram');
+      setCaptions(result.captions);
+    } catch (e) { console.error(e); }
+    setLoadingCaptions(false);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-5 border-b">
+          <h3 className="font-semibold text-surface-900">{asset.title || asset.file_name}</h3>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-100"><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-0">
+          {/* Image */}
+          <div className="bg-surface-100 flex items-center justify-center p-4">
+            <img src={asset.file_url} alt={asset.title} className="max-w-full max-h-80 rounded-lg object-contain" />
+          </div>
+
+          {/* Details */}
+          <div className="p-5 space-y-4">
+            {/* AI Description */}
+            <div>
+              <h4 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-1">AI Description</h4>
+              <p className="text-sm text-surface-700">{asset.ai_description}</p>
+            </div>
+
+            {/* Tags */}
+            <div>
+              <h4 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">Tags</h4>
+              <div className="flex flex-wrap gap-1.5">
+                {asset.tag_objects?.map(t => <TagPill key={t.id} tag={t} />)}
+                {asset.ai_tags?.map(t => (
+                  <span key={t} className="badge bg-surface-100 text-surface-600 text-[10px]">{t}</span>
+                ))}
+              </div>
+            </div>
+
+            {/* Quality */}
+            {asset.ai_quality_score && (
+              <div>
+                <h4 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-1">Quality Score</h4>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 h-2 bg-surface-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-brand-400 to-brand-600"
+                      style={{ width: `${asset.ai_quality_score * 100}%` }}
+                    />
+                  </div>
+                  <span className="text-sm font-medium">{(asset.ai_quality_score * 100).toFixed(0)}%</span>
+                </div>
+              </div>
+            )}
+
+            {/* AI Caption Generator */}
+            <div>
+              <h4 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">Caption Ideas</h4>
+              {!captions ? (
+                <button onClick={generateCaptions} disabled={loadingCaptions} className="btn-primary text-xs">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  {loadingCaptions ? 'Generating...' : 'Generate AI Captions'}
+                </button>
+              ) : (
+                <div className="space-y-2">
+                  {captions.map((c, i) => (
+                    <div key={i} className="p-2.5 rounded-lg bg-brand-50 text-xs text-surface-700 border border-brand-100">
+                      {c}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Meta */}
+            <div className="text-[11px] text-surface-400 space-y-0.5 pt-2 border-t">
+              <p>Source: {asset.source} · Type: {asset.file_type}</p>
+              <p>Created: {new Date(asset.created_at).toLocaleDateString()}</p>
+              {asset.duration_seconds && <p>Duration: {asset.duration_seconds}s</p>}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function MediaLibrary() {
+  const [media, setMedia] = useState([]);
+  const [tags, setTags] = useState([]);
+  const [search, setSearch] = useState('');
+  const [activeFilter, setActiveFilter] = useState({});
+  const [selectedAsset, setSelectedAsset] = useState(null);
+  const [viewMode, setViewMode] = useState('grid');
+  const [showFilters, setShowFilters] = useState(false);
+
+  useEffect(() => {
+    api.getMedia({}).then(r => setMedia(r.data || []));
+    api.getTags().then(r => setTags(r.data || []));
+  }, []);
+
+  // Apply search
+  useEffect(() => {
+    const params = { ...activeFilter };
+    if (search) params.search = search;
+    api.getMedia(params).then(r => setMedia(r.data || []));
+  }, [search, activeFilter]);
+
+  const tagCategories = [...new Set(tags.map(t => t.category))];
+
+  return (
+    <div className="p-4 lg:p-8 max-w-7xl mx-auto">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-surface-900">Media Library</h1>
+          <p className="text-sm text-surface-500 mt-0.5">{media.length} assets · AI-tagged and searchable</p>
+        </div>
+        <button className="btn-primary">
+          <Upload className="w-4 h-4" /> Upload
+        </button>
+      </div>
+
+      {/* Search & Filters */}
+      <div className="flex flex-col sm:flex-row gap-3 mb-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400" />
+          <input
+            type="text"
+            className="input pl-10"
+            placeholder="Search by title, tags, AI description, products..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+        </div>
+        <div className="flex gap-2">
+          <button
+            className={`btn-secondary text-xs ${showFilters ? 'bg-brand-50 border-brand-200 text-brand-600' : ''}`}
+            onClick={() => setShowFilters(!showFilters)}
+          >
+            <Filter className="w-4 h-4" /> Filters
+          </button>
+          <div className="flex border rounded-xl overflow-hidden">
+            <button
+              className={`px-3 py-2 text-xs ${viewMode === 'grid' ? 'bg-brand-50 text-brand-600' : 'text-surface-500 hover:bg-surface-50'}`}
+              onClick={() => setViewMode('grid')}
+            >
+              <Grid3X3 className="w-4 h-4" />
+            </button>
+            <button
+              className={`px-3 py-2 text-xs ${viewMode === 'list' ? 'bg-brand-50 text-brand-600' : 'text-surface-500 hover:bg-surface-50'}`}
+              onClick={() => setViewMode('list')}
+            >
+              <List className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Filter Panel */}
+      {showFilters && (
+        <div className="card p-4 mb-4">
+          <div className="flex flex-wrap gap-4">
+            <div>
+              <span className="text-xs font-medium text-surface-500 block mb-1.5">Type</span>
+              <div className="flex gap-1.5">
+                {['all', 'image', 'video'].map(t => (
+                  <button
+                    key={t}
+                    className={`badge cursor-pointer ${activeFilter.type === t || (!activeFilter.type && t === 'all') ? 'bg-brand-100 text-brand-700' : 'bg-surface-100 text-surface-600 hover:bg-surface-200'}`}
+                    onClick={() => setActiveFilter(f => ({ ...f, type: t === 'all' ? undefined : t }))}
+                  >
+                    {t === 'all' ? 'All' : t === 'image' ? <><ImageIcon className="w-3 h-3 mr-1" />Images</> : <><Video className="w-3 h-3 mr-1" />Videos</>}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <span className="text-xs font-medium text-surface-500 block mb-1.5">Source</span>
+              <div className="flex gap-1.5">
+                {['all', 'google_photos', 'upload', 'instagram'].map(s => (
+                  <button
+                    key={s}
+                    className={`badge cursor-pointer ${activeFilter.source === s ? 'bg-brand-100 text-brand-700' : 'bg-surface-100 text-surface-600 hover:bg-surface-200'}`}
+                    onClick={() => setActiveFilter(f => ({ ...f, source: s === 'all' ? undefined : s }))}
+                  >
+                    {s === 'all' ? 'All' : s === 'google_photos' ? 'Google Photos' : s.charAt(0).toUpperCase() + s.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <span className="text-xs font-medium text-surface-500 block mb-1.5">Favorites</span>
+              <button
+                className={`badge cursor-pointer ${activeFilter.favorite ? 'bg-brand-100 text-brand-700' : 'bg-surface-100 text-surface-600 hover:bg-surface-200'}`}
+                onClick={() => setActiveFilter(f => ({ ...f, favorite: f.favorite ? undefined : 'true' }))}
+              >
+                <Heart className="w-3 h-3 mr-1" /> Favorites Only
+              </button>
+            </div>
+          </div>
+
+          {/* Tag filters */}
+          <div className="mt-3 pt-3 border-t">
+            <span className="text-xs font-medium text-surface-500 block mb-1.5">Tags</span>
+            <div className="flex flex-wrap gap-1.5">
+              {tags.slice(0, 15).map(tag => (
+                <button
+                  key={tag.id}
+                  className={`badge cursor-pointer transition-colors ${activeFilter.tag === tag.id ? 'text-white' : 'bg-surface-100 text-surface-600 hover:bg-surface-200'}`}
+                  style={activeFilter.tag === tag.id ? { backgroundColor: tag.color, color: 'white' } : {}}
+                  onClick={() => setActiveFilter(f => ({ ...f, tag: f.tag === tag.id ? undefined : tag.id }))}
+                >
+                  {tag.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Grid */}
+      <div className={
+        viewMode === 'grid'
+          ? 'grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4'
+          : 'space-y-2'
+      }>
+        {media.map(asset => (
+          viewMode === 'grid' ? (
+            <MediaCard key={asset.id} asset={asset} onSelect={setSelectedAsset} />
+          ) : (
+            <div key={asset.id} className="card-hover p-3 flex items-center gap-4 cursor-pointer" onClick={() => setSelectedAsset(asset)}>
+              <img src={asset.thumbnail_url} alt="" className="w-16 h-16 rounded-lg object-cover" />
+              <div className="flex-1 min-w-0">
+                <h4 className="text-sm font-medium truncate">{asset.title}</h4>
+                <p className="text-xs text-surface-400 truncate">{asset.ai_description}</p>
+                <div className="flex gap-1 mt-1">
+                  {asset.tag_objects?.slice(0, 4).map(t => <TagPill key={t.id} tag={t} />)}
+                </div>
+              </div>
+              <div className="text-xs text-surface-400 text-right shrink-0">
+                <div>{asset.file_type}</div>
+                <div>{asset.source}</div>
+              </div>
+            </div>
+          )
+        ))}
+      </div>
+
+      {media.length === 0 && (
+        <div className="text-center py-16 text-surface-400">
+          <ImageIcon className="w-12 h-12 mx-auto mb-3 opacity-30" />
+          <p className="text-sm">No media found matching your filters</p>
+        </div>
+      )}
+
+      {/* Detail Modal */}
+      {selectedAsset && <MediaDetail asset={selectedAsset} onClose={() => setSelectedAsset(null)} />}
+    </div>
+  );
+}
