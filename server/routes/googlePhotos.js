@@ -132,7 +132,7 @@ router.get('/albums', async (req, res) => {
       nextPageToken: data.nextPageToken || null,
     });
   } catch (err) {
-    console.error('Google Photos albums error:', err.message);
+    console.error('Google Photos albums error:', err.message, err.stack);
     res.status(500).json({ error: err.message });
   }
 });

@@ -87,7 +87,9 @@ export async function getValidToken() {
   // Refresh the token
   if (!refreshToken) throw new Error('No refresh token available. Please reconnect Google Photos.');
 
+  console.log('Refreshing Google Photos access token...');
   const tokens = await refreshAccessToken(refreshToken);
+  console.log('Token refreshed successfully');
 
   // Update stored tokens
   const updatedMeta = {
@@ -118,7 +120,11 @@ export async function listAlbums(accessToken, pageToken = null) {
   const res = await fetch(`${PHOTOS_API}/albums?${params}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!res.ok) throw new Error(`Photos API error: ${res.status}`);
+  if (!res.ok) {
+    const errBody = await res.text();
+    console.error('listAlbums error response:', res.status, errBody);
+    throw new Error(`Photos API error: ${res.status} - ${errBody}`);
+  }
   return res.json();
 }
 
