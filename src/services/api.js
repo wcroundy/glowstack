@@ -75,4 +75,12 @@ export const api = {
 
   // Reports
   generateReport: (data) => request('/reports/generate', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Google Photos
+  googlePhotosStatus: () => request('/google-photos/status'),
+  googlePhotosAuthUrl: () => request('/google-photos/auth-url'),
+  googlePhotosAlbums: (pageToken) => request(`/google-photos/albums?${new URLSearchParams(pageToken ? { pageToken } : {})}`),
+  googlePhotosMedia: (params) => request(`/google-photos/media?${new URLSearchParams(params || {})}`),
+  googlePhotosImport: (itemIds) => request('/google-photos/import', { method: 'POST', body: JSON.stringify({ itemIds }) }),
+  googlePhotosDisconnect: () => request('/google-photos/disconnect', { method: 'POST' }),
 };

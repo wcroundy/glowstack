@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import {
   Search, Filter, Grid3X3, List, Heart, Star, Tag, Upload,
-  Image as ImageIcon, Video, Sparkles, X, ChevronDown, Eye
+  Image as ImageIcon, Video, Sparkles, X, ChevronDown, Eye, Camera
 } from 'lucide-react';
 import { api } from '../services/api';
+import GooglePhotosBrowser from '../components/google-photos/GooglePhotosBrowser';
 
 function TagPill({ tag }) {
   return (
@@ -176,6 +177,13 @@ export default function MediaLibrary() {
   const [selectedAsset, setSelectedAsset] = useState(null);
   const [viewMode, setViewMode] = useState('grid');
   const [showFilters, setShowFilters] = useState(false);
+  const [showGooglePhotos, setShowGooglePhotos] = useState(false);
+
+  const refreshMedia = () => {
+    const params = { ...activeFilter };
+    if (search) params.search = search;
+    api.getMedia(params).then(r => setMedia(r.data || []));
+  };
 
   useEffect(() => {
     api.getMedia({}).then(r => setMedia(r.data || []));
@@ -199,10 +207,25 @@ export default function MediaLibrary() {
           <h1 className="text-2xl font-bold text-surface-900">Media Library</h1>
           <p className="text-sm text-surface-500 mt-0.5">{media.length} assets · AI-tagged and searchable</p>
         </div>
-        <button className="btn-primary">
-          <Upload className="w-4 h-4" /> Upload
-        </button>
+        <div className="flex gap-2">
+          <button
+            className={`btn-secondary text-xs ${showGooglePhotos ? 'bg-brand-50 border-brand-200 text-brand-600' : ''}`}
+            onClick={() => setShowGooglePhotos(!showGooglePhotos)}
+          >
+            <Camera className="w-4 h-4" /> Google Photos
+          </button>
+          <button className="btn-primary">
+            <Upload className="w-4 h-4" /> Upload
+          </button>
+        </div>
       </div>
+
+      {/* Google Photos Browser */}
+      {showGooglePhotos && (
+        <div className="card p-4 mb-4">
+          <GooglePhotosBrowser onImportComplete={() => refreshMedia()} />
+        </div>
+      )}
 
       {/* Search & Filters */}
       <div className="flex flex-col sm:flex-row gap-3 mb-4">

@@ -27,8 +27,15 @@ app.use(express.urlencoded({ extended: true }));
 // Auth routes (before middleware so login isn't protected)
 app.use('/api/auth', authRoutes);
 
+// Google OAuth callback (before auth middleware — browser redirect, no Bearer token)
+import googlePhotosRoutes from './routes/googlePhotos.js';
+app.use('/api/auth/google', googlePhotosRoutes); // callback route
+
 // Protect all other API routes
 app.use('/api', requireAuth);
+
+// Google Photos API routes (protected)
+app.use('/api/google-photos', googlePhotosRoutes);
 
 // Routes
 import mediaRoutes from './routes/media.js';
