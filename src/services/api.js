@@ -85,6 +85,7 @@ export const api = {
 
   // AI Auto-Tag
   aiAutoTag: (assetIds) => request('/ai/auto-tag', { method: 'POST', body: JSON.stringify({ assetIds }) }),
+  aiAcceptSuggestedTags: (tags) => request('/ai/accept-suggested-tags', { method: 'POST', body: JSON.stringify({ tags }) }),
 
   // Reports
   generateReport: (data) => request('/reports/generate', { method: 'POST', body: JSON.stringify(data) }),

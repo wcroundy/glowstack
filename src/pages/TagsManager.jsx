@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Tags, Plus, Trash2, Sparkles, Loader2, AlertCircle,
   CheckCircle2, Hash, Palette, FolderOpen, Wand2, X, DollarSign, CreditCard,
+  ThumbsUp, ThumbsDown, Lightbulb, Check,
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -44,6 +45,12 @@ export default function TagsManager() {
   const [assetCount, setAssetCount] = useState(null);
   const [showQuotaError, setShowQuotaError] = useState(false);
   const [quotaErrorMessage, setQuotaErrorMessage] = useState('');
+
+  // Tag suggestions review
+  const [suggestedTags, setSuggestedTags] = useState([]); // from AI response
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [suggestionDecisions, setSuggestionDecisions] = useState({}); // { index: 'accept' | 'reject' }
+  const [acceptingTags, setAcceptingTags] = useState(false);
 
   // Filter
   const [filterCategory, setFilterCategory] = useState('');
@@ -124,11 +131,19 @@ export default function TagsManager() {
     setShowAutoTagConfirm(false);
     setAutoTagging(true);
     setAutoTagResult(null);
+    setSuggestedTags([]);
     setError('');
     try {
       const result = await api.aiAutoTag();
       setAutoTagResult(result);
       loadTags();
+
+      // If AI suggested new tags, show the review modal
+      if (result.suggestedTags && result.suggestedTags.length > 0) {
+        setSuggestedTags(result.suggestedTags);
+        setSuggestionDecisions({});
+        setShowSuggestions(true);
+      }
     } catch (err) {
       if (err.code === 'openai_insufficient_quota') {
         setQuotaErrorMessage(err.message);
@@ -141,11 +156,49 @@ export default function TagsManager() {
     }
   };
 
+  const toggleSuggestion = (index) => {
+    setSuggestionDecisions(prev => {
+      const current = prev[index];
+      if (current === 'accept') return { ...prev, [index]: 'reject' };
+      return { ...prev, [index]: 'accept' };
+    });
+  };
+
+  const handleAcceptSuggestions = async () => {
+    const accepted = suggestedTags
+      .filter((_, i) => suggestionDecisions[i] === 'accept')
+      .map(s => ({
+        name: s.name,
+        assetIds: s.assetIds,
+        color: TAG_COLORS[Math.floor(Math.random() * TAG_COLORS.length)],
+        category: 'ai_suggested',
+      }));
+
+    if (accepted.length === 0) {
+      setShowSuggestions(false);
+      return;
+    }
+
+    setAcceptingTags(true);
+    try {
+      await api.aiAcceptSuggestedTags(accepted);
+      loadTags();
+      setShowSuggestions(false);
+    } catch (err) {
+      setError('Failed to create accepted tags: ' + err.message);
+    } finally {
+      setAcceptingTags(false);
+    }
+  };
+
   const filteredTags = filterCategory
     ? tags.filter(t => t.category === filterCategory)
     : tags;
 
-  const categoryLabel = (cat) => TAG_CATEGORIES.find(c => c.value === cat)?.label || cat;
+  const categoryLabel = (cat) => {
+    if (cat === 'ai_suggested') return 'AI Suggested';
+    return TAG_CATEGORIES.find(c => c.value === cat)?.label || cat;
+  };
 
   // Group tags by category for display
   const groupedTags = {};
@@ -405,6 +458,119 @@ export default function TagsManager() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* AI Tag Suggestions Review Modal */}
+      {showSuggestions && suggestedTags.length > 0 && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowSuggestions(false)}>
+          <div className="bg-white rounded-2xl max-w-lg w-full shadow-xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 border-b flex-shrink-0">
+              <h3 className="font-semibold text-surface-900 flex items-center gap-2">
+                <Lightbulb className="w-5 h-5 text-amber-500" />
+                AI Tag Suggestions
+              </h3>
+              <button onClick={() => setShowSuggestions(false)} className="p-1.5 rounded-lg hover:bg-surface-100">
+                <X className="w-5 h-5 text-surface-400" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4 overflow-y-auto flex-1">
+              <p className="text-sm text-surface-600">
+                AI found <span className="font-semibold">{suggestedTags.length}</span> new tag{suggestedTags.length !== 1 ? 's' : ''} that
+                could help organize your media. Accept or reject each one — accepted tags will be created and applied to matching assets.
+              </p>
+
+              <div className="space-y-2">
+                {suggestedTags.map((suggestion, index) => {
+                  const decision = suggestionDecisions[index];
+                  const isAccepted = decision === 'accept';
+                  const isRejected = decision === 'reject';
+
+                  return (
+                    <div
+                      key={index}
+                      className={`rounded-xl border p-3 flex items-center justify-between transition-colors ${
+                        isAccepted ? 'border-green-200 bg-green-50' :
+                        isRejected ? 'border-surface-200 bg-surface-50 opacity-50' :
+                        'border-surface-200 bg-white'
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm text-surface-800">{suggestion.name}</span>
+                          {isAccepted && <Check className="w-3.5 h-3.5 text-green-600" />}
+                        </div>
+                        <p className="text-xs text-surface-400 mt-0.5">
+                          Would apply to {suggestion.count} asset{suggestion.count !== 1 ? 's' : ''}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1.5 ml-3 flex-shrink-0">
+                        <button
+                          onClick={() => toggleSuggestion(index)}
+                          className={`p-2 rounded-lg transition-colors ${
+                            isAccepted
+                              ? 'bg-green-100 text-green-700'
+                              : 'hover:bg-green-50 text-surface-400 hover:text-green-600'
+                          }`}
+                          title="Accept"
+                        >
+                          <ThumbsUp className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSuggestionDecisions(prev => ({
+                              ...prev,
+                              [index]: prev[index] === 'reject' ? undefined : 'reject',
+                            }));
+                          }}
+                          className={`p-2 rounded-lg transition-colors ${
+                            isRejected
+                              ? 'bg-surface-200 text-surface-600'
+                              : 'hover:bg-red-50 text-surface-400 hover:text-red-500'
+                          }`}
+                          title="Reject"
+                        >
+                          <ThumbsDown className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="p-5 border-t flex-shrink-0">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-surface-400">
+                  {Object.values(suggestionDecisions).filter(d => d === 'accept').length} accepted,{' '}
+                  {Object.values(suggestionDecisions).filter(d => d === 'reject').length} rejected,{' '}
+                  {suggestedTags.length - Object.keys(suggestionDecisions).length} undecided
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowSuggestions(false)}
+                    className="btn-ghost text-sm"
+                  >
+                    Skip All
+                  </button>
+                  <button
+                    onClick={handleAcceptSuggestions}
+                    disabled={acceptingTags || Object.values(suggestionDecisions).filter(d => d === 'accept').length === 0}
+                    className="btn-primary text-sm flex items-center gap-2"
+                  >
+                    {acceptingTags ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" /> Creating...</>
+                    ) : (
+                      <>
+                        <Check className="w-4 h-4" />
+                        Create {Object.values(suggestionDecisions).filter(d => d === 'accept').length} Tag{Object.values(suggestionDecisions).filter(d => d === 'accept').length !== 1 ? 's' : ''}
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

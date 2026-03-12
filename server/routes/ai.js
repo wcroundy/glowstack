@@ -152,19 +152,22 @@ router.post('/auto-tag', async (req, res) => {
       return res.json({ tagged: 0, message: 'No assets found to tag' });
     }
 
-    const tagNames = allTags.map(t => t.name.toLowerCase());
     const tagMap = {};
     allTags.forEach(t => { tagMap[t.name.toLowerCase()] = t; });
 
     let totalTagged = 0;
     let totalNewTags = 0;
 
+    // Track suggested new tags: { name: { assetIds: Set, count: number } }
+    const suggestedNewTags = {};
+
     // 3. Process each asset
     for (const asset of assets) {
       let matchedTagIds = [];
+      let assetSuggestedNew = [];
 
       if (OPENAI_API_KEY && asset.thumbnail_url) {
-        // Use OpenAI Vision to analyze the image and match tags
+        // Use OpenAI Vision to analyze the image and match tags + suggest new ones
         try {
           const tagList = allTags.map(t => t.name).join(', ');
           const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -178,14 +181,21 @@ router.post('/auto-tag', async (req, res) => {
               messages: [
                 {
                   role: 'system',
-                  content: `You are a media tagging assistant for a beauty/fashion influencer. Given an image, determine which of the provided tags apply. Only return tags from the provided list. Return a JSON array of matching tag names, nothing else. Be generous with tagging — if a tag could reasonably apply, include it.`,
+                  content: `You are a media tagging assistant for a beauty/fashion influencer. Given an image, do two things:
+1. Determine which of the provided existing tags apply to the image.
+2. Suggest up to 3 NEW tags that are NOT in the existing list but would be useful for categorizing this image (think: specific products, techniques, aesthetics, settings, content formats).
+
+Return a JSON object with two arrays:
+{"existing": ["Tag Name 1", "Tag Name 2"], "suggested": ["New Tag Idea 1"]}
+
+Be generous with existing tag matching. For suggested tags, focus on specific, reusable beauty/fashion categories that would help organize a media library. Don't suggest tags that are too similar to existing ones.`,
                 },
                 {
                   role: 'user',
                   content: [
                     {
                       type: 'text',
-                      text: `Available tags: ${tagList}\n\nFilename: ${asset.file_name}\nTitle: ${asset.title || ''}\n\nWhich of these tags apply to this image? Return only a JSON array of matching tag names.`,
+                      text: `Existing tags: ${tagList}\n\nFilename: ${asset.file_name}\nTitle: ${asset.title || ''}\n\nReturn JSON with "existing" matches and "suggested" new tags.`,
                     },
                     {
                       type: 'image_url',
@@ -194,22 +204,43 @@ router.post('/auto-tag', async (req, res) => {
                   ],
                 },
               ],
-              max_tokens: 200,
+              max_tokens: 300,
               temperature: 0.3,
             }),
           });
 
           if (response.ok) {
             const result = await response.json();
-            const content = result.choices?.[0]?.message?.content || '[]';
-            // Parse the JSON array from the response
-            const jsonMatch = content.match(/\[[\s\S]*?\]/);
+            const content = result.choices?.[0]?.message?.content || '{}';
+
+            // Try to parse as {existing: [], suggested: []}
+            const jsonMatch = content.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
-              const suggestedTags = JSON.parse(jsonMatch[0]);
-              matchedTagIds = suggestedTags
-                .map(name => tagMap[name.toLowerCase()])
-                .filter(Boolean)
-                .map(t => t.id);
+              try {
+                const parsed = JSON.parse(jsonMatch[0]);
+
+                // Handle existing tag matches
+                const existingMatches = parsed.existing || parsed.matched || [];
+                matchedTagIds = existingMatches
+                  .map(name => tagMap[String(name).toLowerCase()])
+                  .filter(Boolean)
+                  .map(t => t.id);
+
+                // Collect suggested new tags
+                assetSuggestedNew = (parsed.suggested || [])
+                  .map(name => String(name).trim())
+                  .filter(name => name.length > 0 && !tagMap[name.toLowerCase()]);
+              } catch (parseErr) {
+                // Fallback: try parsing as plain array (old format)
+                const arrMatch = content.match(/\[[\s\S]*?\]/);
+                if (arrMatch) {
+                  const tags = JSON.parse(arrMatch[0]);
+                  matchedTagIds = tags
+                    .map(name => tagMap[String(name).toLowerCase()])
+                    .filter(Boolean)
+                    .map(t => t.id);
+                }
+              }
             }
           } else {
             const errorBody = await response.text();
@@ -245,16 +276,24 @@ router.post('/auto-tag', async (req, res) => {
 
         for (const tag of allTags) {
           const tagLower = tag.name.toLowerCase();
-          // Check if the tag name (or significant portion) appears in the asset text
           if (searchText.includes(tagLower)) {
             matchedTagIds.push(tag.id);
           }
-          // Also check individual words of multi-word tags
           const tagWords = tagLower.split(/\s+/);
           if (tagWords.length > 1 && tagWords.every(w => w.length > 2 && searchText.includes(w))) {
             if (!matchedTagIds.includes(tag.id)) matchedTagIds.push(tag.id);
           }
         }
+      }
+
+      // Track suggested new tags with their asset associations
+      for (const sugName of assetSuggestedNew) {
+        const key = sugName.toLowerCase();
+        if (!suggestedNewTags[key]) {
+          suggestedNewTags[key] = { name: sugName, assetIds: new Set(), count: 0 };
+        }
+        suggestedNewTags[key].assetIds.add(asset.id);
+        suggestedNewTags[key].count++;
       }
 
       // 4. Assign matched tags (upsert to avoid duplicates)
@@ -279,24 +318,95 @@ router.post('/auto-tag', async (req, res) => {
 
         // Update tag usage counts
         for (const tagId of matchedTagIds) {
-          await supabase.rpc('increment_tag_usage', { tag_uuid: tagId }).catch(() => {
-            // RPC might not exist, non-critical
-          });
+          await supabase.rpc('increment_tag_usage', { tag_uuid: tagId }).catch(() => {});
         }
       }
     }
+
+    // Convert suggested tags to serializable array, sorted by frequency
+    const suggestions = Object.values(suggestedNewTags)
+      .map(s => ({ name: s.name, assetIds: [...s.assetIds], count: s.count }))
+      .sort((a, b) => b.count - a.count);
 
     res.json({
       tagged: totalTagged,
       totalAssetsProcessed: assets.length,
       totalNewTags,
       aiPowered: !!OPENAI_API_KEY,
+      suggestedTags: suggestions,
       message: OPENAI_API_KEY
         ? `AI analyzed ${assets.length} assets and applied ${totalNewTags} tags to ${totalTagged} assets`
         : `Keyword matching applied ${totalNewTags} tags to ${totalTagged} assets. Add an OpenAI API key for AI-powered visual tagging.`,
     });
   } catch (err) {
     console.error('AI auto-tag error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/ai/accept-suggested-tags — Create accepted tag suggestions and assign to assets
+router.post('/accept-suggested-tags', async (req, res) => {
+  try {
+    if (!isSupabaseConfigured()) {
+      return res.json({ created: 0, message: 'Demo mode' });
+    }
+
+    const { tags: acceptedTags } = req.body;
+    // acceptedTags: [{ name: "Tag Name", assetIds: ["id1", "id2"], color: "#hex", category: "custom" }]
+
+    if (!acceptedTags || acceptedTags.length === 0) {
+      return res.json({ created: 0, assigned: 0, message: 'No tags to create' });
+    }
+
+    let totalCreated = 0;
+    let totalAssigned = 0;
+
+    for (const suggestion of acceptedTags) {
+      // Create the tag
+      const { data: newTag, error: createErr } = await supabase
+        .from('tags')
+        .insert({
+          name: suggestion.name,
+          color: suggestion.color || '#6366f1',
+          category: suggestion.category || 'ai_suggested',
+        })
+        .select()
+        .single();
+
+      if (createErr) {
+        console.error('Failed to create suggested tag:', suggestion.name, createErr.message);
+        continue;
+      }
+      totalCreated++;
+
+      // Assign to associated assets
+      if (suggestion.assetIds && suggestion.assetIds.length > 0) {
+        const tagInserts = suggestion.assetIds.map(assetId => ({
+          media_id: assetId,
+          tag_id: newTag.id,
+          is_ai_assigned: true,
+          confidence: 0.85,
+        }));
+
+        const { error: assignErr } = await supabase
+          .from('media_tags')
+          .upsert(tagInserts, { onConflict: 'media_id,tag_id' });
+
+        if (assignErr) {
+          console.error('Failed to assign suggested tag:', suggestion.name, assignErr.message);
+        } else {
+          totalAssigned += suggestion.assetIds.length;
+        }
+      }
+    }
+
+    res.json({
+      created: totalCreated,
+      assigned: totalAssigned,
+      message: `Created ${totalCreated} new tags and assigned them to ${totalAssigned} assets`,
+    });
+  } catch (err) {
+    console.error('Accept suggested tags error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
