@@ -4,9 +4,12 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/auth/google/callback';
 
+// New Picker API scope (the old photoslibrary.readonly was deprecated March 31, 2025)
 const SCOPES = [
-  'https://www.googleapis.com/auth/photoslibrary.readonly',
+  'https://www.googleapis.com/auth/photospicker.mediaitems.readonly',
 ];
+
+const PICKER_API = 'https://photospicker.googleapis.com/v1';
 
 // Generate the Google OAuth consent URL
 export function getAuthUrl(state = '') {
@@ -108,100 +111,68 @@ export async function getValidToken() {
   return tokens.access_token;
 }
 
-// Google Photos API helpers
-const PHOTOS_API = 'https://photoslibrary.googleapis.com/v1';
+// --- Picker API Methods ---
 
-// List albums
-export async function listAlbums(accessToken, pageToken = null) {
-  const params = new URLSearchParams({ pageSize: '50' });
-  if (pageToken) params.set('pageToken', pageToken);
-
-  const res = await fetch(`${PHOTOS_API}/albums?${params}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) {
-    const errBody = await res.text();
-    console.error('listAlbums error response:', res.status, errBody);
-    throw new Error(`Photos API error: ${res.status} - ${errBody}`);
-  }
-  return res.json();
-}
-
-// List media items (optionally filtered by album)
-export async function listMediaItems(accessToken, { albumId, pageSize = 25, pageToken = null, filters = null } = {}) {
-  if (albumId) {
-    // Search within album
-    const body = {
-      albumId,
-      pageSize,
-    };
-    if (pageToken) body.pageToken = pageToken;
-
-    const res = await fetch(`${PHOTOS_API}/mediaItems:search`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) throw new Error(`Photos API error: ${res.status}`);
-    return res.json();
-  }
-
-  // List all media items
-  const params = new URLSearchParams({ pageSize: String(pageSize) });
-  if (pageToken) params.set('pageToken', pageToken);
-
-  const res = await fetch(`${PHOTOS_API}/mediaItems?${params}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) throw new Error(`Photos API error: ${res.status}`);
-  return res.json();
-}
-
-// Get a single media item
-export async function getMediaItem(accessToken, mediaItemId) {
-  const res = await fetch(`${PHOTOS_API}/mediaItems/${mediaItemId}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) throw new Error(`Photos API error: ${res.status}`);
-  return res.json();
-}
-
-// Search media items by date or content
-export async function searchMediaItems(accessToken, { dateRange, contentCategories, pageSize = 25, pageToken = null } = {}) {
-  const body = { pageSize };
-  if (pageToken) body.pageToken = pageToken;
-
-  const filters = {};
-  if (dateRange) {
-    filters.dateFilter = {
-      ranges: [{
-        startDate: dateRange.start,
-        endDate: dateRange.end,
-      }],
-    };
-  }
-  if (contentCategories) {
-    filters.contentFilter = {
-      includedContentCategories: contentCategories,
-    };
-  }
-  if (Object.keys(filters).length > 0) {
-    body.filters = filters;
-  }
-
-  const res = await fetch(`${PHOTOS_API}/mediaItems:search`, {
+// Create a picker session — returns { id, pickerUri, expireTime, mediaItemsSet }
+export async function createSession(accessToken) {
+  const res = await fetch(`${PICKER_API}/sessions`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({}),
   });
-  if (!res.ok) throw new Error(`Photos API error: ${res.status}`);
+  if (!res.ok) {
+    const errBody = await res.text();
+    console.error('createSession error:', res.status, errBody);
+    throw new Error(`Picker API error: ${res.status} - ${errBody}`);
+  }
   return res.json();
+}
+
+// Get session status — check if user has finished selecting
+export async function getSession(accessToken, sessionId) {
+  const res = await fetch(`${PICKER_API}/sessions/${sessionId}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    const errBody = await res.text();
+    console.error('getSession error:', res.status, errBody);
+    throw new Error(`Picker API error: ${res.status} - ${errBody}`);
+  }
+  return res.json();
+}
+
+// List media items from a completed session
+export async function listSessionMediaItems(accessToken, sessionId, pageToken = null) {
+  const params = new URLSearchParams({
+    sessionId,
+    pageSize: '100',
+  });
+  if (pageToken) params.set('pageToken', pageToken);
+
+  const res = await fetch(`${PICKER_API}/mediaItems?${params}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    const errBody = await res.text();
+    console.error('listSessionMediaItems error:', res.status, errBody);
+    throw new Error(`Picker API error: ${res.status} - ${errBody}`);
+  }
+  return res.json();
+}
+
+// Delete a session when done
+export async function deleteSession(accessToken, sessionId) {
+  try {
+    await fetch(`${PICKER_API}/sessions/${sessionId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch (err) {
+    console.error('deleteSession error (non-critical):', err.message);
+  }
 }
 
 export function isGoogleConfigured() {

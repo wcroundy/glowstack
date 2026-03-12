@@ -76,11 +76,13 @@ export const api = {
   // Reports
   generateReport: (data) => request('/reports/generate', { method: 'POST', body: JSON.stringify(data) }),
 
-  // Google Photos
+  // Google Photos (Picker API)
   googlePhotosStatus: () => request('/google-photos/status'),
   googlePhotosAuthUrl: () => request('/google-photos/auth-url'),
-  googlePhotosAlbums: (pageToken) => request(`/google-photos/albums?${new URLSearchParams(pageToken ? { pageToken } : {})}`),
-  googlePhotosMedia: (params) => request(`/google-photos/media?${new URLSearchParams(params || {})}`),
-  googlePhotosImport: (itemIds) => request('/google-photos/import', { method: 'POST', body: JSON.stringify({ itemIds }) }),
+  googlePhotosCreateSession: () => request('/google-photos/session', { method: 'POST' }),
+  googlePhotosGetSession: (sessionId) => request(`/google-photos/session/${sessionId}`),
+  googlePhotosSessionMedia: (sessionId, pageToken) => request(`/google-photos/session/${sessionId}/media?${new URLSearchParams(pageToken ? { pageToken } : {})}`),
+  googlePhotosImport: (items) => request('/google-photos/import', { method: 'POST', body: JSON.stringify({ items }) }),
+  googlePhotosDeleteSession: (sessionId) => request(`/google-photos/session/${sessionId}`, { method: 'DELETE' }),
   googlePhotosDisconnect: () => request('/google-photos/disconnect', { method: 'POST' }),
 };

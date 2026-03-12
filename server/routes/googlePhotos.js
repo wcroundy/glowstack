@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { supabase, isSupabaseConfigured } from '../services/supabase.js';
 import {
   getAuthUrl, exchangeCode, getValidToken,
-  listAlbums, listMediaItems, getMediaItem, searchMediaItems,
+  createSession, getSession, listSessionMediaItems, deleteSession,
   isGoogleConfigured,
 } from '../services/googlePhotos.js';
 
@@ -49,7 +49,6 @@ router.get('/auth-url', (req, res) => {
   if (!isGoogleConfigured()) {
     return res.status(400).json({ error: 'Google API credentials not configured' });
   }
-  // Pass the auth token as state so we can verify the callback
   const state = req.headers.authorization?.replace('Bearer ', '') || '';
   const url = getAuthUrl(state);
   res.json({ url });
@@ -71,7 +70,6 @@ router.get('/callback', async (req, res) => {
     // Exchange code for tokens
     const tokens = await exchangeCode(code);
     console.log('OAuth tokens received. Scope:', tokens.scope);
-    console.log('Token keys:', Object.keys(tokens));
 
     // Get user info for display
     let email = '';
@@ -114,64 +112,62 @@ router.get('/callback', async (req, res) => {
   }
 });
 
-// GET /api/google-photos/albums — list albums
-router.get('/albums', async (req, res) => {
+// POST /api/google-photos/session — create a picker session
+router.post('/session', async (req, res) => {
+  try {
+    const accessToken = await getValidToken();
+    if (!accessToken) return res.status(401).json({ error: 'Google Photos not connected' });
+
+    const session = await createSession(accessToken);
+    console.log('Picker session created:', session.id);
+
+    res.json({
+      sessionId: session.id,
+      pickerUri: session.pickerUri,
+      expireTime: session.expireTime,
+    });
+  } catch (err) {
+    console.error('Create session error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/google-photos/session/:id — poll session status
+router.get('/session/:id', async (req, res) => {
+  try {
+    const accessToken = await getValidToken();
+    if (!accessToken) return res.status(401).json({ error: 'Google Photos not connected' });
+
+    const session = await getSession(accessToken, req.params.id);
+
+    res.json({
+      sessionId: session.id,
+      pickerUri: session.pickerUri,
+      mediaItemsSet: session.mediaItemsSet || false,
+    });
+  } catch (err) {
+    console.error('Get session error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/google-photos/session/:id/media — list selected media items
+router.get('/session/:id/media', async (req, res) => {
   try {
     const accessToken = await getValidToken();
     if (!accessToken) return res.status(401).json({ error: 'Google Photos not connected' });
 
     const { pageToken } = req.query;
-    const data = await listAlbums(accessToken, pageToken);
+    const data = await listSessionMediaItems(accessToken, req.params.id, pageToken);
+
+    const items = (data.mediaItems || []).map(item => formatPickerMediaItem(item));
 
     res.json({
-      albums: (data.albums || []).map(a => ({
-        id: a.id,
-        title: a.title,
-        itemCount: parseInt(a.mediaItemsCount || '0'),
-        coverUrl: a.coverPhotoBaseUrl ? `${a.coverPhotoBaseUrl}=w300-h300-c` : null,
-        productUrl: a.productUrl,
-      })),
+      items,
       nextPageToken: data.nextPageToken || null,
     });
   } catch (err) {
-    console.error('Google Photos albums error:', err.message, err.stack);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// GET /api/google-photos/media — list media items
-router.get('/media', async (req, res) => {
-  try {
-    const accessToken = await getValidToken();
-    if (!accessToken) return res.status(401).json({ error: 'Google Photos not connected' });
-
-    const { albumId, pageSize = 25, pageToken } = req.query;
-    const data = await listMediaItems(accessToken, {
-      albumId,
-      pageSize: parseInt(pageSize),
-      pageToken,
-    });
-
-    res.json({
-      items: (data.mediaItems || []).map(formatMediaItem),
-      nextPageToken: data.nextPageToken || null,
-    });
-  } catch (err) {
-    console.error('Google Photos media error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// GET /api/google-photos/media/:id — get a single media item
-router.get('/media/:id', async (req, res) => {
-  try {
-    const accessToken = await getValidToken();
-    if (!accessToken) return res.status(401).json({ error: 'Google Photos not connected' });
-
-    const item = await getMediaItem(accessToken, req.params.id);
-    res.json(formatMediaItem(item));
-  } catch (err) {
-    console.error('Google Photos media/:id error:', err.message);
+    console.error('List session media error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -179,36 +175,30 @@ router.get('/media/:id', async (req, res) => {
 // POST /api/google-photos/import — import selected items into GlowStack
 router.post('/import', async (req, res) => {
   try {
-    const accessToken = await getValidToken();
-    if (!accessToken) return res.status(401).json({ error: 'Google Photos not connected' });
-
-    const { itemIds } = req.body;
-    if (!itemIds || !itemIds.length) {
-      return res.status(400).json({ error: 'No items selected' });
+    const { items } = req.body;
+    if (!items || !items.length) {
+      return res.status(400).json({ error: 'No items provided' });
     }
 
     if (!isSupabaseConfigured()) {
       return res.json({
-        imported: itemIds.length,
+        imported: items.length,
         message: 'Demo mode — items would be imported with Supabase configured',
       });
     }
 
     const imported = [];
-    for (const id of itemIds) {
+    for (const item of items) {
       try {
-        const item = await getMediaItem(accessToken, id);
-        const formatted = formatMediaItem(item);
-
-        // Check if already imported
+        // Check if already imported by google_photos_id
         const { data: existing } = await supabase
           .from('media_assets')
           .select('id')
-          .eq('google_photos_id', id)
+          .eq('google_photos_id', item.id)
           .single();
 
         if (existing) {
-          imported.push({ id: existing.id, status: 'already_exists', filename: formatted.filename });
+          imported.push({ id: existing.id, status: 'already_exists', filename: item.filename });
           continue;
         }
 
@@ -216,25 +206,25 @@ router.post('/import', async (req, res) => {
         const { data: asset, error } = await supabase
           .from('media_assets')
           .insert({
-            file_name: formatted.filename,
-            file_url: formatted.fullUrl,
-            thumbnail_url: formatted.thumbnailUrl,
-            file_type: formatted.mediaType === 'VIDEO' ? 'video' : 'image',
-            mime_type: formatted.mimeType,
+            file_name: item.filename || 'untitled',
+            file_url: item.baseUrl || '',
+            thumbnail_url: item.baseUrl ? `${item.baseUrl}=w300-h300-c` : '',
+            file_type: item.type === 'VIDEO' ? 'video' : 'image',
+            mime_type: item.mimeType || (item.type === 'VIDEO' ? 'video/mp4' : 'image/jpeg'),
             source: 'google_photos',
-            google_photos_id: id,
-            title: formatted.filename.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '),
-            width: formatted.width,
-            height: formatted.height,
-            captured_at: formatted.creationTime,
+            google_photos_id: item.id,
+            title: (item.filename || 'untitled').replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '),
+            width: item.width || null,
+            height: item.height || null,
+            captured_at: item.createTime || null,
           })
           .select()
           .single();
 
         if (error) throw error;
-        imported.push({ id: asset.id, status: 'imported', filename: formatted.filename });
+        imported.push({ id: asset.id, status: 'imported', filename: item.filename });
       } catch (itemErr) {
-        imported.push({ id, status: 'error', error: itemErr.message });
+        imported.push({ id: item.id, status: 'error', error: itemErr.message });
       }
     }
 
@@ -242,6 +232,19 @@ router.post('/import', async (req, res) => {
   } catch (err) {
     console.error('Google Photos import error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/google-photos/session/:id — clean up session
+router.delete('/session/:id', async (req, res) => {
+  try {
+    const accessToken = await getValidToken();
+    if (accessToken) {
+      await deleteSession(accessToken, req.params.id);
+    }
+    res.json({ message: 'Session deleted' });
+  } catch (err) {
+    res.json({ message: 'Session cleanup attempted' });
   }
 });
 
@@ -265,26 +268,22 @@ router.post('/disconnect', async (req, res) => {
   }
 });
 
-// Format a Google Photos media item for our API
-function formatMediaItem(item) {
-  const isVideo = item.mediaMetadata?.video != null;
-  const baseUrl = item.baseUrl || '';
+// Format a Picker API media item
+function formatPickerMediaItem(item) {
+  const type = item.type || 'PHOTO'; // PHOTO or VIDEO
+  const mediaFile = item.mediaFile || {};
 
   return {
-    googleId: item.id,
-    filename: item.filename,
-    mimeType: item.mimeType,
-    mediaType: isVideo ? 'VIDEO' : 'PHOTO',
-    description: item.description || '',
-    thumbnailUrl: baseUrl ? `${baseUrl}=w300-h300-c` : '',
-    fullUrl: baseUrl ? (isVideo ? `${baseUrl}=dv` : `${baseUrl}=w2048-h2048`) : '',
-    width: parseInt(item.mediaMetadata?.width || 0),
-    height: parseInt(item.mediaMetadata?.height || 0),
-    creationTime: item.mediaMetadata?.creationTime || null,
-    cameraMake: item.mediaMetadata?.photo?.cameraMake || null,
-    cameraModel: item.mediaMetadata?.photo?.cameraModel || null,
-    fps: item.mediaMetadata?.video?.fps || null,
-    productUrl: item.productUrl,
+    id: item.id,
+    filename: mediaFile.filename || item.id,
+    mimeType: mediaFile.mimeType || '',
+    type,
+    baseUrl: mediaFile.baseUrl || '',
+    width: mediaFile.mediaFileMetadata?.width ? parseInt(mediaFile.mediaFileMetadata.width) : null,
+    height: mediaFile.mediaFileMetadata?.height ? parseInt(mediaFile.mediaFileMetadata.height) : null,
+    createTime: item.createTime || null,
+    cameraMake: mediaFile.mediaFileMetadata?.photo?.cameraMake || null,
+    cameraModel: mediaFile.mediaFileMetadata?.photo?.cameraModel || null,
   };
 }
 

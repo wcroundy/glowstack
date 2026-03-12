@@ -1,22 +1,22 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
-  Image, FolderOpen, Check, CheckSquare, Square, Download,
-  ChevronLeft, Loader2, AlertCircle, ExternalLink, RefreshCw, Unplug,
+  Image, Download, Loader2, AlertCircle, ExternalLink, Unplug,
+  Check, CheckSquare, Square, RefreshCw,
 } from 'lucide-react';
 import { api } from '../../services/api';
 
 export default function GooglePhotosBrowser({ onImportComplete }) {
   const [status, setStatus] = useState(null);
-  const [view, setView] = useState('albums'); // 'albums' | 'media'
-  const [albums, setAlbums] = useState([]);
+  const [session, setSession] = useState(null); // { sessionId, pickerUri }
+  const [pickerDone, setPickerDone] = useState(false);
   const [mediaItems, setMediaItems] = useState([]);
-  const [selectedAlbum, setSelectedAlbum] = useState(null);
   const [selected, setSelected] = useState(new Set());
   const [loading, setLoading] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [nextPageToken, setNextPageToken] = useState(null);
   const [error, setError] = useState('');
   const [importResult, setImportResult] = useState(null);
+  const [polling, setPolling] = useState(false);
+  const pollRef = useRef(null);
 
   // Check connection status
   useEffect(() => {
@@ -25,101 +25,12 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
     );
   }, []);
 
-  // Load albums when connected
+  // Cleanup polling on unmount
   useEffect(() => {
-    if (status?.connected && view === 'albums') {
-      loadAlbums();
-    }
-  }, [status?.connected]);
-
-  const loadAlbums = async (pageToken = null) => {
-    setLoading(true);
-    setError('');
-    try {
-      const data = await api.googlePhotosAlbums(pageToken);
-      setAlbums(prev => pageToken ? [...prev, ...data.albums] : data.albums);
-      setNextPageToken(data.nextPageToken);
-    } catch (err) {
-      setError('Failed to load albums: ' + err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadMedia = async (albumId = null, pageToken = null) => {
-    setLoading(true);
-    setError('');
-    try {
-      const params = { pageSize: 25 };
-      if (albumId) params.albumId = albumId;
-      if (pageToken) params.pageToken = pageToken;
-      const data = await api.googlePhotosMedia(params);
-      setMediaItems(prev => pageToken ? [...prev, ...data.items] : data.items);
-      setNextPageToken(data.nextPageToken);
-    } catch (err) {
-      setError('Failed to load photos: ' + err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const openAlbum = (album) => {
-    setSelectedAlbum(album);
-    setView('media');
-    setMediaItems([]);
-    setSelected(new Set());
-    loadMedia(album.id);
-  };
-
-  const showAllPhotos = () => {
-    setSelectedAlbum(null);
-    setView('media');
-    setMediaItems([]);
-    setSelected(new Set());
-    loadMedia();
-  };
-
-  const goBackToAlbums = () => {
-    setView('albums');
-    setMediaItems([]);
-    setSelected(new Set());
-    setNextPageToken(null);
-    setImportResult(null);
-  };
-
-  const toggleSelect = (googleId) => {
-    setSelected(prev => {
-      const next = new Set(prev);
-      if (next.has(googleId)) next.delete(googleId);
-      else next.add(googleId);
-      return next;
-    });
-  };
-
-  const selectAll = () => {
-    if (selected.size === mediaItems.length) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(mediaItems.map(i => i.googleId)));
-    }
-  };
-
-  const handleImport = async () => {
-    if (selected.size === 0) return;
-    setImporting(true);
-    setError('');
-    setImportResult(null);
-    try {
-      const result = await api.googlePhotosImport([...selected]);
-      setImportResult(result);
-      setSelected(new Set());
-      if (onImportComplete) onImportComplete(result);
-    } catch (err) {
-      setError('Import failed: ' + err.message);
-    } finally {
-      setImporting(false);
-    }
-  };
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
 
   const handleConnect = async () => {
     try {
@@ -134,11 +45,119 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
     try {
       await api.googlePhotosDisconnect();
       setStatus({ configured: true, connected: false });
-      setAlbums([]);
+      setSession(null);
       setMediaItems([]);
       setSelected(new Set());
+      setPickerDone(false);
     } catch (err) {
       setError('Failed to disconnect: ' + err.message);
+    }
+  };
+
+  // Start a picker session — opens Google's photo picker in a new tab
+  const startPicker = async () => {
+    setError('');
+    setLoading(true);
+    setPickerDone(false);
+    setMediaItems([]);
+    setSelected(new Set());
+    setImportResult(null);
+    try {
+      const data = await api.googlePhotosCreateSession();
+      setSession(data);
+
+      // Open picker in new tab
+      window.open(data.pickerUri, '_blank');
+
+      // Start polling for completion
+      setPolling(true);
+      pollRef.current = setInterval(async () => {
+        try {
+          const sessionStatus = await api.googlePhotosGetSession(data.sessionId);
+          if (sessionStatus.mediaItemsSet) {
+            // User finished selecting
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+            setPolling(false);
+            setPickerDone(true);
+            await loadSelectedMedia(data.sessionId);
+          }
+        } catch (pollErr) {
+          console.error('Poll error:', pollErr);
+        }
+      }, 3000); // Poll every 3 seconds
+    } catch (err) {
+      setError('Failed to start photo picker: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Load media items from completed session
+  const loadSelectedMedia = async (sessionId, pageToken = null) => {
+    setLoading(true);
+    try {
+      const data = await api.googlePhotosSessionMedia(sessionId, pageToken);
+      setMediaItems(prev => pageToken ? [...prev, ...data.items] : data.items);
+      // Auto-select all items
+      if (!pageToken) {
+        setSelected(new Set(data.items.map(i => i.id)));
+      } else {
+        setSelected(prev => {
+          const next = new Set(prev);
+          data.items.forEach(i => next.add(i.id));
+          return next;
+        });
+      }
+      // Load more if there are more pages
+      if (data.nextPageToken) {
+        await loadSelectedMedia(sessionId, data.nextPageToken);
+      }
+    } catch (err) {
+      setError('Failed to load selected photos: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggleSelect = (id) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    if (selected.size === mediaItems.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(mediaItems.map(i => i.id)));
+    }
+  };
+
+  const handleImport = async () => {
+    if (selected.size === 0) return;
+    setImporting(true);
+    setError('');
+    setImportResult(null);
+    try {
+      const itemsToImport = mediaItems.filter(i => selected.has(i.id));
+      const result = await api.googlePhotosImport(itemsToImport);
+      setImportResult(result);
+      setSelected(new Set());
+
+      // Clean up the session
+      if (session?.sessionId) {
+        try { await api.googlePhotosDeleteSession(session.sessionId); } catch {}
+      }
+
+      if (onImportComplete) onImportComplete(result);
+    } catch (err) {
+      setError('Import failed: ' + err.message);
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -186,110 +205,19 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
     );
   }
 
-  // Albums view
-  if (view === 'albums') {
-    return (
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-semibold text-surface-800">Google Photos</h3>
-            <p className="text-xs text-surface-400">Connected as {status.account || 'Google Account'}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={showAllPhotos} className="btn-secondary text-xs">
-              <Image className="w-3.5 h-3.5" />
-              All Photos
-            </button>
-            <button onClick={handleDisconnect} className="btn-ghost text-xs text-red-500 hover:text-red-700">
-              <Unplug className="w-3.5 h-3.5" />
-              Disconnect
-            </button>
-          </div>
-        </div>
-
-        {error && (
-          <div className="text-sm text-red-500 bg-red-50 rounded-xl px-3 py-2">{error}</div>
-        )}
-
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {albums.map(album => (
-            <button
-              key={album.id}
-              onClick={() => openAlbum(album)}
-              className="card-hover p-3 text-left group"
-            >
-              {album.coverUrl ? (
-                <img
-                  src={album.coverUrl}
-                  alt={album.title}
-                  className="w-full aspect-square object-cover rounded-lg mb-2"
-                />
-              ) : (
-                <div className="w-full aspect-square bg-surface-100 rounded-lg mb-2 flex items-center justify-center">
-                  <FolderOpen className="w-8 h-8 text-surface-300" />
-                </div>
-              )}
-              <p className="text-sm font-medium text-surface-800 truncate">{album.title}</p>
-              <p className="text-xs text-surface-400">{album.itemCount} items</p>
-            </button>
-          ))}
-        </div>
-
-        {loading && (
-          <div className="flex justify-center py-4">
-            <Loader2 className="w-5 h-5 animate-spin text-brand-500" />
-          </div>
-        )}
-
-        {nextPageToken && !loading && (
-          <button onClick={() => loadAlbums(nextPageToken)} className="btn-secondary w-full text-sm">
-            Load more albums
-          </button>
-        )}
-      </div>
-    );
-  }
-
-  // Media view (all photos or album)
+  // Connected — show picker UI
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <button onClick={goBackToAlbums} className="btn-ghost p-1.5">
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <div className="min-w-0">
-            <h3 className="font-semibold text-surface-800 truncate">
-              {selectedAlbum ? selectedAlbum.title : 'All Photos'}
-            </h3>
-            <p className="text-xs text-surface-400">
-              {selected.size > 0 ? `${selected.size} selected` : `${mediaItems.length} loaded`}
-            </p>
-          </div>
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-semibold text-surface-800">Google Photos</h3>
+          <p className="text-xs text-surface-400">Connected as {status.account || 'Google Account'}</p>
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {mediaItems.length > 0 && (
-            <button onClick={selectAll} className="btn-ghost text-xs">
-              {selected.size === mediaItems.length ? (
-                <><CheckSquare className="w-3.5 h-3.5" /> Deselect</>
-              ) : (
-                <><Square className="w-3.5 h-3.5" /> Select all</>
-              )}
-            </button>
-          )}
-          {selected.size > 0 && (
-            <button
-              onClick={handleImport}
-              disabled={importing}
-              className="btn-primary text-xs"
-            >
-              {importing ? (
-                <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Importing...</>
-              ) : (
-                <><Download className="w-3.5 h-3.5" /> Import {selected.size}</>
-              )}
-            </button>
-          )}
+        <div className="flex items-center gap-2">
+          <button onClick={handleDisconnect} className="btn-ghost text-xs text-red-500 hover:text-red-700">
+            <Unplug className="w-3.5 h-3.5" />
+            Disconnect
+          </button>
         </div>
       </div>
 
@@ -303,60 +231,158 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
         </div>
       )}
 
-      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
-        {mediaItems.map(item => {
-          const isSelected = selected.has(item.googleId);
-          return (
-            <button
-              key={item.googleId}
-              onClick={() => toggleSelect(item.googleId)}
-              className={`relative aspect-square rounded-lg overflow-hidden group border-2 transition-all ${
-                isSelected
-                  ? 'border-brand-500 ring-2 ring-brand-200'
-                  : 'border-transparent hover:border-surface-300'
-              }`}
-            >
-              <img
-                src={item.thumbnailUrl}
-                alt={item.filename}
-                className="w-full h-full object-cover"
-                loading="lazy"
-              />
-              {item.mediaType === 'VIDEO' && (
-                <div className="absolute bottom-1 left-1 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded">
-                  VIDEO
-                </div>
+      {/* No active session — show button to start picker */}
+      {!polling && !pickerDone && (
+        <div className="text-center py-6">
+          <button
+            onClick={startPicker}
+            disabled={loading}
+            className="btn-primary"
+          >
+            {loading ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /> Starting...</>
+            ) : (
+              <><Image className="w-4 h-4" /> Select Photos from Google</>
+            )}
+          </button>
+          <p className="text-xs text-surface-400 mt-3">
+            Opens Google's photo picker in a new tab where you can select photos to import.
+          </p>
+        </div>
+      )}
+
+      {/* Polling — waiting for user to finish selecting */}
+      {polling && (
+        <div className="text-center py-8">
+          <Loader2 className="w-8 h-8 animate-spin text-brand-500 mx-auto mb-3" />
+          <h4 className="font-medium text-surface-800 mb-1">Waiting for your selection...</h4>
+          <p className="text-sm text-surface-500 mb-4">
+            Select photos in the Google Photos tab that just opened, then click "Done" there.
+          </p>
+          <button
+            onClick={() => {
+              if (pollRef.current) clearInterval(pollRef.current);
+              setPolling(false);
+              setSession(null);
+            }}
+            className="btn-ghost text-xs text-surface-400"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {/* Picker done — show selected items for import */}
+      {pickerDone && mediaItems.length > 0 && (
+        <>
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-surface-600">
+              {mediaItems.length} photo{mediaItems.length !== 1 ? 's' : ''} selected from Google Photos
+            </p>
+            <div className="flex items-center gap-2">
+              <button onClick={selectAll} className="btn-ghost text-xs">
+                {selected.size === mediaItems.length ? (
+                  <><CheckSquare className="w-3.5 h-3.5" /> Deselect all</>
+                ) : (
+                  <><Square className="w-3.5 h-3.5" /> Select all</>
+                )}
+              </button>
+              {selected.size > 0 && (
+                <button
+                  onClick={handleImport}
+                  disabled={importing}
+                  className="btn-primary text-xs"
+                >
+                  {importing ? (
+                    <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Importing...</>
+                  ) : (
+                    <><Download className="w-3.5 h-3.5" /> Import {selected.size}</>
+                  )}
+                </button>
               )}
-              <div className={`absolute top-1.5 right-1.5 w-5 h-5 rounded-full flex items-center justify-center transition-all ${
-                isSelected
-                  ? 'bg-brand-500 text-white'
-                  : 'bg-black/30 text-white opacity-0 group-hover:opacity-100'
-              }`}>
-                <Check className="w-3 h-3" />
-              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+            {mediaItems.map(item => {
+              const isSelected = selected.has(item.id);
+              const thumbUrl = item.baseUrl ? `${item.baseUrl}=w300-h300-c` : '';
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => toggleSelect(item.id)}
+                  className={`relative aspect-square rounded-lg overflow-hidden group border-2 transition-all ${
+                    isSelected
+                      ? 'border-brand-500 ring-2 ring-brand-200'
+                      : 'border-transparent hover:border-surface-300'
+                  }`}
+                >
+                  {thumbUrl ? (
+                    <img
+                      src={thumbUrl}
+                      alt={item.filename}
+                      className="w-full h-full object-cover"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-surface-100 flex items-center justify-center">
+                      <Image className="w-6 h-6 text-surface-300" />
+                    </div>
+                  )}
+                  {item.type === 'VIDEO' && (
+                    <div className="absolute bottom-1 left-1 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded">
+                      VIDEO
+                    </div>
+                  )}
+                  <div className={`absolute top-1.5 right-1.5 w-5 h-5 rounded-full flex items-center justify-center transition-all ${
+                    isSelected
+                      ? 'bg-brand-500 text-white'
+                      : 'bg-black/30 text-white opacity-0 group-hover:opacity-100'
+                  }`}>
+                    <Check className="w-3 h-3" />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Option to pick more */}
+          <div className="text-center pt-2">
+            <button
+              onClick={() => {
+                setPickerDone(false);
+                setMediaItems([]);
+                setSelected(new Set());
+                setImportResult(null);
+              }}
+              className="btn-secondary text-xs"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Select different photos
             </button>
-          );
-        })}
-      </div>
+          </div>
+        </>
+      )}
+
+      {pickerDone && mediaItems.length === 0 && !loading && (
+        <div className="text-center py-8">
+          <p className="text-sm text-surface-400 mb-3">No photos were selected.</p>
+          <button
+            onClick={() => {
+              setPickerDone(false);
+              setSession(null);
+            }}
+            className="btn-secondary text-xs"
+          >
+            Try again
+          </button>
+        </div>
+      )}
 
       {loading && (
         <div className="flex justify-center py-4">
           <Loader2 className="w-5 h-5 animate-spin text-brand-500" />
-        </div>
-      )}
-
-      {nextPageToken && !loading && (
-        <button
-          onClick={() => loadMedia(selectedAlbum?.id, nextPageToken)}
-          className="btn-secondary w-full text-sm"
-        >
-          Load more photos
-        </button>
-      )}
-
-      {!loading && mediaItems.length === 0 && (
-        <div className="text-center py-8 text-surface-400 text-sm">
-          No photos found.
+          <span className="ml-2 text-sm text-surface-500">Loading selected photos...</span>
         </div>
       )}
     </div>
