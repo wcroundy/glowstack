@@ -61,11 +61,11 @@ router.get('/callback', async (req, res) => {
     const { code, error, state } = req.query;
 
     if (error) {
-      return res.redirect(`${CLIENT_REDIRECT}/settings?google_error=${encodeURIComponent(error)}`);
+      return res.redirect(`${CLIENT_REDIRECT}/media?google_error=${encodeURIComponent(error)}`);
     }
 
     if (!code) {
-      return res.redirect(`${CLIENT_REDIRECT}/settings?google_error=no_code`);
+      return res.redirect(`${CLIENT_REDIRECT}/media?google_error=no_code`);
     }
 
     // Exchange code for tokens
@@ -105,10 +105,10 @@ router.get('/callback', async (req, res) => {
     }
 
     // Redirect back to the app
-    res.redirect(`${CLIENT_REDIRECT}/settings?google_connected=true`);
+    res.redirect(`${CLIENT_REDIRECT}/media?google_connected=true`);
   } catch (err) {
     console.error('Google OAuth callback error:', err.message);
-    res.redirect(`${CLIENT_REDIRECT}/settings?google_error=${encodeURIComponent(err.message)}`);
+    res.redirect(`${CLIENT_REDIRECT}/media?google_error=${encodeURIComponent(err.message)}`);
   }
 });
 
