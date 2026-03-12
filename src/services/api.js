@@ -37,6 +37,7 @@ async function request(path, options = {}) {
 export const api = {
   // Media
   getMedia: (params) => request(`/media?${new URLSearchParams(params)}`),
+  getMediaCounts: () => request('/media/counts'),
   getMediaById: (id) => request(`/media/${id}`),
   uploadMedia: (data) => request('/media/upload', { method: 'POST', body: JSON.stringify(data) }),
   tagMedia: (id, tagId) => request(`/media/${id}/tag`, { method: 'POST', body: JSON.stringify({ tag_id: tagId }) }),
@@ -84,7 +85,7 @@ export const api = {
   deleteTag: (id) => request(`/tags/${id}`, { method: 'DELETE' }),
 
   // AI Auto-Tag
-  aiAutoTag: (assetIds) => request('/ai/auto-tag', { method: 'POST', body: JSON.stringify({ assetIds }) }),
+  aiAutoTag: ({ assetIds, untaggedOnly } = {}) => request('/ai/auto-tag', { method: 'POST', body: JSON.stringify({ assetIds, untaggedOnly }) }),
   aiAcceptSuggestedTags: (tags) => request('/ai/accept-suggested-tags', { method: 'POST', body: JSON.stringify({ tags }) }),
 
   // Reports

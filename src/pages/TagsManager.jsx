@@ -43,6 +43,8 @@ export default function TagsManager() {
   const [autoTagResult, setAutoTagResult] = useState(null);
   const [showAutoTagConfirm, setShowAutoTagConfirm] = useState(false);
   const [assetCount, setAssetCount] = useState(null);
+  const [untaggedCount, setUntaggedCount] = useState(null);
+  const [autoTagScope, setAutoTagScope] = useState('untagged'); // 'all' | 'untagged'
   const [showQuotaError, setShowQuotaError] = useState(false);
   const [quotaErrorMessage, setQuotaErrorMessage] = useState('');
 
@@ -119,8 +121,10 @@ export default function TagsManager() {
 
   const promptAutoTag = async () => {
     try {
-      const res = await api.getMedia({ limit: 1, offset: 0 });
-      setAssetCount(res.total || 0);
+      const counts = await api.getMediaCounts();
+      setAssetCount(counts.total || 0);
+      setUntaggedCount(counts.untagged || 0);
+      setAutoTagScope(counts.untagged > 0 ? 'untagged' : 'all');
       setShowAutoTagConfirm(true);
     } catch (err) {
       setError('Failed to get asset count');
@@ -134,7 +138,7 @@ export default function TagsManager() {
     setSuggestedTags([]);
     setError('');
     try {
-      const result = await api.aiAutoTag();
+      const result = await api.aiAutoTag({ untaggedOnly: autoTagScope === 'untagged' });
       setAutoTagResult(result);
       loadTags();
 
@@ -619,7 +623,9 @@ export default function TagsManager() {
       )}
 
       {/* AI Auto-Tag Confirmation Modal */}
-      {showAutoTagConfirm && assetCount !== null && (
+      {showAutoTagConfirm && assetCount !== null && (() => {
+        const scopeCount = autoTagScope === 'untagged' ? untaggedCount : assetCount;
+        return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowAutoTagConfirm(false)}>
           <div className="bg-white rounded-2xl max-w-md w-full shadow-xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between p-5 border-b">
@@ -632,8 +638,37 @@ export default function TagsManager() {
               </button>
             </div>
             <div className="p-5 space-y-4">
+              {/* Scope toggle */}
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-surface-500">Tag which assets?</p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setAutoTagScope('untagged')}
+                    className={`flex-1 text-sm px-3 py-2.5 rounded-xl border font-medium transition-colors ${
+                      autoTagScope === 'untagged'
+                        ? 'border-brand-300 bg-brand-50 text-brand-700'
+                        : 'border-surface-200 bg-white text-surface-600 hover:bg-surface-50'
+                    }`}
+                  >
+                    Untagged only
+                    <span className="block text-xs font-normal mt-0.5 opacity-70">{(untaggedCount || 0).toLocaleString()} assets</span>
+                  </button>
+                  <button
+                    onClick={() => setAutoTagScope('all')}
+                    className={`flex-1 text-sm px-3 py-2.5 rounded-xl border font-medium transition-colors ${
+                      autoTagScope === 'all'
+                        ? 'border-brand-300 bg-brand-50 text-brand-700'
+                        : 'border-surface-200 bg-white text-surface-600 hover:bg-surface-50'
+                    }`}
+                  >
+                    All assets
+                    <span className="block text-xs font-normal mt-0.5 opacity-70">{assetCount.toLocaleString()} assets</span>
+                  </button>
+                </div>
+              </div>
+
               <p className="text-sm text-surface-700">
-                This will analyze <span className="font-semibold">{assetCount.toLocaleString()}</span> asset{assetCount !== 1 ? 's' : ''} using
+                This will analyze <span className="font-semibold">{scopeCount.toLocaleString()}</span> asset{scopeCount !== 1 ? 's' : ''} using
                 OpenAI Vision and apply matching tags from your tag library.
               </p>
 
@@ -643,7 +678,7 @@ export default function TagsManager() {
                   Estimated Cost
                 </div>
                 <p className="text-2xl font-bold text-surface-900">
-                  ${estimateCost(assetCount).toFixed(2)}
+                  ${estimateCost(scopeCount).toFixed(2)}
                 </p>
                 <p className="text-xs text-surface-400">
                   This is an estimate based on ~1,700 input tokens per thumbnail image at gpt-4o-mini rates ($0.15/1M input, $0.60/1M output). Actual cost may vary.
@@ -653,6 +688,7 @@ export default function TagsManager() {
               <div className="flex items-center gap-3 pt-2">
                 <button
                   onClick={handleAutoTag}
+                  disabled={scopeCount === 0}
                   className="btn-primary text-sm flex-1 flex items-center justify-center gap-2"
                 >
                   <Sparkles className="w-4 h-4" />
@@ -668,7 +704,8 @@ export default function TagsManager() {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

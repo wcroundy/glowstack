@@ -72,6 +72,44 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /api/media/counts — get total and untagged asset counts
+// NOTE: Must be defined before /:id to avoid matching "counts" as an ID
+router.get('/counts', async (req, res) => {
+  try {
+    if (!isSupabaseConfigured()) {
+      return res.json({ total: demoMedia.length, untagged: demoMedia.filter(m => !m.tags || m.tags.length === 0).length });
+    }
+
+    // Total count
+    const { count: total, error: totalErr } = await supabase
+      .from('media_assets')
+      .select('id', { count: 'exact', head: true })
+      .eq('is_archived', false);
+    if (totalErr) throw totalErr;
+
+    // Untagged: assets with no rows in media_tags
+    const { data: taggedIds, error: taggedErr } = await supabase
+      .from('media_tags')
+      .select('media_id');
+    if (taggedErr) throw taggedErr;
+
+    const taggedSet = new Set((taggedIds || []).map(r => r.media_id));
+
+    const { data: allIds, error: allErr } = await supabase
+      .from('media_assets')
+      .select('id')
+      .eq('is_archived', false);
+    if (allErr) throw allErr;
+
+    const untagged = (allIds || []).filter(a => !taggedSet.has(a.id)).length;
+
+    res.json({ total: total || 0, untagged });
+  } catch (err) {
+    console.error('Media counts error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/media/:id
 router.get('/:id', async (req, res) => {
   try {

@@ -125,7 +125,7 @@ router.post('/auto-tag', async (req, res) => {
       return res.json({ tagged: 0, message: 'Demo mode — no Supabase configured' });
     }
 
-    const { assetIds } = req.body; // optional: specific assets to tag, or all if empty
+    const { assetIds, untaggedOnly } = req.body; // optional filters
 
     // 1. Get all managed tags
     const { data: allTags, error: tagErr } = await supabase
@@ -137,16 +137,33 @@ router.post('/auto-tag', async (req, res) => {
     }
 
     // 2. Get assets to tag
-    let assetQuery = supabase
-      .from('media_assets')
-      .select('id, file_name, title, file_url, thumbnail_url, ai_description, ai_tags, file_type, mime_type')
-      .eq('is_archived', false);
+    let assetQuery;
+
+    if (untaggedOnly) {
+      // Fetch assets that have zero tags assigned via left join
+      assetQuery = supabase
+        .from('media_assets')
+        .select('id, file_name, title, file_url, thumbnail_url, ai_description, ai_tags, file_type, mime_type, media_tags(tag_id)')
+        .eq('is_archived', false)
+        .is('media_tags', null);
+    } else {
+      assetQuery = supabase
+        .from('media_assets')
+        .select('id, file_name, title, file_url, thumbnail_url, ai_description, ai_tags, file_type, mime_type')
+        .eq('is_archived', false);
+    }
 
     if (assetIds && assetIds.length > 0) {
       assetQuery = assetQuery.in('id', assetIds);
     }
 
-    const { data: assets, error: assetErr } = await assetQuery.limit(100);
+    let { data: assets, error: assetErr } = await assetQuery.limit(100);
+
+    // For untaggedOnly: if the .is('media_tags', null) filter isn't supported,
+    // fall back to filtering in memory
+    if (untaggedOnly && assets && assets.length > 0 && assets[0].media_tags !== undefined) {
+      assets = assets.filter(a => !a.media_tags || a.media_tags.length === 0);
+    }
     if (assetErr) throw assetErr;
     if (!assets || assets.length === 0) {
       return res.json({ tagged: 0, message: 'No assets found to tag' });
