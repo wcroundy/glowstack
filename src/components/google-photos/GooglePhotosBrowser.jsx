@@ -14,6 +14,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
   const [selected, setSelected] = useState(new Set());
   const [loading, setLoading] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState(null); // { done, total }
   const [error, setError] = useState('');
   const [importResult, setImportResult] = useState(null);
   const [polling, setPolling] = useState(false);
@@ -159,10 +160,31 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
     setImporting(true);
     setError('');
     setImportResult(null);
+    setImportProgress({ done: 0, total: selected.size });
+
     try {
       const itemsToImport = mediaItems.filter(i => selected.has(i.id));
-      const result = await api.googlePhotosImport(itemsToImport);
-      setImportResult(result);
+
+      // Send in chunks of 10 to avoid serverless timeouts
+      const CHUNK_SIZE = 10;
+      let totalImported = 0;
+      let totalAlreadyExisted = 0;
+
+      for (let i = 0; i < itemsToImport.length; i += CHUNK_SIZE) {
+        const chunk = itemsToImport.slice(i, i + CHUNK_SIZE);
+        try {
+          const result = await api.googlePhotosImport(chunk);
+          totalImported += result.imported || 0;
+          totalAlreadyExisted += result.alreadyExisted || 0;
+        } catch (chunkErr) {
+          console.error(`Chunk ${i / CHUNK_SIZE + 1} failed:`, chunkErr);
+          // Continue with remaining chunks
+        }
+        setImportProgress({ done: Math.min(i + CHUNK_SIZE, itemsToImport.length), total: itemsToImport.length });
+      }
+
+      const finalResult = { imported: totalImported, alreadyExisted: totalAlreadyExisted };
+      setImportResult(finalResult);
       setSelected(new Set());
 
       // Move newly imported items into the duplicate set
@@ -177,11 +199,12 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
         try { await api.googlePhotosDeleteSession(session.sessionId); } catch {}
       }
 
-      if (onImportComplete) onImportComplete(result);
+      if (onImportComplete) onImportComplete(finalResult);
     } catch (err) {
       setError('Import failed: ' + err.message);
     } finally {
       setImporting(false);
+      setImportProgress(null);
     }
   };
 
@@ -328,7 +351,8 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
                     className="btn-primary text-xs"
                   >
                     {importing ? (
-                      <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Importing...</>
+                      <><Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        {importProgress ? `${importProgress.done}/${importProgress.total}` : 'Starting...'}</>
                     ) : (
                       <><Download className="w-3.5 h-3.5" /> Import {selected.size} new</>
                     )}

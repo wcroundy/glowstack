@@ -85,5 +85,6 @@ export const api = {
   googlePhotosCheckDuplicates: (googleIds) => request('/google-photos/check-duplicates', { method: 'POST', body: JSON.stringify({ googleIds }) }),
   googlePhotosImport: (items) => request('/google-photos/import', { method: 'POST', body: JSON.stringify({ items }) }),
   googlePhotosDeleteSession: (sessionId) => request(`/google-photos/session/${sessionId}`, { method: 'DELETE' }),
+  googlePhotosCleanup: () => request('/google-photos/cleanup', { method: 'POST' }),
   googlePhotosDisconnect: () => request('/google-photos/disconnect', { method: 'POST' }),
 };

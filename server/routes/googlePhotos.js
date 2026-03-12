@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { supabase, isSupabaseConfigured } from '../services/supabase.js';
+import { supabase, isSupabaseConfigured, uploadFile, getPublicUrl } from '../services/supabase.js';
 import {
   getAuthUrl, exchangeCode, getValidToken,
   createSession, getSession, listSessionMediaItems, deleteSession,
@@ -198,6 +198,7 @@ router.post('/check-duplicates', async (req, res) => {
 });
 
 // POST /api/google-photos/import — import selected items into GlowStack (batch)
+// Downloads images to Supabase Storage for permanent URLs
 router.post('/import', async (req, res) => {
   try {
     const { items } = req.body;
@@ -233,27 +234,114 @@ router.post('/import', async (req, res) => {
       });
     }
 
-    // 3. Batch insert all new items (single query)
-    const rows = newItems.map(item => ({
-      file_name: item.filename || 'untitled',
-      file_url: item.baseUrl || '',
-      thumbnail_url: item.baseUrl ? `${item.baseUrl}=w300-h300-c` : '',
-      file_type: item.type === 'VIDEO' ? 'video' : 'image',
-      mime_type: item.mimeType || (item.type === 'VIDEO' ? 'video/mp4' : 'image/jpeg'),
-      source: 'google_photos',
-      google_photos_id: item.id,
-      title: (item.filename || 'untitled').replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '),
-      width: item.width || null,
-      height: item.height || null,
-      captured_at: item.createTime || null,
-    }));
+    // 3. Download images to Supabase Storage in parallel batches
+    const BATCH_SIZE = 5; // concurrent downloads
+    const processedItems = [];
 
+    for (let i = 0; i < newItems.length; i += BATCH_SIZE) {
+      const batch = newItems.slice(i, i + BATCH_SIZE);
+      const results = await Promise.allSettled(
+        batch.map(async (item) => {
+          const isVideo = item.type === 'VIDEO';
+          const ext = isVideo ? 'mp4' : (item.mimeType?.includes('png') ? 'png' : 'jpg');
+          const filename = item.filename || `photo_${item.id}.${ext}`;
+          const storagePath = `google-photos/${item.id}/${filename}`;
+          const thumbPath = `google-photos/${item.id}/thumb_${filename.replace(/\.\w+$/, '.jpg')}`;
+
+          let fileUrl = '';
+          let thumbnailUrl = '';
+
+          if (item.baseUrl && !isVideo) {
+            try {
+              // Download full-size image (max 2048px)
+              const fullRes = await fetch(`${item.baseUrl}=w2048-h2048`);
+              if (fullRes.ok) {
+                const buffer = Buffer.from(await fullRes.arrayBuffer());
+                const contentType = fullRes.headers.get('content-type') || 'image/jpeg';
+                const uploaded = await uploadFile('media', storagePath, buffer, contentType);
+                fileUrl = uploaded.publicUrl;
+              }
+            } catch (err) {
+              console.error(`Failed to download full image for ${item.id}:`, err.message);
+            }
+
+            try {
+              // Download thumbnail (300x300)
+              const thumbRes = await fetch(`${item.baseUrl}=w300-h300-c`);
+              if (thumbRes.ok) {
+                const buffer = Buffer.from(await thumbRes.arrayBuffer());
+                const uploaded = await uploadFile('thumbnails', thumbPath, buffer, 'image/jpeg');
+                thumbnailUrl = uploaded.publicUrl;
+              }
+            } catch (err) {
+              console.error(`Failed to download thumbnail for ${item.id}:`, err.message);
+            }
+          } else if (item.baseUrl && isVideo) {
+            // For videos, just store the thumbnail, not the full video
+            try {
+              const thumbRes = await fetch(`${item.baseUrl}=w300-h300-c`);
+              if (thumbRes.ok) {
+                const buffer = Buffer.from(await thumbRes.arrayBuffer());
+                const uploaded = await uploadFile('thumbnails', thumbPath, buffer, 'image/jpeg');
+                thumbnailUrl = uploaded.publicUrl;
+              }
+            } catch (err) {
+              console.error(`Failed to download video thumbnail for ${item.id}:`, err.message);
+            }
+            // Store the Google baseUrl for video (temporary, but best we can do without huge downloads)
+            fileUrl = `${item.baseUrl}=dv`;
+          }
+
+          return {
+            file_name: filename,
+            file_url: fileUrl,
+            thumbnail_url: thumbnailUrl || fileUrl,
+            file_type: isVideo ? 'video' : 'image',
+            mime_type: item.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
+            source: 'google_photos',
+            google_photos_id: item.id,
+            title: filename.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '),
+            width: item.width || null,
+            height: item.height || null,
+            captured_at: item.createTime || null,
+          };
+        })
+      );
+
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          processedItems.push(result.value);
+        }
+      }
+    }
+
+    if (processedItems.length === 0) {
+      return res.json({ imported: 0, alreadyExisted: alreadyCount, error: 'Failed to process any items' });
+    }
+
+    // 4. Batch insert all processed items
     const { data: inserted, error } = await supabase
       .from('media_assets')
-      .insert(rows)
+      .insert(processedItems)
       .select('id, file_name');
 
-    if (error) throw error;
+    if (error) {
+      // If insert fails, clean up any uploaded storage files
+      console.error('Batch insert failed, cleaning up storage:', error.message);
+      for (const item of processedItems) {
+        try {
+          if (item.file_url) {
+            const path = item.file_url.split('/media/')[1];
+            if (path) await supabase.storage.from('media').remove([decodeURIComponent(path)]);
+          }
+          if (item.thumbnail_url && item.thumbnail_url !== item.file_url) {
+            const path = item.thumbnail_url.split('/thumbnails/')[1];
+            if (path) await supabase.storage.from('thumbnails').remove([decodeURIComponent(path)]);
+          }
+        } catch {} // best effort cleanup
+      }
+      throw error;
+    }
 
     res.json({
       imported: inserted.length,
@@ -262,6 +350,74 @@ router.post('/import', async (req, res) => {
     });
   } catch (err) {
     console.error('Google Photos import error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/google-photos/cleanup — remove media assets with broken/empty URLs from google_photos source
+router.post('/cleanup', async (req, res) => {
+  try {
+    if (!isSupabaseConfigured()) {
+      return res.json({ deleted: 0 });
+    }
+
+    // Delete google_photos assets that have empty or expired base URLs
+    const { data: broken, error: fetchErr } = await supabase
+      .from('media_assets')
+      .select('id')
+      .eq('source', 'google_photos')
+      .or('file_url.is.null,file_url.eq.');
+
+    if (fetchErr) throw fetchErr;
+
+    if (broken && broken.length > 0) {
+      const ids = broken.map(b => b.id);
+      const { error: delErr } = await supabase
+        .from('media_assets')
+        .delete()
+        .in('id', ids);
+      if (delErr) throw delErr;
+      return res.json({ deleted: ids.length });
+    }
+
+    res.json({ deleted: 0 });
+  } catch (err) {
+    console.error('Cleanup error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/google-photos/refresh-urls — refresh expired Google Photos URLs using Picker session
+router.post('/refresh-urls', async (req, res) => {
+  try {
+    const accessToken = await getValidToken();
+    if (!accessToken) return res.status(401).json({ error: 'Google Photos not connected' });
+
+    if (!isSupabaseConfigured()) {
+      return res.json({ refreshed: 0 });
+    }
+
+    // Get all google_photos assets
+    const { data: assets } = await supabase
+      .from('media_assets')
+      .select('id, google_photos_id, file_url')
+      .eq('source', 'google_photos')
+      .not('google_photos_id', 'is', null);
+
+    if (!assets || assets.length === 0) {
+      return res.json({ refreshed: 0 });
+    }
+
+    // Note: The Picker API doesn't let us re-fetch individual items by ID.
+    // Expired URLs are a known limitation. We mark them so the UI can show placeholders.
+    // A future improvement would download images to Supabase Storage during import.
+
+    res.json({
+      total: assets.length,
+      message: 'Google Photos URLs expire after ~1 hour. Consider re-importing photos to refresh them.',
+    });
+  } catch (err) {
+    console.error('Refresh URLs error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
