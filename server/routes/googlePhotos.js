@@ -428,20 +428,12 @@ function formatPickerMediaItem(item) {
   const type = item.type || 'PHOTO'; // PHOTO or VIDEO
   const mediaFile = item.mediaFile || {};
 
-  // Log first item's raw structure to see all available fields
-  if (!formatPickerMediaItem._logged) {
-    console.log('Raw Picker mediaItem keys:', JSON.stringify(Object.keys(item)));
-    console.log('Raw Picker mediaFile keys:', JSON.stringify(Object.keys(mediaFile)));
-    formatPickerMediaItem._logged = true;
-  }
-
   return {
     id: item.id,
     filename: mediaFile.filename || item.id,
     mimeType: mediaFile.mimeType || '',
     type,
     baseUrl: mediaFile.baseUrl || '',
-    productUrl: item.productUrl || '',
     width: mediaFile.mediaFileMetadata?.width ? parseInt(mediaFile.mediaFileMetadata.width) : null,
     height: mediaFile.mediaFileMetadata?.height ? parseInt(mediaFile.mediaFileMetadata.height) : null,
     createTime: item.createTime || null,
