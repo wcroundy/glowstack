@@ -70,6 +70,8 @@ router.get('/callback', async (req, res) => {
 
     // Exchange code for tokens
     const tokens = await exchangeCode(code);
+    console.log('OAuth tokens received. Scope:', tokens.scope);
+    console.log('Token keys:', Object.keys(tokens));
 
     // Get user info for display
     let email = '';
