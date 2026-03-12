@@ -172,6 +172,31 @@ router.get('/session/:id/media', async (req, res) => {
   }
 });
 
+// POST /api/google-photos/check-duplicates — check which items are already imported
+router.post('/check-duplicates', async (req, res) => {
+  try {
+    const { googleIds } = req.body;
+    if (!googleIds || !googleIds.length) {
+      return res.json({ duplicates: [] });
+    }
+
+    if (!isSupabaseConfigured()) {
+      return res.json({ duplicates: [] });
+    }
+
+    const { data: existing } = await supabase
+      .from('media_assets')
+      .select('google_photos_id')
+      .in('google_photos_id', googleIds);
+
+    const duplicateIds = new Set((existing || []).map(e => e.google_photos_id));
+    res.json({ duplicates: [...duplicateIds] });
+  } catch (err) {
+    console.error('Check duplicates error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/google-photos/import — import selected items into GlowStack
 router.post('/import', async (req, res) => {
   try {

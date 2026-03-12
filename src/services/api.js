@@ -82,6 +82,7 @@ export const api = {
   googlePhotosCreateSession: () => request('/google-photos/session', { method: 'POST' }),
   googlePhotosGetSession: (sessionId) => request(`/google-photos/session/${sessionId}`),
   googlePhotosSessionMedia: (sessionId, pageToken) => request(`/google-photos/session/${sessionId}/media?${new URLSearchParams(pageToken ? { pageToken } : {})}`),
+  googlePhotosCheckDuplicates: (googleIds) => request('/google-photos/check-duplicates', { method: 'POST', body: JSON.stringify({ googleIds }) }),
   googlePhotosImport: (items) => request('/google-photos/import', { method: 'POST', body: JSON.stringify({ items }) }),
   googlePhotosDeleteSession: (sessionId) => request(`/google-photos/session/${sessionId}`, { method: 'DELETE' }),
   googlePhotosDisconnect: () => request('/google-photos/disconnect', { method: 'POST' }),

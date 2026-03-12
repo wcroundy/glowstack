@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Image, Download, Loader2, AlertCircle, ExternalLink, Unplug,
-  Check, CheckSquare, Square, RefreshCw,
+  Check, CheckSquare, Square, RefreshCw, CircleCheck,
 } from 'lucide-react';
 import { api } from '../../services/api';
 
@@ -10,6 +10,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
   const [session, setSession] = useState(null); // { sessionId, pickerUri }
   const [pickerDone, setPickerDone] = useState(false);
   const [mediaItems, setMediaItems] = useState([]);
+  const [duplicateIds, setDuplicateIds] = useState(new Set());
   const [selected, setSelected] = useState(new Set());
   const [loading, setLoading] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -48,19 +49,21 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
       setSession(null);
       setMediaItems([]);
       setSelected(new Set());
+      setDuplicateIds(new Set());
       setPickerDone(false);
     } catch (err) {
       setError('Failed to disconnect: ' + err.message);
     }
   };
 
-  // Start a picker session — opens Google's photo picker in a new tab
+  // Start a picker session
   const startPicker = async () => {
     setError('');
     setLoading(true);
     setPickerDone(false);
     setMediaItems([]);
     setSelected(new Set());
+    setDuplicateIds(new Set());
     setImportResult(null);
     try {
       const data = await api.googlePhotosCreateSession();
@@ -75,7 +78,6 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
         try {
           const sessionStatus = await api.googlePhotosGetSession(data.sessionId);
           if (sessionStatus.mediaItemsSet) {
-            // User finished selecting
             clearInterval(pollRef.current);
             pollRef.current = null;
             setPolling(false);
@@ -85,7 +87,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
         } catch (pollErr) {
           console.error('Poll error:', pollErr);
         }
-      }, 3000); // Poll every 3 seconds
+      }, 3000);
     } catch (err) {
       setError('Failed to start photo picker: ' + err.message);
     } finally {
@@ -93,25 +95,39 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
     }
   };
 
-  // Load media items from completed session
+  // Load media items from completed session, then check for duplicates
   const loadSelectedMedia = async (sessionId, pageToken = null) => {
     setLoading(true);
     try {
-      const data = await api.googlePhotosSessionMedia(sessionId, pageToken);
-      setMediaItems(prev => pageToken ? [...prev, ...data.items] : data.items);
-      // Auto-select all items
-      if (!pageToken) {
-        setSelected(new Set(data.items.map(i => i.id)));
-      } else {
-        setSelected(prev => {
-          const next = new Set(prev);
-          data.items.forEach(i => next.add(i.id));
-          return next;
-        });
+      // Collect all items across pages
+      let allItems = [];
+      let currentPageToken = pageToken;
+
+      const firstData = await api.googlePhotosSessionMedia(sessionId, currentPageToken);
+      allItems = [...firstData.items];
+      currentPageToken = firstData.nextPageToken;
+
+      while (currentPageToken) {
+        const moreData = await api.googlePhotosSessionMedia(sessionId, currentPageToken);
+        allItems = [...allItems, ...moreData.items];
+        currentPageToken = moreData.nextPageToken;
       }
-      // Load more if there are more pages
-      if (data.nextPageToken) {
-        await loadSelectedMedia(sessionId, data.nextPageToken);
+
+      setMediaItems(allItems);
+
+      // Check which ones are already imported
+      const googleIds = allItems.map(i => i.id);
+      try {
+        const { duplicates } = await api.googlePhotosCheckDuplicates(googleIds);
+        const dupSet = new Set(duplicates);
+        setDuplicateIds(dupSet);
+
+        // Auto-select only NEW items (not duplicates)
+        const newIds = allItems.filter(i => !dupSet.has(i.id)).map(i => i.id);
+        setSelected(new Set(newIds));
+      } catch {
+        // If duplicate check fails, select all
+        setSelected(new Set(googleIds));
       }
     } catch (err) {
       setError('Failed to load selected photos: ' + err.message);
@@ -129,11 +145,12 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
     });
   };
 
-  const selectAll = () => {
-    if (selected.size === mediaItems.length) {
+  const selectAllNew = () => {
+    const newItems = mediaItems.filter(i => !duplicateIds.has(i.id));
+    if (selected.size === newItems.length && newItems.every(i => selected.has(i.id))) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(mediaItems.map(i => i.id)));
+      setSelected(new Set(newItems.map(i => i.id)));
     }
   };
 
@@ -148,6 +165,13 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
       setImportResult(result);
       setSelected(new Set());
 
+      // Move newly imported items into the duplicate set
+      setDuplicateIds(prev => {
+        const next = new Set(prev);
+        itemsToImport.forEach(i => next.add(i.id));
+        return next;
+      });
+
       // Clean up the session
       if (session?.sessionId) {
         try { await api.googlePhotosDeleteSession(session.sessionId); } catch {}
@@ -160,6 +184,9 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
       setImporting(false);
     }
   };
+
+  const newCount = mediaItems.filter(i => !duplicateIds.has(i.id)).length;
+  const dupCount = mediaItems.length - newCount;
 
   // Not configured
   if (status && !status.configured) {
@@ -275,46 +302,57 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
       {/* Picker done — show selected items for import */}
       {pickerDone && mediaItems.length > 0 && (
         <>
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-surface-600">
-              {mediaItems.length} photo{mediaItems.length !== 1 ? 's' : ''} selected from Google Photos
-            </p>
-            <div className="flex items-center gap-2">
-              <button onClick={selectAll} className="btn-ghost text-xs">
-                {selected.size === mediaItems.length ? (
-                  <><CheckSquare className="w-3.5 h-3.5" /> Deselect all</>
-                ) : (
-                  <><Square className="w-3.5 h-3.5" /> Select all</>
+          {/* Summary bar */}
+          <div className="bg-surface-50 rounded-xl px-4 py-3">
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-surface-700">
+                <span className="font-medium">{mediaItems.length}</span> photo{mediaItems.length !== 1 ? 's' : ''} selected
+                {dupCount > 0 && (
+                  <span className="text-surface-400 ml-2">
+                    ({newCount} new, {dupCount} already in library)
+                  </span>
                 )}
-              </button>
-              {selected.size > 0 && (
-                <button
-                  onClick={handleImport}
-                  disabled={importing}
-                  className="btn-primary text-xs"
-                >
-                  {importing ? (
-                    <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Importing...</>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={selectAllNew} className="btn-ghost text-xs">
+                  {selected.size > 0 ? (
+                    <><CheckSquare className="w-3.5 h-3.5" /> Deselect all</>
                   ) : (
-                    <><Download className="w-3.5 h-3.5" /> Import {selected.size}</>
+                    <><Square className="w-3.5 h-3.5" /> Select new</>
                   )}
                 </button>
-              )}
+                {selected.size > 0 && (
+                  <button
+                    onClick={handleImport}
+                    disabled={importing}
+                    className="btn-primary text-xs"
+                  >
+                    {importing ? (
+                      <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Importing...</>
+                    ) : (
+                      <><Download className="w-3.5 h-3.5" /> Import {selected.size} new</>
+                    )}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
             {mediaItems.map(item => {
+              const isDuplicate = duplicateIds.has(item.id);
               const isSelected = selected.has(item.id);
               const thumbUrl = item.baseUrl ? `${item.baseUrl}=w300-h300-c` : '';
               return (
                 <button
                   key={item.id}
-                  onClick={() => toggleSelect(item.id)}
+                  onClick={() => !isDuplicate && toggleSelect(item.id)}
                   className={`relative aspect-square rounded-lg overflow-hidden group border-2 transition-all ${
-                    isSelected
-                      ? 'border-brand-500 ring-2 ring-brand-200'
-                      : 'border-transparent hover:border-surface-300'
+                    isDuplicate
+                      ? 'border-green-300 opacity-60 cursor-default'
+                      : isSelected
+                        ? 'border-brand-500 ring-2 ring-brand-200'
+                        : 'border-transparent hover:border-surface-300'
                   }`}
                 >
                   {thumbUrl ? (
@@ -334,13 +372,24 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
                       VIDEO
                     </div>
                   )}
-                  <div className={`absolute top-1.5 right-1.5 w-5 h-5 rounded-full flex items-center justify-center transition-all ${
-                    isSelected
-                      ? 'bg-brand-500 text-white'
-                      : 'bg-black/30 text-white opacity-0 group-hover:opacity-100'
-                  }`}>
-                    <Check className="w-3 h-3" />
-                  </div>
+                  {isDuplicate ? (
+                    <div className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full flex items-center justify-center bg-green-500 text-white">
+                      <CircleCheck className="w-3 h-3" />
+                    </div>
+                  ) : (
+                    <div className={`absolute top-1.5 right-1.5 w-5 h-5 rounded-full flex items-center justify-center transition-all ${
+                      isSelected
+                        ? 'bg-brand-500 text-white'
+                        : 'bg-black/30 text-white opacity-0 group-hover:opacity-100'
+                    }`}>
+                      <Check className="w-3 h-3" />
+                    </div>
+                  )}
+                  {isDuplicate && (
+                    <div className="absolute bottom-1 right-1 bg-green-600/80 text-white text-[9px] px-1.5 py-0.5 rounded font-medium">
+                      In library
+                    </div>
+                  )}
                 </button>
               );
             })}
@@ -353,6 +402,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
                 setPickerDone(false);
                 setMediaItems([]);
                 setSelected(new Set());
+                setDuplicateIds(new Set());
                 setImportResult(null);
               }}
               className="btn-secondary text-xs"
