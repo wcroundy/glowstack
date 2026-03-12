@@ -234,15 +234,15 @@ router.post('/import', async (req, res) => {
       });
     }
 
-    // 3. Download ONLY thumbnails to Supabase Storage (fast, small files)
-    // Full-size images stay as Google references — thumbnails are what we need for browsing
-    const BATCH_SIZE = 10; // concurrent thumbnail downloads
-    const processedItems = [];
-
-    // Log first item to debug URL format
-    if (newItems.length > 0) {
-      console.log('First item to import:', JSON.stringify(newItems[0], null, 2));
+    // 3. Get access token for authenticated image downloads
+    const accessToken = await getValidToken();
+    if (!accessToken) {
+      return res.status(401).json({ error: 'Google Photos not connected — cannot download images' });
     }
+
+    // 4. Download thumbnails to Supabase Storage (with auth headers)
+    const BATCH_SIZE = 10;
+    const processedItems = [];
 
     for (let i = 0; i < newItems.length; i += BATCH_SIZE) {
       const batch = newItems.slice(i, i + BATCH_SIZE);
@@ -255,24 +255,18 @@ router.post('/import', async (req, res) => {
           let thumbnailUrl = '';
           const baseUrl = item.baseUrl || '';
 
-          // Download just the thumbnail (~10-30KB each, very fast)
           if (baseUrl) {
             try {
-              const thumbSrc = baseUrl.includes('=') ? baseUrl : `${baseUrl}=w400-h400-c`;
-              const thumbRes = await fetch(thumbSrc);
+              const thumbSrc = `${baseUrl}=w400-h400-c`;
+              const thumbRes = await fetch(thumbSrc, {
+                headers: { Authorization: `Bearer ${accessToken}` },
+              });
               if (thumbRes.ok) {
                 const buffer = Buffer.from(await thumbRes.arrayBuffer());
                 const uploaded = await uploadFile('thumbnails', thumbPath, buffer, 'image/jpeg');
                 thumbnailUrl = uploaded.publicUrl;
               } else {
                 console.error(`Thumb download failed for ${item.id}: ${thumbRes.status}`);
-                // Fallback: try plain baseUrl
-                const retryRes = await fetch(baseUrl);
-                if (retryRes.ok) {
-                  const buffer = Buffer.from(await retryRes.arrayBuffer());
-                  const uploaded = await uploadFile('thumbnails', thumbPath, buffer, 'image/jpeg');
-                  thumbnailUrl = uploaded.publicUrl;
-                }
               }
             } catch (err) {
               console.error(`Thumb error for ${item.id}:`, err.message);
@@ -281,7 +275,7 @@ router.post('/import', async (req, res) => {
 
           return {
             file_name: filename,
-            file_url: thumbnailUrl, // Use thumbnail as display URL for now
+            file_url: thumbnailUrl,
             thumbnail_url: thumbnailUrl,
             file_type: isVideo ? 'video' : 'image',
             mime_type: item.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
