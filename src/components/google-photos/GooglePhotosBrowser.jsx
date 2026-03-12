@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Image, Download, Loader2, AlertCircle, ExternalLink, Unplug,
-  Check, CheckSquare, Square, RefreshCw, CircleCheck,
+  Check, CheckSquare, Square, RefreshCw, CheckCircle2,
 } from 'lucide-react';
 import { api } from '../../services/api';
 
@@ -374,7 +374,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
                   )}
                   {isDuplicate ? (
                     <div className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full flex items-center justify-center bg-green-500 text-white">
-                      <CircleCheck className="w-3 h-3" />
+                      <CheckCircle2 className="w-3 h-3" />
                     </div>
                   ) : (
                     <div className={`absolute top-1.5 right-1.5 w-5 h-5 rounded-full flex items-center justify-center transition-all ${
