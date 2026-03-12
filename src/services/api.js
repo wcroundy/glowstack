@@ -72,6 +72,10 @@ export const api = {
   // Tags
   getTags: (params) => request(`/tags?${new URLSearchParams(params || {})}`),
   createTag: (data) => request('/tags', { method: 'POST', body: JSON.stringify(data) }),
+  deleteTag: (id) => request(`/tags/${id}`, { method: 'DELETE' }),
+
+  // AI Auto-Tag
+  aiAutoTag: (assetIds) => request('/ai/auto-tag', { method: 'POST', body: JSON.stringify({ assetIds }) }),
 
   // Reports
   generateReport: (data) => request('/reports/generate', { method: 'POST', body: JSON.stringify(data) }),

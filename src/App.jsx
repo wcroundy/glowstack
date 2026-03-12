@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Image, BarChart3, CalendarDays, MessageCircle,
-  Settings, Sparkles, Menu, X, ChevronRight, LogOut
+  Settings, Sparkles, Menu, X, ChevronRight, LogOut, Tags
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import MediaLibrary from './pages/MediaLibrary';
@@ -10,6 +10,7 @@ import Analytics from './pages/Analytics';
 import ContentCalendar from './pages/ContentCalendar';
 import AiChat from './pages/AiChat';
 import SetupWizard from './pages/SetupWizard';
+import TagsManager from './pages/TagsManager';
 import ChatDrawer from './components/chat/ChatDrawer';
 import Login from './pages/Login';
 import { setAuthToken } from './services/api';
@@ -19,6 +20,7 @@ const NAV_ITEMS = [
   { to: '/media',      icon: Image,           label: 'Media Library' },
   { to: '/analytics',  icon: BarChart3,       label: 'Analytics' },
   { to: '/calendar',   icon: CalendarDays,    label: 'Calendar' },
+  { to: '/tags',       icon: Tags,            label: 'Tag Manager' },
   { to: '/chat',       icon: MessageCircle,   label: 'AI Assistant' },
   { to: '/settings',   icon: Settings,        label: 'Integrations' },
 ];
@@ -197,6 +199,7 @@ export default function App() {
             <Route path="/media" element={<MediaLibrary />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/calendar" element={<ContentCalendar />} />
+            <Route path="/tags" element={<TagsManager />} />
             <Route path="/chat" element={<AiChat />} />
             <Route path="/settings" element={<SetupWizard />} />
           </Routes>
