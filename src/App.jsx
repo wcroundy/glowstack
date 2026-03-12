@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Image, BarChart3, CalendarDays, MessageCircle,
-  Settings, Sparkles, Menu, X, ChevronRight
+  Settings, Sparkles, Menu, X, ChevronRight, LogOut
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import MediaLibrary from './pages/MediaLibrary';
@@ -11,6 +11,8 @@ import ContentCalendar from './pages/ContentCalendar';
 import AiChat from './pages/AiChat';
 import SetupWizard from './pages/SetupWizard';
 import ChatDrawer from './components/chat/ChatDrawer';
+import Login from './pages/Login';
+import { setAuthToken } from './services/api';
 
 const NAV_ITEMS = [
   { to: '/',           icon: LayoutDashboard, label: 'Dashboard' },
@@ -24,9 +26,75 @@ const NAV_ITEMS = [
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [chatDrawerOpen, setChatDrawerOpen] = useState(false);
+  const [authed, setAuthed] = useState(null); // null = checking, false = not authed, true = authed
   const location = useLocation();
 
   const isChatPage = location.pathname === '/chat';
+
+  // Check for existing session on mount
+  useEffect(() => {
+    const token = localStorage.getItem('glowstack_token');
+    if (!token) {
+      setAuthed(false);
+      return;
+    }
+    setAuthToken(token);
+    fetch('/api/auth/verify', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.valid) {
+          setAuthed(true);
+        } else {
+          localStorage.removeItem('glowstack_token');
+          setAuthToken(null);
+          setAuthed(false);
+        }
+      })
+      .catch(() => {
+        setAuthed(false);
+      });
+  }, []);
+
+  const handleLogin = useCallback((token) => {
+    localStorage.setItem('glowstack_token', token);
+    setAuthToken(token);
+    setAuthed(true);
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    const token = localStorage.getItem('glowstack_token');
+    if (token) {
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    }
+    localStorage.removeItem('glowstack_token');
+    setAuthToken(null);
+    setAuthed(false);
+  }, []);
+
+  // Loading state while checking auth
+  if (authed === null) {
+    return (
+      <div className="h-full flex items-center justify-center bg-surface-50">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center animate-pulse">
+            <Sparkles className="w-5 h-5 text-white" />
+          </div>
+          <p className="text-sm text-surface-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Not authenticated — show login
+  if (!authed) {
+    return <Login onLogin={handleLogin} />;
+  }
 
   return (
     <div className="h-full flex overflow-hidden">
@@ -87,6 +155,17 @@ export default function App() {
               </button>
             </div>
           )}
+
+          {/* Logout */}
+          <div className="p-3 border-t border-surface-100">
+            <button
+              onClick={handleLogout}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-surface-500 hover:bg-surface-100 hover:text-surface-700 transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+              Sign out
+            </button>
+          </div>
         </div>
       </aside>
 

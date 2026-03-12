@@ -1,10 +1,26 @@
 const API_BASE = '/api';
 
+let authToken = null;
+
+export function setAuthToken(token) {
+  authToken = token;
+}
+
 async function request(path, options = {}) {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-    ...options,
-  });
+  const headers = { 'Content-Type': 'application/json', ...options.headers };
+  if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
+  }
+
+  const res = await fetch(`${API_BASE}${path}`, { headers, ...options });
+
+  // If we get a 401, clear auth and reload to show login
+  if (res.status === 401 && !path.includes('/auth/')) {
+    localStorage.removeItem('glowstack_token');
+    window.location.reload();
+    throw new Error('Session expired');
+  }
+
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }

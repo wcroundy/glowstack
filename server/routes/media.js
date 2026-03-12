@@ -1,74 +1,244 @@
 import { Router } from 'express';
+import { supabase, isSupabaseConfigured, uploadFile } from '../services/supabase.js';
 import { demoMedia, demoTags } from '../services/demoData.js';
 
 const router = Router();
 
 // GET /api/media — list all media with optional filters
-router.get('/', (req, res) => {
-  let assets = [...demoMedia];
-  const { search, tag, type, source, favorite, sort } = req.query;
+router.get('/', async (req, res) => {
+  try {
+    if (!isSupabaseConfigured()) {
+      let assets = [...demoMedia];
+      const { search, tag, type, source, favorite, sort } = req.query;
+      if (search) {
+        const q = search.toLowerCase();
+        assets = assets.filter(a =>
+          (a.title || '').toLowerCase().includes(q) ||
+          (a.ai_description || '').toLowerCase().includes(q) ||
+          (a.ai_tags || []).some(t => t.toLowerCase().includes(q))
+        );
+      }
+      if (tag) assets = assets.filter(a => a.tags?.includes(tag));
+      if (type) assets = assets.filter(a => a.file_type === type);
+      if (source) assets = assets.filter(a => a.source === source);
+      if (favorite === 'true') assets = assets.filter(a => a.is_favorite);
+      if (sort === 'quality') {
+        assets.sort((a, b) => (b.ai_quality_score || 0) - (a.ai_quality_score || 0));
+      } else {
+        assets.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      }
+      const enriched = assets.map(a => ({
+        ...a,
+        tag_objects: (a.tags || []).map(tid => demoTags.find(t => t.id === tid)).filter(Boolean),
+      }));
+      return res.json({ data: enriched, total: enriched.length });
+    }
 
-  if (search) {
-    const q = search.toLowerCase();
-    assets = assets.filter(a =>
-      (a.title || '').toLowerCase().includes(q) ||
-      (a.ai_description || '').toLowerCase().includes(q) ||
-      (a.ai_tags || []).some(t => t.toLowerCase().includes(q))
-    );
-  }
-  if (tag) {
-    assets = assets.filter(a => a.tags?.includes(tag));
-  }
-  if (type) {
-    assets = assets.filter(a => a.file_type === type);
-  }
-  if (source) {
-    assets = assets.filter(a => a.source === source);
-  }
-  if (favorite === 'true') {
-    assets = assets.filter(a => a.is_favorite);
-  }
-  if (sort === 'quality') {
-    assets.sort((a, b) => (b.ai_quality_score || 0) - (a.ai_quality_score || 0));
-  } else {
-    assets.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-  }
+    // Supabase query
+    const { search, tag, type, source, favorite, sort, limit = 50, offset = 0 } = req.query;
+    let query = supabase
+      .from('media_assets')
+      .select('*, media_tags(tag_id, tags(*))', { count: 'exact' })
+      .eq('is_archived', false)
+      .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
 
-  // Enrich with tag objects
-  const enriched = assets.map(a => ({
-    ...a,
-    tag_objects: (a.tags || []).map(tid => demoTags.find(t => t.id === tid)).filter(Boolean),
-  }));
+    if (search) query = query.or(`title.ilike.%${search}%,ai_description.ilike.%${search}%`);
+    if (type) query = query.eq('file_type', type);
+    if (source) query = query.eq('source', source);
+    if (favorite === 'true') query = query.eq('is_favorite', true);
+    if (sort === 'quality') {
+      query = query.order('ai_quality_score', { ascending: false, nullsFirst: false });
+    } else {
+      query = query.order('created_at', { ascending: false });
+    }
 
-  res.json({ data: enriched, total: enriched.length });
+    const { data, count, error } = await query;
+    if (error) throw error;
+
+    const enriched = (data || []).map(asset => ({
+      ...asset,
+      tag_objects: (asset.media_tags || []).map(mt => mt.tags).filter(Boolean),
+      media_tags: undefined,
+    }));
+
+    let filtered = enriched;
+    if (tag) {
+      filtered = enriched.filter(a => a.tag_objects.some(t => t.id === tag || t.name === tag));
+    }
+    res.json({ data: filtered, total: tag ? filtered.length : count });
+  } catch (err) {
+    console.error('Media GET error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // GET /api/media/:id
-router.get('/:id', (req, res) => {
-  const asset = demoMedia.find(m => m.id === req.params.id);
-  if (!asset) return res.status(404).json({ error: 'Not found' });
-  res.json({
-    ...asset,
-    tag_objects: (asset.tags || []).map(tid => demoTags.find(t => t.id === tid)).filter(Boolean),
-  });
+router.get('/:id', async (req, res) => {
+  try {
+    if (!isSupabaseConfigured()) {
+      const asset = demoMedia.find(m => m.id === req.params.id);
+      if (!asset) return res.status(404).json({ error: 'Not found' });
+      return res.json({
+        ...asset,
+        tag_objects: (asset.tags || []).map(tid => demoTags.find(t => t.id === tid)).filter(Boolean),
+      });
+    }
+
+    const { data, error } = await supabase
+      .from('media_assets')
+      .select('*, media_tags(tag_id, is_ai_assigned, confidence, tags(*))')
+      .eq('id', req.params.id)
+      .single();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Not found' });
+
+    res.json({
+      ...data,
+      tag_objects: (data.media_tags || []).map(mt => ({
+        ...mt.tags, is_ai_assigned: mt.is_ai_assigned, confidence: mt.confidence,
+      })).filter(Boolean),
+      media_tags: undefined,
+    });
+  } catch (err) {
+    console.error('Media GET/:id error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// POST /api/media/upload (stub)
-router.post('/upload', (req, res) => {
-  res.json({ message: 'Upload endpoint ready — connect Supabase Storage for file handling', id: 'new-' + Date.now() });
+// POST /api/media/upload
+router.post('/upload', async (req, res) => {
+  try {
+    if (!isSupabaseConfigured()) {
+      return res.json({ message: 'Upload ready — run Supabase migration first', id: 'new-' + Date.now() });
+    }
+
+    const { file_name, file_type, mime_type, source = 'upload', title, base64_data } = req.body;
+    if (!base64_data) {
+      return res.status(400).json({ error: 'No file data provided. Send base64_data in body.' });
+    }
+
+    const buffer = Buffer.from(base64_data, 'base64');
+    const storagePath = `uploads/${Date.now()}-${file_name}`;
+    const result = await uploadFile('media', storagePath, buffer, mime_type || 'image/jpeg');
+
+    const { data, error } = await supabase
+      .from('media_assets')
+      .insert({
+        file_name: file_name || 'untitled',
+        file_url: result.publicUrl,
+        thumbnail_url: result.publicUrl,
+        file_type: file_type || 'image',
+        mime_type: mime_type || 'image/jpeg',
+        source,
+        title: title || file_name,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    console.error('Media upload error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST /api/media/:id/tag
-router.post('/:id/tag', (req, res) => {
-  const { tag_id } = req.body;
-  res.json({ message: 'Tag added', media_id: req.params.id, tag_id });
+router.post('/:id/tag', async (req, res) => {
+  try {
+    const { tag_id } = req.body;
+    if (!tag_id) return res.status(400).json({ error: 'tag_id required' });
+
+    if (!isSupabaseConfigured()) {
+      return res.json({ message: 'Tag added (demo)', media_id: req.params.id, tag_id });
+    }
+
+    const { data, error } = await supabase
+      .from('media_tags')
+      .upsert({ media_id: req.params.id, tag_id })
+      .select();
+    if (error) throw error;
+    res.json({ message: 'Tag added', data });
+  } catch (err) {
+    console.error('Media tag error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/media/:id/tag/:tagId
+router.delete('/:id/tag/:tagId', async (req, res) => {
+  try {
+    if (!isSupabaseConfigured()) return res.json({ message: 'Tag removed (demo)' });
+    const { error } = await supabase
+      .from('media_tags')
+      .delete()
+      .eq('media_id', req.params.id)
+      .eq('tag_id', req.params.tagId);
+    if (error) throw error;
+    res.json({ message: 'Tag removed' });
+  } catch (err) {
+    console.error('Media untag error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST /api/media/:id/favorite
-router.post('/:id/favorite', (req, res) => {
-  const asset = demoMedia.find(m => m.id === req.params.id);
-  if (asset) asset.is_favorite = !asset.is_favorite;
-  res.json({ is_favorite: asset?.is_favorite });
+router.post('/:id/favorite', async (req, res) => {
+  try {
+    if (!isSupabaseConfigured()) {
+      const asset = demoMedia.find(m => m.id === req.params.id);
+      if (asset) asset.is_favorite = !asset.is_favorite;
+      return res.json({ is_favorite: asset?.is_favorite });
+    }
+
+    const { data: current } = await supabase
+      .from('media_assets').select('is_favorite').eq('id', req.params.id).single();
+    const { data, error } = await supabase
+      .from('media_assets')
+      .update({ is_favorite: !current?.is_favorite, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .select('is_favorite')
+      .single();
+    if (error) throw error;
+    res.json({ is_favorite: data.is_favorite });
+  } catch (err) {
+    console.error('Media favorite error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/media/:id
+router.put('/:id', async (req, res) => {
+  try {
+    if (!isSupabaseConfigured()) return res.json({ message: 'Updated (demo)', id: req.params.id });
+
+    const { title, notes, album, is_archived } = req.body;
+    const updates = { updated_at: new Date().toISOString() };
+    if (title !== undefined) updates.title = title;
+    if (notes !== undefined) updates.notes = notes;
+    if (album !== undefined) updates.album = album;
+    if (is_archived !== undefined) updates.is_archived = is_archived;
+
+    const { data, error } = await supabase
+      .from('media_assets').update(updates).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    console.error('Media PUT error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/media/:id
+router.delete('/:id', async (req, res) => {
+  try {
+    if (!isSupabaseConfigured()) return res.json({ message: 'Deleted (demo)' });
+    const { error } = await supabase.from('media_assets').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ message: 'Media asset deleted' });
+  } catch (err) {
+    console.error('Media DELETE error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 export default router;

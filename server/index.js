@@ -3,6 +3,8 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { isSupabaseConfigured } from './services/supabase.js';
+import authRoutes, { requireAuth } from './routes/auth.js';
 
 dotenv.config();
 
@@ -13,9 +15,20 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
-app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173', credentials: true }));
+app.use(cors({
+  origin: process.env.VERCEL
+    ? true  // Allow all origins on Vercel (same domain)
+    : (process.env.CLIENT_URL || 'http://localhost:5173'),
+  credentials: true,
+}));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Auth routes (before middleware so login isn't protected)
+app.use('/api/auth', authRoutes);
+
+// Protect all other API routes
+app.use('/api', requireAuth);
 
 // Routes
 import mediaRoutes from './routes/media.js';
@@ -42,19 +55,29 @@ app.use('/api/tags', tagsRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    supabase: isSupabaseConfigured() ? 'connected' : 'using demo data',
+    version: '0.1.0',
+  });
 });
 
-// Serve static files in production
-if (process.env.NODE_ENV === 'production') {
+// Serve static files in production (non-Vercel)
+if (process.env.NODE_ENV === 'production' && !process.env.VERCEL) {
   app.use(express.static(join(__dirname, '../dist')));
   app.get('*', (req, res) => {
     res.sendFile(join(__dirname, '../dist/index.html'));
   });
 }
 
-app.listen(PORT, () => {
-  console.log(`✨ GlowStack API running on port ${PORT}`);
-});
+// Only start listening when running locally (not on Vercel)
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`\n  GlowStack API running on port ${PORT}`);
+    console.log(`  Supabase: ${isSupabaseConfigured() ? 'Connected' : 'Demo mode (configure .env)'}`);
+    console.log(`  Health:   http://localhost:${PORT}/api/health\n`);
+  });
+}
 
 export default app;
