@@ -6,7 +6,6 @@ const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'http://localhost
 
 const SCOPES = [
   'https://www.googleapis.com/auth/photoslibrary.readonly',
-  'https://www.googleapis.com/auth/photoslibrary.sharing',
 ];
 
 // Generate the Google OAuth consent URL
