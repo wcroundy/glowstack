@@ -197,7 +197,7 @@ router.post('/check-duplicates', async (req, res) => {
   }
 });
 
-// POST /api/google-photos/import — import selected items into GlowStack
+// POST /api/google-photos/import — import selected items into GlowStack (batch)
 router.post('/import', async (req, res) => {
   try {
     const { items } = req.body;
@@ -212,48 +212,54 @@ router.post('/import', async (req, res) => {
       });
     }
 
-    const imported = [];
-    for (const item of items) {
-      try {
-        // Check if already imported by google_photos_id
-        const { data: existing } = await supabase
-          .from('media_assets')
-          .select('id')
-          .eq('google_photos_id', item.id)
-          .single();
+    // 1. Batch check for existing items (single query)
+    const googleIds = items.map(i => i.id);
+    const { data: existing } = await supabase
+      .from('media_assets')
+      .select('id, google_photos_id')
+      .in('google_photos_id', googleIds);
 
-        if (existing) {
-          imported.push({ id: existing.id, status: 'already_exists', filename: item.filename });
-          continue;
-        }
+    const existingIds = new Set((existing || []).map(e => e.google_photos_id));
 
-        // Create media asset record
-        const { data: asset, error } = await supabase
-          .from('media_assets')
-          .insert({
-            file_name: item.filename || 'untitled',
-            file_url: item.baseUrl || '',
-            thumbnail_url: item.baseUrl ? `${item.baseUrl}=w300-h300-c` : '',
-            file_type: item.type === 'VIDEO' ? 'video' : 'image',
-            mime_type: item.mimeType || (item.type === 'VIDEO' ? 'video/mp4' : 'image/jpeg'),
-            source: 'google_photos',
-            google_photos_id: item.id,
-            title: (item.filename || 'untitled').replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '),
-            width: item.width || null,
-            height: item.height || null,
-            captured_at: item.createTime || null,
-          })
-          .select()
-          .single();
+    // 2. Filter to only new items
+    const newItems = items.filter(i => !existingIds.has(i.id));
+    const alreadyCount = items.length - newItems.length;
 
-        if (error) throw error;
-        imported.push({ id: asset.id, status: 'imported', filename: item.filename });
-      } catch (itemErr) {
-        imported.push({ id: item.id, status: 'error', error: itemErr.message });
-      }
+    if (newItems.length === 0) {
+      return res.json({
+        imported: 0,
+        alreadyExisted: alreadyCount,
+        message: 'All items are already in your library',
+      });
     }
 
-    res.json({ imported: imported.filter(i => i.status === 'imported').length, items: imported });
+    // 3. Batch insert all new items (single query)
+    const rows = newItems.map(item => ({
+      file_name: item.filename || 'untitled',
+      file_url: item.baseUrl || '',
+      thumbnail_url: item.baseUrl ? `${item.baseUrl}=w300-h300-c` : '',
+      file_type: item.type === 'VIDEO' ? 'video' : 'image',
+      mime_type: item.mimeType || (item.type === 'VIDEO' ? 'video/mp4' : 'image/jpeg'),
+      source: 'google_photos',
+      google_photos_id: item.id,
+      title: (item.filename || 'untitled').replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '),
+      width: item.width || null,
+      height: item.height || null,
+      captured_at: item.createTime || null,
+    }));
+
+    const { data: inserted, error } = await supabase
+      .from('media_assets')
+      .insert(rows)
+      .select('id, file_name');
+
+    if (error) throw error;
+
+    res.json({
+      imported: inserted.length,
+      alreadyExisted: alreadyCount,
+      items: inserted.map(a => ({ id: a.id, status: 'imported', filename: a.file_name })),
+    });
   } catch (err) {
     console.error('Google Photos import error:', err.message);
     res.status(500).json({ error: err.message });
