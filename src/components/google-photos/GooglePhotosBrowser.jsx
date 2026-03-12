@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Image, FolderOpen, Check, CheckSquare, Square, Download,
-  ChevronLeft, Loader2, AlertCircle, ExternalLink, RefreshCw,
+  ChevronLeft, Loader2, AlertCircle, ExternalLink, RefreshCw, Unplug,
 } from 'lucide-react';
 import { api } from '../../services/api';
 
@@ -130,6 +130,18 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
     }
   };
 
+  const handleDisconnect = async () => {
+    try {
+      await api.googlePhotosDisconnect();
+      setStatus({ configured: true, connected: false });
+      setAlbums([]);
+      setMediaItems([]);
+      setSelected(new Set());
+    } catch (err) {
+      setError('Failed to disconnect: ' + err.message);
+    }
+  };
+
   // Not configured
   if (status && !status.configured) {
     return (
@@ -183,10 +195,16 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
             <h3 className="font-semibold text-surface-800">Google Photos</h3>
             <p className="text-xs text-surface-400">Connected as {status.account || 'Google Account'}</p>
           </div>
-          <button onClick={showAllPhotos} className="btn-secondary text-xs">
-            <Image className="w-3.5 h-3.5" />
-            All Photos
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={showAllPhotos} className="btn-secondary text-xs">
+              <Image className="w-3.5 h-3.5" />
+              All Photos
+            </button>
+            <button onClick={handleDisconnect} className="btn-ghost text-xs text-red-500 hover:text-red-700">
+              <Unplug className="w-3.5 h-3.5" />
+              Disconnect
+            </button>
+          </div>
         </div>
 
         {error && (
