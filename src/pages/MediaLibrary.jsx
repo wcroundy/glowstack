@@ -59,7 +59,7 @@ function MediaCard({ asset, onSelect }) {
         {/* Google Photos link overlay */}
         {asset.source === 'google_photos' && (
           <a
-            href={`https://photos.google.com/search/${encodeURIComponent(asset.file_name)}`}
+            href={asset.source_url || `https://photos.google.com/search/${encodeURIComponent(asset.file_name)}`}
             target="_blank"
             rel="noopener noreferrer"
             onClick={e => e.stopPropagation()}
@@ -116,7 +116,7 @@ function MediaDetail({ asset, onClose }) {
             <img src={asset.file_url} alt={asset.title} className="max-w-full max-h-80 rounded-lg object-contain" />
             {asset.source === 'google_photos' && (
               <a
-                href={`https://photos.google.com/search/${encodeURIComponent(asset.file_name)}`}
+                href={asset.source_url || `https://photos.google.com/search/${encodeURIComponent(asset.file_name)}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="absolute bottom-6 right-6 bg-white/95 hover:bg-white text-surface-700 rounded-xl px-3 py-2 flex items-center gap-1.5 text-xs font-medium shadow-md hover:shadow-lg transition-all"
