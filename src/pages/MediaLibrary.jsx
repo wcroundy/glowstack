@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
   Search, Filter, Grid3X3, List, Heart, Star, Tag, Upload,
-  Image as ImageIcon, Video, Sparkles, X, ChevronDown, Eye, Camera, ExternalLink
+  Image as ImageIcon, Video, Sparkles, X, ChevronDown, Eye, Camera, ExternalLink,
+  ChevronLeft, ChevronRight as ChevronRightIcon, ChevronsLeft, ChevronsRight
 } from 'lucide-react';
 import { api } from '../services/api';
 import GooglePhotosBrowser from '../components/google-photos/GooglePhotosBrowser';
@@ -212,6 +213,8 @@ function MediaDetail({ asset, onClose }) {
   );
 }
 
+const PAGE_SIZE = 50;
+
 export default function MediaLibrary() {
   const [media, setMedia] = useState([]);
   const [tags, setTags] = useState([]);
@@ -221,24 +224,47 @@ export default function MediaLibrary() {
   const [viewMode, setViewMode] = useState('grid');
   const [showFilters, setShowFilters] = useState(false);
   const [showGooglePhotos, setShowGooglePhotos] = useState(false);
+  const [page, setPage] = useState(1);
+  const [totalAssets, setTotalAssets] = useState(0);
 
-  const refreshMedia = () => {
-    const params = { ...activeFilter };
-    if (search) params.search = search;
-    api.getMedia(params).then(r => setMedia(r.data || []));
+  const totalPages = Math.max(1, Math.ceil(totalAssets / PAGE_SIZE));
+
+  const fetchMedia = (params = {}) => {
+    const offset = ((params.page || page) - 1) * PAGE_SIZE;
+    const queryParams = { ...activeFilter, limit: PAGE_SIZE, offset, ...params };
+    delete queryParams.page;
+    if (search) queryParams.search = search;
+    api.getMedia(queryParams).then(r => {
+      setMedia(r.data || []);
+      setTotalAssets(r.total || 0);
+    });
   };
 
+  const refreshMedia = () => fetchMedia();
+
   useEffect(() => {
-    api.getMedia({}).then(r => setMedia(r.data || []));
+    fetchMedia({ page: 1 });
     api.getTags().then(r => setTags(r.data || []));
   }, []);
 
-  // Apply search
+  // Apply search/filters — reset to page 1
   useEffect(() => {
-    const params = { ...activeFilter };
-    if (search) params.search = search;
-    api.getMedia(params).then(r => setMedia(r.data || []));
+    setPage(1);
+    fetchMedia({ page: 1 });
   }, [search, activeFilter]);
+
+  // Page change
+  useEffect(() => {
+    fetchMedia();
+  }, [page]);
+
+  const goToPage = (p) => {
+    const target = Math.max(1, Math.min(p, totalPages));
+    if (target !== page) {
+      setPage(target);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
 
   const tagCategories = [...new Set(tags.map(t => t.category))];
 
@@ -248,7 +274,7 @@ export default function MediaLibrary() {
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-surface-900">Media Library</h1>
-          <p className="text-sm text-surface-500 mt-0.5">{media.length} assets · AI-tagged and searchable</p>
+          <p className="text-sm text-surface-500 mt-0.5">{totalAssets} assets · AI-tagged and searchable</p>
         </div>
         <div className="flex gap-2">
           <button
@@ -395,6 +421,96 @@ export default function MediaLibrary() {
           )
         ))}
       </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && media.length > 0 && (
+        <div className="flex items-center justify-between mt-6 pt-4 border-t border-surface-100">
+          <p className="text-xs text-surface-400">
+            Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, totalAssets)} of {totalAssets}
+          </p>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => goToPage(1)}
+              disabled={page === 1}
+              className="p-1.5 rounded-lg hover:bg-surface-100 disabled:opacity-30 disabled:cursor-not-allowed"
+              title="First page"
+            >
+              <ChevronsLeft className="w-4 h-4 text-surface-600" />
+            </button>
+            <button
+              onClick={() => goToPage(page - 1)}
+              disabled={page === 1}
+              className="p-1.5 rounded-lg hover:bg-surface-100 disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Previous page"
+            >
+              <ChevronLeft className="w-4 h-4 text-surface-600" />
+            </button>
+
+            {/* Page numbers */}
+            {(() => {
+              const pages = [];
+              let start = Math.max(1, page - 2);
+              let end = Math.min(totalPages, start + 4);
+              if (end - start < 4) start = Math.max(1, end - 4);
+
+              if (start > 1) {
+                pages.push(
+                  <button key={1} onClick={() => goToPage(1)}
+                    className="w-8 h-8 rounded-lg text-xs font-medium text-surface-600 hover:bg-surface-100">
+                    1
+                  </button>
+                );
+                if (start > 2) pages.push(<span key="dots-s" className="text-surface-300 text-xs px-1">...</span>);
+              }
+
+              for (let i = start; i <= end; i++) {
+                pages.push(
+                  <button
+                    key={i}
+                    onClick={() => goToPage(i)}
+                    className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors ${
+                      i === page
+                        ? 'bg-brand-500 text-white'
+                        : 'text-surface-600 hover:bg-surface-100'
+                    }`}
+                  >
+                    {i}
+                  </button>
+                );
+              }
+
+              if (end < totalPages) {
+                if (end < totalPages - 1) pages.push(<span key="dots-e" className="text-surface-300 text-xs px-1">...</span>);
+                pages.push(
+                  <button key={totalPages} onClick={() => goToPage(totalPages)}
+                    className="w-8 h-8 rounded-lg text-xs font-medium text-surface-600 hover:bg-surface-100">
+                    {totalPages}
+                  </button>
+                );
+              }
+
+              return pages;
+            })()}
+
+            <button
+              onClick={() => goToPage(page + 1)}
+              disabled={page === totalPages}
+              className="p-1.5 rounded-lg hover:bg-surface-100 disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Next page"
+            >
+              <ChevronRightIcon className="w-4 h-4 text-surface-600" />
+            </button>
+            <button
+              onClick={() => goToPage(totalPages)}
+              disabled={page === totalPages}
+              className="p-1.5 rounded-lg hover:bg-surface-100 disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Last page"
+            >
+              <ChevronsRight className="w-4 h-4 text-surface-600" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {media.length === 0 && (
         <div className="text-center py-16 text-surface-400">
