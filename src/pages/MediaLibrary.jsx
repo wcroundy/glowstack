@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Search, Filter, Grid3X3, List, Heart, Star, Tag, Upload,
-  Image as ImageIcon, Video, Sparkles, X, ChevronDown, Eye, Camera
+  Image as ImageIcon, Video, Sparkles, X, ChevronDown, Eye, Camera, ExternalLink
 } from 'lucide-react';
 import { api } from '../services/api';
 import GooglePhotosBrowser from '../components/google-photos/GooglePhotosBrowser';
@@ -56,6 +56,20 @@ function MediaCard({ asset, onSelect }) {
         <div className={`absolute inset-0 bg-black/40 flex items-center justify-center transition-opacity ${hovered ? 'opacity-100' : 'opacity-0'}`}>
           <Eye className="w-6 h-6 text-white" />
         </div>
+        {/* Google Photos link overlay */}
+        {asset.source === 'google_photos' && (
+          <a
+            href={`https://photos.google.com/search/${encodeURIComponent(asset.file_name)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            className={`absolute bottom-2 left-2 bg-white/90 hover:bg-white text-surface-700 rounded-lg px-2 py-1 flex items-center gap-1 text-[10px] font-medium shadow-sm transition-opacity ${hovered ? 'opacity-100' : 'opacity-0'}`}
+            title="View in Google Photos"
+          >
+            <ExternalLink className="w-3 h-3" />
+            Google Photos
+          </a>
+        )}
       </div>
 
       {/* Info */}
@@ -98,8 +112,19 @@ function MediaDetail({ asset, onClose }) {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-0">
           {/* Image */}
-          <div className="bg-surface-100 flex items-center justify-center p-4">
+          <div className="bg-surface-100 flex items-center justify-center p-4 relative">
             <img src={asset.file_url} alt={asset.title} className="max-w-full max-h-80 rounded-lg object-contain" />
+            {asset.source === 'google_photos' && (
+              <a
+                href={`https://photos.google.com/search/${encodeURIComponent(asset.file_name)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="absolute bottom-6 right-6 bg-white/95 hover:bg-white text-surface-700 rounded-xl px-3 py-2 flex items-center gap-1.5 text-xs font-medium shadow-md hover:shadow-lg transition-all"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                View in Google Photos
+              </a>
+            )}
           </div>
 
           {/* Details */}
@@ -158,8 +183,9 @@ function MediaDetail({ asset, onClose }) {
 
             {/* Meta */}
             <div className="text-[11px] text-surface-400 space-y-0.5 pt-2 border-t">
-              <p>Source: {asset.source} · Type: {asset.file_type}</p>
+              <p>Source: {asset.source === 'google_photos' ? 'Google Photos' : asset.source} · Type: {asset.file_type}</p>
               <p>Created: {new Date(asset.created_at).toLocaleDateString()}</p>
+              {asset.width && asset.height && <p>Dimensions: {asset.width} x {asset.height}</p>}
               {asset.duration_seconds && <p>Duration: {asset.duration_seconds}s</p>}
             </div>
           </div>
