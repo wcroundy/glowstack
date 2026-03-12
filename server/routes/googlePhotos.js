@@ -234,68 +234,55 @@ router.post('/import', async (req, res) => {
       });
     }
 
-    // 3. Download images to Supabase Storage in parallel batches
-    const BATCH_SIZE = 5; // concurrent downloads
+    // 3. Download ONLY thumbnails to Supabase Storage (fast, small files)
+    // Full-size images stay as Google references — thumbnails are what we need for browsing
+    const BATCH_SIZE = 10; // concurrent thumbnail downloads
     const processedItems = [];
+
+    // Log first item to debug URL format
+    if (newItems.length > 0) {
+      console.log('First item to import:', JSON.stringify(newItems[0], null, 2));
+    }
 
     for (let i = 0; i < newItems.length; i += BATCH_SIZE) {
       const batch = newItems.slice(i, i + BATCH_SIZE);
       const results = await Promise.allSettled(
         batch.map(async (item) => {
           const isVideo = item.type === 'VIDEO';
-          const ext = isVideo ? 'mp4' : (item.mimeType?.includes('png') ? 'png' : 'jpg');
-          const filename = item.filename || `photo_${item.id}.${ext}`;
-          const storagePath = `google-photos/${item.id}/${filename}`;
-          const thumbPath = `google-photos/${item.id}/thumb_${filename.replace(/\.\w+$/, '.jpg')}`;
+          const filename = item.filename || `photo_${item.id}.jpg`;
+          const thumbPath = `google-photos/${item.id}/thumb.jpg`;
 
-          let fileUrl = '';
           let thumbnailUrl = '';
+          const baseUrl = item.baseUrl || '';
 
-          if (item.baseUrl && !isVideo) {
+          // Download just the thumbnail (~10-30KB each, very fast)
+          if (baseUrl) {
             try {
-              // Download full-size image (max 2048px)
-              const fullRes = await fetch(`${item.baseUrl}=w2048-h2048`);
-              if (fullRes.ok) {
-                const buffer = Buffer.from(await fullRes.arrayBuffer());
-                const contentType = fullRes.headers.get('content-type') || 'image/jpeg';
-                const uploaded = await uploadFile('media', storagePath, buffer, contentType);
-                fileUrl = uploaded.publicUrl;
-              }
-            } catch (err) {
-              console.error(`Failed to download full image for ${item.id}:`, err.message);
-            }
-
-            try {
-              // Download thumbnail (300x300)
-              const thumbRes = await fetch(`${item.baseUrl}=w300-h300-c`);
+              const thumbSrc = baseUrl.includes('=') ? baseUrl : `${baseUrl}=w400-h400-c`;
+              const thumbRes = await fetch(thumbSrc);
               if (thumbRes.ok) {
                 const buffer = Buffer.from(await thumbRes.arrayBuffer());
                 const uploaded = await uploadFile('thumbnails', thumbPath, buffer, 'image/jpeg');
                 thumbnailUrl = uploaded.publicUrl;
+              } else {
+                console.error(`Thumb download failed for ${item.id}: ${thumbRes.status}`);
+                // Fallback: try plain baseUrl
+                const retryRes = await fetch(baseUrl);
+                if (retryRes.ok) {
+                  const buffer = Buffer.from(await retryRes.arrayBuffer());
+                  const uploaded = await uploadFile('thumbnails', thumbPath, buffer, 'image/jpeg');
+                  thumbnailUrl = uploaded.publicUrl;
+                }
               }
             } catch (err) {
-              console.error(`Failed to download thumbnail for ${item.id}:`, err.message);
+              console.error(`Thumb error for ${item.id}:`, err.message);
             }
-          } else if (item.baseUrl && isVideo) {
-            // For videos, just store the thumbnail, not the full video
-            try {
-              const thumbRes = await fetch(`${item.baseUrl}=w300-h300-c`);
-              if (thumbRes.ok) {
-                const buffer = Buffer.from(await thumbRes.arrayBuffer());
-                const uploaded = await uploadFile('thumbnails', thumbPath, buffer, 'image/jpeg');
-                thumbnailUrl = uploaded.publicUrl;
-              }
-            } catch (err) {
-              console.error(`Failed to download video thumbnail for ${item.id}:`, err.message);
-            }
-            // Store the Google baseUrl for video (temporary, but best we can do without huge downloads)
-            fileUrl = `${item.baseUrl}=dv`;
           }
 
           return {
             file_name: filename,
-            file_url: fileUrl,
-            thumbnail_url: thumbnailUrl || fileUrl,
+            file_url: thumbnailUrl, // Use thumbnail as display URL for now
+            thumbnail_url: thumbnailUrl,
             file_type: isVideo ? 'video' : 'image',
             mime_type: item.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
             source: 'google_photos',
@@ -311,6 +298,8 @@ router.post('/import', async (req, res) => {
       for (const result of results) {
         if (result.status === 'fulfilled') {
           processedItems.push(result.value);
+        } else {
+          console.error('Item processing rejected:', result.reason);
         }
       }
     }
@@ -325,23 +314,7 @@ router.post('/import', async (req, res) => {
       .insert(processedItems)
       .select('id, file_name');
 
-    if (error) {
-      // If insert fails, clean up any uploaded storage files
-      console.error('Batch insert failed, cleaning up storage:', error.message);
-      for (const item of processedItems) {
-        try {
-          if (item.file_url) {
-            const path = item.file_url.split('/media/')[1];
-            if (path) await supabase.storage.from('media').remove([decodeURIComponent(path)]);
-          }
-          if (item.thumbnail_url && item.thumbnail_url !== item.file_url) {
-            const path = item.thumbnail_url.split('/thumbnails/')[1];
-            if (path) await supabase.storage.from('thumbnails').remove([decodeURIComponent(path)]);
-          }
-        } catch {} // best effort cleanup
-      }
-      throw error;
-    }
+    if (error) throw error;
 
     res.json({
       imported: inserted.length,

@@ -165,8 +165,8 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
     try {
       const itemsToImport = mediaItems.filter(i => selected.has(i.id));
 
-      // Send in chunks of 10 to avoid serverless timeouts
-      const CHUNK_SIZE = 10;
+      // Send in small chunks to avoid serverless timeouts
+      const CHUNK_SIZE = 5;
       let totalImported = 0;
       let totalAlreadyExisted = 0;
 
