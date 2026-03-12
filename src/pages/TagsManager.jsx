@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Tags, Plus, Trash2, Sparkles, Loader2, AlertCircle,
-  CheckCircle2, Hash, Palette, FolderOpen, Wand2,
+  CheckCircle2, Hash, Palette, FolderOpen, Wand2, X, DollarSign,
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -40,6 +40,8 @@ export default function TagsManager() {
   // AI auto-tag
   const [autoTagging, setAutoTagging] = useState(false);
   const [autoTagResult, setAutoTagResult] = useState(null);
+  const [showAutoTagConfirm, setShowAutoTagConfirm] = useState(false);
+  const [assetCount, setAssetCount] = useState(null);
 
   // Filter
   const [filterCategory, setFilterCategory] = useState('');
@@ -94,14 +96,36 @@ export default function TagsManager() {
     }
   };
 
+  // Cost estimation: ~1,500 tokens per thumbnail image + ~200 tokens prompt/response
+  // gpt-4o-mini: $0.15 per 1M input, $0.60 per 1M output
+  const estimateCost = (count) => {
+    const inputTokensPerAsset = 1700;
+    const outputTokensPerAsset = 80;
+    const totalInput = count * inputTokensPerAsset;
+    const totalOutput = count * outputTokensPerAsset;
+    const inputCost = (totalInput / 1_000_000) * 0.15;
+    const outputCost = (totalOutput / 1_000_000) * 0.60;
+    return inputCost + outputCost;
+  };
+
+  const promptAutoTag = async () => {
+    try {
+      const res = await api.getMedia({ limit: 1, offset: 0 });
+      setAssetCount(res.total || 0);
+      setShowAutoTagConfirm(true);
+    } catch (err) {
+      setError('Failed to get asset count');
+    }
+  };
+
   const handleAutoTag = async () => {
+    setShowAutoTagConfirm(false);
     setAutoTagging(true);
     setAutoTagResult(null);
     setError('');
     try {
       const result = await api.aiAutoTag();
       setAutoTagResult(result);
-      // Reload tags to get updated usage counts
       loadTags();
     } catch (err) {
       setError('AI auto-tagging failed: ' + err.message);
@@ -139,7 +163,7 @@ export default function TagsManager() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={handleAutoTag}
+            onClick={promptAutoTag}
             disabled={autoTagging || tags.length === 0}
             className="btn-secondary text-sm flex items-center gap-2"
           >
@@ -374,6 +398,58 @@ export default function TagsManager() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* AI Auto-Tag Confirmation Modal */}
+      {showAutoTagConfirm && assetCount !== null && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowAutoTagConfirm(false)}>
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 border-b">
+              <h3 className="font-semibold text-surface-900 flex items-center gap-2">
+                <Wand2 className="w-5 h-5 text-brand-500" />
+                AI Auto-Tag
+              </h3>
+              <button onClick={() => setShowAutoTagConfirm(false)} className="p-1.5 rounded-lg hover:bg-surface-100">
+                <X className="w-5 h-5 text-surface-400" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-surface-700">
+                This will analyze <span className="font-semibold">{assetCount.toLocaleString()}</span> asset{assetCount !== 1 ? 's' : ''} using
+                OpenAI Vision and apply matching tags from your tag library.
+              </p>
+
+              <div className="bg-surface-50 rounded-xl p-4 space-y-2">
+                <div className="flex items-center gap-2 text-sm font-medium text-surface-800">
+                  <DollarSign className="w-4 h-4 text-surface-500" />
+                  Estimated Cost
+                </div>
+                <p className="text-2xl font-bold text-surface-900">
+                  ${estimateCost(assetCount).toFixed(2)}
+                </p>
+                <p className="text-xs text-surface-400">
+                  This is an estimate based on ~1,700 input tokens per thumbnail image at gpt-4o-mini rates ($0.15/1M input, $0.60/1M output). Actual cost may vary.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  onClick={handleAutoTag}
+                  className="btn-primary text-sm flex-1 flex items-center justify-center gap-2"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  Proceed with Auto-Tag
+                </button>
+                <button
+                  onClick={() => setShowAutoTagConfirm(false)}
+                  className="btn-ghost text-sm"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
