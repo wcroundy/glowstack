@@ -6,17 +6,21 @@ import {
 import { api } from '../services/api';
 import GooglePhotosBrowser from '../components/google-photos/GooglePhotosBrowser';
 
-// Build a Google Photos link — uses date-based search if we have captured_at
+// Build a Google Photos link — combines date + filename for best match
 function googlePhotosLink(asset) {
   if (asset.source_url) return asset.source_url;
+  const parts = [];
   if (asset.captured_at) {
     const d = new Date(asset.captured_at);
     const year = d.getFullYear();
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
-    return `https://photos.google.com/search/${year}-${month}-${day}`;
+    parts.push(`${year}-${month}-${day}`);
   }
-  return `https://photos.google.com/search/${encodeURIComponent(asset.file_name)}`;
+  if (asset.file_name) {
+    parts.push(asset.file_name);
+  }
+  return `https://photos.google.com/search/${encodeURIComponent(parts.join(' '))}`;
 }
 
 function TagPill({ tag }) {
