@@ -212,7 +212,22 @@ router.post('/auto-tag', async (req, res) => {
                 .map(t => t.id);
             }
           } else {
-            console.error('OpenAI API error:', response.status, await response.text());
+            const errorBody = await response.text();
+            console.error('OpenAI API error:', response.status, errorBody);
+
+            // Detect insufficient quota / billing errors and stop early
+            if (response.status === 429 || errorBody.includes('insufficient_quota') || errorBody.includes('billing')) {
+              let detail = 'Unknown billing error';
+              try {
+                const parsed = JSON.parse(errorBody);
+                detail = parsed.error?.message || detail;
+              } catch (_) {}
+              return res.status(402).json({
+                error: 'openai_insufficient_quota',
+                message: detail,
+                totalAssetsProcessed: 0,
+              });
+            }
           }
         } catch (aiErr) {
           console.error('OpenAI Vision error for asset', asset.id, ':', aiErr.message);

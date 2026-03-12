@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Tags, Plus, Trash2, Sparkles, Loader2, AlertCircle,
-  CheckCircle2, Hash, Palette, FolderOpen, Wand2, X, DollarSign,
+  CheckCircle2, Hash, Palette, FolderOpen, Wand2, X, DollarSign, CreditCard,
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -42,6 +42,8 @@ export default function TagsManager() {
   const [autoTagResult, setAutoTagResult] = useState(null);
   const [showAutoTagConfirm, setShowAutoTagConfirm] = useState(false);
   const [assetCount, setAssetCount] = useState(null);
+  const [showQuotaError, setShowQuotaError] = useState(false);
+  const [quotaErrorMessage, setQuotaErrorMessage] = useState('');
 
   // Filter
   const [filterCategory, setFilterCategory] = useState('');
@@ -128,7 +130,12 @@ export default function TagsManager() {
       setAutoTagResult(result);
       loadTags();
     } catch (err) {
-      setError('AI auto-tagging failed: ' + err.message);
+      if (err.code === 'openai_insufficient_quota') {
+        setQuotaErrorMessage(err.message);
+        setShowQuotaError(true);
+      } else {
+        setError('AI auto-tagging failed: ' + err.message);
+      }
     } finally {
       setAutoTagging(false);
     }
@@ -398,6 +405,50 @@ export default function TagsManager() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* OpenAI Insufficient Quota Modal */}
+      {showQuotaError && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowQuotaError(false)}>
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 border-b">
+              <h3 className="font-semibold text-surface-900 flex items-center gap-2">
+                <CreditCard className="w-5 h-5 text-red-500" />
+                Insufficient OpenAI Credits
+              </h3>
+              <button onClick={() => setShowQuotaError(false)} className="p-1.5 rounded-lg hover:bg-surface-100">
+                <X className="w-5 h-5 text-surface-400" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-surface-700">
+                The OpenAI API returned an insufficient quota error. This means your account doesn't have enough credits to process the request.
+              </p>
+
+              <div className="bg-red-50 rounded-xl p-4 space-y-2">
+                <p className="text-xs font-medium text-red-700">Error from OpenAI:</p>
+                <p className="text-xs text-red-600">{quotaErrorMessage}</p>
+              </div>
+
+              <div className="bg-surface-50 rounded-xl p-4 space-y-2">
+                <p className="text-sm font-medium text-surface-800">How to fix this:</p>
+                <ol className="text-sm text-surface-600 space-y-1.5 list-decimal list-inside">
+                  <li>Go to <a href="https://platform.openai.com/account/billing" target="_blank" rel="noopener noreferrer" className="text-brand-600 underline hover:text-brand-700">platform.openai.com/account/billing</a></li>
+                  <li>Add a payment method or load prepaid credits</li>
+                  <li>Even $5 in credits is enough to tag thousands of images</li>
+                  <li>Come back and try AI Auto-Tag again</li>
+                </ol>
+              </div>
+
+              <button
+                onClick={() => setShowQuotaError(false)}
+                className="btn-primary text-sm w-full"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

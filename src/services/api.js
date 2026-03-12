@@ -21,7 +21,16 @@ async function request(path, options = {}) {
     throw new Error('Session expired');
   }
 
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  if (!res.ok) {
+    // Try to parse error body for structured error info
+    let errorData;
+    try { errorData = await res.json(); } catch (_) {}
+    const err = new Error(errorData?.message || `API error: ${res.status}`);
+    err.status = res.status;
+    err.code = errorData?.error;
+    err.data = errorData;
+    throw err;
+  }
   return res.json();
 }
 
