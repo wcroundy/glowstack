@@ -136,21 +136,22 @@ router.post('/auto-tag', async (req, res) => {
       return res.json({ tagged: 0, message: 'No tags defined. Create tags in the Tag Manager first.' });
     }
 
-    // 2. Get assets to tag
+    // 2. Get assets to tag (images only — video thumbnails aren't reliable for tagging)
     let assetQuery;
 
     if (untaggedOnly) {
-      // Fetch assets that have zero tags assigned via left join
       assetQuery = supabase
         .from('media_assets')
         .select('id, file_name, title, file_url, thumbnail_url, ai_description, ai_tags, file_type, mime_type, media_tags(tag_id)')
         .eq('is_archived', false)
+        .eq('file_type', 'image')
         .is('media_tags', null);
     } else {
       assetQuery = supabase
         .from('media_assets')
         .select('id, file_name, title, file_url, thumbnail_url, ai_description, ai_tags, file_type, mime_type')
-        .eq('is_archived', false);
+        .eq('is_archived', false)
+        .eq('file_type', 'image');
     }
 
     if (assetIds && assetIds.length > 0) {
@@ -166,7 +167,7 @@ router.post('/auto-tag', async (req, res) => {
     }
     if (assetErr) throw assetErr;
     if (!assets || assets.length === 0) {
-      return res.json({ tagged: 0, message: 'No assets found to tag' });
+      return res.json({ tagged: 0, message: 'No image assets found to tag (videos are excluded)' });
     }
 
     const tagMap = {};

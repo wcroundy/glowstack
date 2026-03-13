@@ -651,7 +651,7 @@ export default function TagsManager() {
                     }`}
                   >
                     Untagged only
-                    <span className="block text-xs font-normal mt-0.5 opacity-70">{(untaggedCount || 0).toLocaleString()} assets</span>
+                    <span className="block text-xs font-normal mt-0.5 opacity-70">{(untaggedCount || 0).toLocaleString()} images</span>
                   </button>
                   <button
                     onClick={() => setAutoTagScope('all')}
@@ -661,15 +661,15 @@ export default function TagsManager() {
                         : 'border-surface-200 bg-white text-surface-600 hover:bg-surface-50'
                     }`}
                   >
-                    All assets
-                    <span className="block text-xs font-normal mt-0.5 opacity-70">{assetCount.toLocaleString()} assets</span>
+                    All images
+                    <span className="block text-xs font-normal mt-0.5 opacity-70">{assetCount.toLocaleString()} images</span>
                   </button>
                 </div>
               </div>
 
               <p className="text-sm text-surface-700">
-                This will analyze <span className="font-semibold">{scopeCount.toLocaleString()}</span> asset{scopeCount !== 1 ? 's' : ''} using
-                OpenAI Vision and apply matching tags from your tag library.
+                This will analyze <span className="font-semibold">{scopeCount.toLocaleString()}</span> image{scopeCount !== 1 ? 's' : ''} using
+                OpenAI Vision and apply matching tags from your tag library. Videos are excluded since thumbnails alone aren't reliable for tagging.
               </p>
 
               <div className="bg-surface-50 rounded-xl p-4 space-y-2">

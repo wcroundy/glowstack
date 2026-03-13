@@ -80,11 +80,12 @@ router.get('/counts', async (req, res) => {
       return res.json({ total: demoMedia.length, untagged: demoMedia.filter(m => !m.tags || m.tags.length === 0).length });
     }
 
-    // Get all asset IDs (raise limit to handle large libraries)
+    // Get all image asset IDs (auto-tag only processes images, not videos)
     const { data: allIds, error: allErr } = await supabase
       .from('media_assets')
       .select('id')
       .eq('is_archived', false)
+      .eq('file_type', 'image')
       .limit(50000);
     if (allErr) throw allErr;
 
@@ -100,7 +101,7 @@ router.get('/counts', async (req, res) => {
     const taggedSet = new Set((taggedRows || []).map(r => r.media_id));
     const allAssetIds = new Set((allIds || []).map(a => a.id));
 
-    // Only count tags for assets that actually exist and aren't archived
+    // Only count tags for image assets that actually exist and aren't archived
     const taggedCount = [...taggedSet].filter(id => allAssetIds.has(id)).length;
     const untagged = total - taggedCount;
 
