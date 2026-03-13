@@ -141,7 +141,16 @@ export default function TagsManager() {
 
   const [totalAllAssets, setTotalAllAssets] = useState(null); // includes videos
 
+  const [countsLoading, setCountsLoading] = useState(false);
+
   const promptAutoTag = async () => {
+    // Show modal immediately, then load counts in background
+    setAssetCount(null);
+    setUntaggedCount(null);
+    setTotalAllAssets(null);
+    setCountsLoading(true);
+    setShowAutoTagConfirm(true);
+
     try {
       const [counts, mediaRes] = await Promise.all([
         api.getMediaCounts(),
@@ -151,9 +160,11 @@ export default function TagsManager() {
       setUntaggedCount(counts.untagged || 0);  // untagged images only
       setTotalAllAssets(mediaRes.total || 0);  // all assets including videos
       setAutoTagScope(counts.untagged > 0 ? 'untagged' : 'all');
-      setShowAutoTagConfirm(true);
     } catch (err) {
       setError('Failed to get asset count');
+      setShowAutoTagConfirm(false);
+    } finally {
+      setCountsLoading(false);
     }
   };
 
@@ -848,10 +859,10 @@ export default function TagsManager() {
       )}
 
       {/* AI Auto-Tag Confirmation Modal */}
-      {showAutoTagConfirm && assetCount !== null && (() => {
-        const scopeCount = autoTagScope === 'untagged' ? untaggedCount : assetCount;
+      {showAutoTagConfirm && (() => {
+        const scopeCount = autoTagScope === 'untagged' ? (untaggedCount || 0) : (assetCount || 0);
         return (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowAutoTagConfirm(false)}>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => !countsLoading && setShowAutoTagConfirm(false)}>
           <div className="bg-white rounded-2xl max-w-md w-full shadow-xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between p-5 border-b">
               <h3 className="font-semibold text-surface-900 flex items-center gap-2">
@@ -863,6 +874,13 @@ export default function TagsManager() {
               </button>
             </div>
             <div className="p-5 space-y-4">
+              {countsLoading ? (
+                <div className="flex flex-col items-center justify-center py-8 gap-3">
+                  <Loader2 className="w-8 h-8 animate-spin text-brand-500" />
+                  <p className="text-sm text-surface-500">Loading asset counts...</p>
+                </div>
+              ) : (
+              <>
               {/* Images-only notice */}
               <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5">
                 <ImageIcon className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
@@ -900,7 +918,7 @@ export default function TagsManager() {
                     }`}
                   >
                     All images
-                    <span className="block text-xs font-normal mt-0.5 opacity-70">{assetCount.toLocaleString()} images</span>
+                    <span className="block text-xs font-normal mt-0.5 opacity-70">{(assetCount || 0).toLocaleString()} images</span>
                   </button>
                 </div>
               </div>
@@ -939,6 +957,8 @@ export default function TagsManager() {
                   Cancel
                 </button>
               </div>
+              </>
+              )}
             </div>
           </div>
         </div>
