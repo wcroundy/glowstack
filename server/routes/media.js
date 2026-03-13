@@ -80,32 +80,26 @@ router.get('/counts', async (req, res) => {
       return res.json({ total: demoMedia.length, untagged: demoMedia.filter(m => !m.tags || m.tags.length === 0).length });
     }
 
-    // Get all image asset IDs (auto-tag only processes images, not videos)
-    const { data: allIds, error: allErr } = await supabase
+    // Total image count (head:true bypasses row limits, returns exact count)
+    const { count: total, error: totalErr } = await supabase
       .from('media_assets')
-      .select('id')
+      .select('*', { count: 'exact', head: true })
       .eq('is_archived', false)
-      .eq('file_type', 'image')
-      .limit(50000);
-    if (allErr) throw allErr;
+      .eq('file_type', 'image');
+    if (totalErr) throw totalErr;
 
-    const total = (allIds || []).length;
-
-    // Get distinct tagged asset IDs
-    const { data: taggedRows, error: taggedErr } = await supabase
-      .from('media_tags')
-      .select('media_id')
-      .limit(50000);
+    // Tagged image count: query images that have at least one tag via inner join
+    // inner join means only rows with matching media_tags are returned
+    const { count: taggedImageCount, error: taggedErr } = await supabase
+      .from('media_assets')
+      .select('id, media_tags!inner(tag_id)', { count: 'exact', head: true })
+      .eq('is_archived', false)
+      .eq('file_type', 'image');
     if (taggedErr) throw taggedErr;
 
-    const taggedSet = new Set((taggedRows || []).map(r => r.media_id));
-    const allAssetIds = new Set((allIds || []).map(a => a.id));
+    const untagged = (total || 0) - (taggedImageCount || 0);
 
-    // Only count tags for image assets that actually exist and aren't archived
-    const taggedCount = [...taggedSet].filter(id => allAssetIds.has(id)).length;
-    const untagged = total - taggedCount;
-
-    res.json({ total, untagged });
+    res.json({ total: total || 0, untagged: Math.max(0, untagged) });
   } catch (err) {
     console.error('Media counts error:', err.message);
     res.status(500).json({ error: err.message });
