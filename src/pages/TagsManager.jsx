@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Tags, Plus, Trash2, Sparkles, Loader2, AlertCircle,
   CheckCircle2, Hash, Palette, FolderOpen, Wand2, X, DollarSign, CreditCard,
-  ThumbsUp, ThumbsDown, Lightbulb, Check,
+  ThumbsUp, ThumbsDown, Lightbulb, Check, Image as ImageIcon,
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -119,11 +119,17 @@ export default function TagsManager() {
     return inputCost + outputCost;
   };
 
+  const [totalAllAssets, setTotalAllAssets] = useState(null); // includes videos
+
   const promptAutoTag = async () => {
     try {
-      const counts = await api.getMediaCounts();
-      setAssetCount(counts.total || 0);
-      setUntaggedCount(counts.untagged || 0);
+      const [counts, mediaRes] = await Promise.all([
+        api.getMediaCounts(),
+        api.getMedia({ limit: 1, offset: 0 }),
+      ]);
+      setAssetCount(counts.total || 0);       // images only
+      setUntaggedCount(counts.untagged || 0);  // untagged images only
+      setTotalAllAssets(mediaRes.total || 0);  // all assets including videos
       setAutoTagScope(counts.untagged > 0 ? 'untagged' : 'all');
       setShowAutoTagConfirm(true);
     } catch (err) {
@@ -638,9 +644,22 @@ export default function TagsManager() {
               </button>
             </div>
             <div className="p-5 space-y-4">
+              {/* Images-only notice */}
+              <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5">
+                <ImageIcon className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                <div className="text-xs text-amber-700">
+                  <span className="font-medium">Images only.</span> Auto-tagging analyzes image content using AI vision. Videos are excluded because a single thumbnail isn't reliable for accurate tagging.
+                  {totalAllAssets > assetCount && (
+                    <span className="block mt-1 text-amber-600">
+                      Your library has {totalAllAssets.toLocaleString()} total assets — {assetCount.toLocaleString()} images and {(totalAllAssets - assetCount).toLocaleString()} videos.
+                    </span>
+                  )}
+                </div>
+              </div>
+
               {/* Scope toggle */}
               <div className="space-y-2">
-                <p className="text-xs font-medium text-surface-500">Tag which assets?</p>
+                <p className="text-xs font-medium text-surface-500">Tag which images?</p>
                 <div className="flex gap-2">
                   <button
                     onClick={() => setAutoTagScope('untagged')}
@@ -669,7 +688,7 @@ export default function TagsManager() {
 
               <p className="text-sm text-surface-700">
                 This will analyze <span className="font-semibold">{scopeCount.toLocaleString()}</span> image{scopeCount !== 1 ? 's' : ''} using
-                OpenAI Vision and apply matching tags from your tag library. Videos are excluded since thumbnails alone aren't reliable for tagging.
+                OpenAI Vision and apply matching tags from your tag library.
               </p>
 
               <div className="bg-surface-50 rounded-xl p-4 space-y-2">
