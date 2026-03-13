@@ -85,7 +85,7 @@ export const api = {
   deleteTag: (id) => request(`/tags/${id}`, { method: 'DELETE' }),
 
   // AI Auto-Tag
-  aiAutoTag: ({ assetIds, untaggedOnly } = {}) => request('/ai/auto-tag', { method: 'POST', body: JSON.stringify({ assetIds, untaggedOnly }) }),
+  aiAutoTag: ({ assetIds, untaggedOnly, limit, offset } = {}) => request('/ai/auto-tag', { method: 'POST', body: JSON.stringify({ assetIds, untaggedOnly, limit, offset }) }),
   aiAcceptSuggestedTags: (tags) => request('/ai/accept-suggested-tags', { method: 'POST', body: JSON.stringify({ tags }) }),
 
   // Reports

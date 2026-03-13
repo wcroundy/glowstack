@@ -48,6 +48,9 @@ export default function TagsManager() {
   const [showQuotaError, setShowQuotaError] = useState(false);
   const [quotaErrorMessage, setQuotaErrorMessage] = useState('');
 
+  // Batch progress
+  const [batchProgress, setBatchProgress] = useState(null); // { processed, total, tagged, newTags }
+
   // Tag suggestions review
   const [suggestedTags, setSuggestedTags] = useState([]); // from AI response
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -137,20 +140,79 @@ export default function TagsManager() {
     }
   };
 
+  const BATCH_SIZE = 50; // images per API call — keeps each request under Vercel's 60s timeout
+
   const handleAutoTag = async () => {
     setShowAutoTagConfirm(false);
     setAutoTagging(true);
     setAutoTagResult(null);
     setSuggestedTags([]);
     setError('');
+
+    const scopeCount = autoTagScope === 'untagged' ? untaggedCount : assetCount;
+    let totalProcessed = 0;
+    let totalTagged = 0;
+    let totalNewTags = 0;
+    let allSuggestions = {}; // aggregate suggestions across batches by lowercase name
+    let offset = 0;
+    let done = false;
+
+    setBatchProgress({ processed: 0, total: scopeCount, tagged: 0, newTags: 0 });
+
     try {
-      const result = await api.aiAutoTag({ untaggedOnly: autoTagScope === 'untagged' });
-      setAutoTagResult(result);
+      while (!done) {
+        const result = await api.aiAutoTag({
+          untaggedOnly: autoTagScope === 'untagged',
+          limit: BATCH_SIZE,
+          offset,
+        });
+
+        totalProcessed += result.totalAssetsProcessed || 0;
+        totalTagged += result.tagged || 0;
+        totalNewTags += result.totalNewTags || 0;
+
+        // Aggregate suggestions across batches
+        if (result.suggestedTags) {
+          for (const sug of result.suggestedTags) {
+            const key = sug.name.toLowerCase();
+            if (!allSuggestions[key]) {
+              allSuggestions[key] = { name: sug.name, assetIds: new Set(sug.assetIds), count: sug.count };
+            } else {
+              sug.assetIds.forEach(id => allSuggestions[key].assetIds.add(id));
+              allSuggestions[key].count += sug.count;
+            }
+          }
+        }
+
+        setBatchProgress({ processed: totalProcessed, total: scopeCount, tagged: totalTagged, newTags: totalNewTags });
+
+        if (result.batchComplete || result.totalAssetsProcessed === 0) {
+          done = true;
+        } else {
+          offset = result.nextOffset || (offset + BATCH_SIZE);
+        }
+      }
+
+      // Build final result
+      const finalSuggestions = Object.values(allSuggestions)
+        .map(s => ({ name: s.name, assetIds: [...s.assetIds], count: s.count }))
+        .sort((a, b) => b.count - a.count);
+
+      const finalResult = {
+        tagged: totalTagged,
+        totalAssetsProcessed: totalProcessed,
+        totalNewTags,
+        aiPowered: true,
+        suggestedTags: finalSuggestions,
+        message: `AI analyzed ${totalProcessed.toLocaleString()} images and applied ${totalNewTags.toLocaleString()} tags to ${totalTagged.toLocaleString()} images`,
+      };
+
+      setAutoTagResult(finalResult);
       loadTags();
 
       // If AI suggested new tags, show the review modal
-      if (result.suggestedTags && result.suggestedTags.length > 0) {
-        setSuggestedTags(result.suggestedTags);
+      if (finalSuggestions.length > 0) {
+        setSuggestedTags(finalSuggestions);
         setSuggestionDecisions({});
         setShowSuggestions(true);
       }
@@ -161,8 +223,20 @@ export default function TagsManager() {
       } else {
         setError('AI auto-tagging failed: ' + err.message);
       }
+      // Still show partial results if we processed some before the error
+      if (totalProcessed > 0) {
+        setAutoTagResult({
+          tagged: totalTagged,
+          totalAssetsProcessed: totalProcessed,
+          totalNewTags,
+          aiPowered: true,
+          message: `Processed ${totalProcessed.toLocaleString()} images before error. Applied ${totalNewTags.toLocaleString()} tags to ${totalTagged.toLocaleString()} images.`,
+        });
+        loadTags();
+      }
     } finally {
       setAutoTagging(false);
+      setBatchProgress(null);
     }
   };
 
@@ -251,6 +325,30 @@ export default function TagsManager() {
           </button>
         </div>
       </div>
+
+      {/* Batch Progress */}
+      {autoTagging && batchProgress && (
+        <div className="card p-5 space-y-3 border-brand-200 bg-brand-50/50">
+          <div className="flex items-center gap-2 text-sm font-medium text-brand-700">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            AI Auto-Tagging in Progress...
+          </div>
+          <div className="w-full bg-brand-100 rounded-full h-3 overflow-hidden">
+            <div
+              className="bg-brand-500 h-3 rounded-full transition-all duration-500 ease-out"
+              style={{ width: `${batchProgress.total > 0 ? Math.min(100, (batchProgress.processed / batchProgress.total) * 100) : 0}%` }}
+            />
+          </div>
+          <div className="flex flex-wrap gap-4 text-xs text-brand-600">
+            <span>{batchProgress.processed.toLocaleString()} / {batchProgress.total.toLocaleString()} images analyzed</span>
+            <span>{batchProgress.tagged.toLocaleString()} images tagged</span>
+            <span>{batchProgress.newTags.toLocaleString()} tags applied</span>
+          </div>
+          <p className="text-xs text-brand-400">
+            Processing in batches of {BATCH_SIZE}. Please keep this page open.
+          </p>
+        </div>
+      )}
 
       {/* Error */}
       {error && (

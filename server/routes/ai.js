@@ -125,7 +125,9 @@ router.post('/auto-tag', async (req, res) => {
       return res.json({ tagged: 0, message: 'Demo mode — no Supabase configured' });
     }
 
-    const { assetIds, untaggedOnly } = req.body; // optional filters
+    const { assetIds, untaggedOnly, limit = 50, offset = 0 } = req.body; // optional filters
+    const batchLimit = Math.min(parseInt(limit) || 50, 100); // cap at 100 per batch
+    const batchOffset = parseInt(offset) || 0;
 
     // 1. Get all managed tags
     const { data: allTags, error: tagErr } = await supabase
@@ -137,6 +139,7 @@ router.post('/auto-tag', async (req, res) => {
     }
 
     // 2. Get assets to tag (images only — video thumbnails aren't reliable for tagging)
+    // Uses limit/offset for batch processing to stay within Vercel timeout limits
     let assetQuery;
 
     if (untaggedOnly) {
@@ -158,7 +161,11 @@ router.post('/auto-tag', async (req, res) => {
       assetQuery = assetQuery.in('id', assetIds);
     }
 
-    let { data: assets, error: assetErr } = await assetQuery.limit(100);
+    // Order by created_at for consistent pagination across batches
+    assetQuery = assetQuery.order('created_at', { ascending: true });
+
+    let { data: assets, error: assetErr } = await assetQuery
+      .range(batchOffset, batchOffset + batchLimit - 1);
 
     // For untaggedOnly: if the .is('media_tags', null) filter isn't supported,
     // fall back to filtering in memory
@@ -167,7 +174,7 @@ router.post('/auto-tag', async (req, res) => {
     }
     if (assetErr) throw assetErr;
     if (!assets || assets.length === 0) {
-      return res.json({ tagged: 0, message: 'No image assets found to tag (videos are excluded)' });
+      return res.json({ tagged: 0, totalAssetsProcessed: 0, batchComplete: true, message: 'No image assets found to tag (videos are excluded)' });
     }
 
     const tagMap = {};
@@ -346,12 +353,17 @@ Be generous with existing tag matching. For suggested tags, focus on specific, r
       .map(s => ({ name: s.name, assetIds: [...s.assetIds], count: s.count }))
       .sort((a, b) => b.count - a.count);
 
+    // batchComplete = true when fewer assets returned than requested (last batch)
+    const batchComplete = assets.length < batchLimit;
+
     res.json({
       tagged: totalTagged,
       totalAssetsProcessed: assets.length,
       totalNewTags,
       aiPowered: !!OPENAI_API_KEY,
       suggestedTags: suggestions,
+      batchComplete,
+      nextOffset: batchOffset + assets.length,
       message: OPENAI_API_KEY
         ? `AI analyzed ${assets.length} assets and applied ${totalNewTags} tags to ${totalTagged} assets`
         : `Keyword matching applied ${totalNewTags} tags to ${totalTagged} assets. Add an OpenAI API key for AI-powered visual tagging.`,
