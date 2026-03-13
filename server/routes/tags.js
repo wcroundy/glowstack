@@ -50,6 +50,68 @@ router.post('/', async (req, res) => {
   }
 });
 
+// GET /api/tags/auto-tag-runs — Get auto-tag run history
+router.get('/auto-tag-runs', async (req, res) => {
+  try {
+    if (!isSupabaseConfigured()) {
+      return res.json({ data: [] });
+    }
+    const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+    const { data, error } = await supabase
+      .from('auto_tag_runs')
+      .select('*')
+      .order('started_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    res.json({ data: data || [] });
+  } catch (err) {
+    console.error('Auto-tag runs GET error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/tags/auto-tag-runs — Create a new auto-tag run record
+router.post('/auto-tag-runs', async (req, res) => {
+  try {
+    if (!isSupabaseConfigured()) {
+      return res.json({ id: 'demo-run' });
+    }
+    const { scope } = req.body;
+    const { data, error } = await supabase
+      .from('auto_tag_runs')
+      .insert({ scope: scope || 'all', status: 'running' })
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    console.error('Auto-tag runs POST error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/tags/auto-tag-runs/:id — Update a run record (on completion or failure)
+router.patch('/auto-tag-runs/:id', async (req, res) => {
+  try {
+    if (!isSupabaseConfigured()) {
+      return res.json({ message: 'Updated (demo)' });
+    }
+    const { id } = req.params;
+    const updates = req.body; // status, total_images_processed, total_images_tagged, etc.
+    const { data, error } = await supabase
+      .from('auto_tag_runs')
+      .update({ ...updates, completed_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    console.error('Auto-tag runs PATCH error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // DELETE /api/tags/:id
 router.delete('/:id', async (req, res) => {
   try {

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Tags, Plus, Trash2, Sparkles, Loader2, AlertCircle,
   CheckCircle2, Hash, Palette, FolderOpen, Wand2, X, DollarSign, CreditCard,
-  ThumbsUp, ThumbsDown, Lightbulb, Check, Image as ImageIcon,
+  ThumbsUp, ThumbsDown, Lightbulb, Check, Image as ImageIcon, History, Clock,
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -57,11 +57,16 @@ export default function TagsManager() {
   const [suggestionDecisions, setSuggestionDecisions] = useState({}); // { index: 'accept' | 'reject' }
   const [acceptingTags, setAcceptingTags] = useState(false);
 
+  // Auto-tag history
+  const [autoTagHistory, setAutoTagHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
   // Filter
   const [filterCategory, setFilterCategory] = useState('');
 
   useEffect(() => {
     loadTags();
+    loadHistory();
   }, []);
 
   const loadTags = async () => {
@@ -74,6 +79,18 @@ export default function TagsManager() {
       setError('Failed to load tags');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      const res = await api.getAutoTagRuns(10);
+      setAutoTagHistory(res.data || []);
+    } catch (err) {
+      // non-critical — don't show error
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -157,6 +174,13 @@ export default function TagsManager() {
     let offset = 0;
     let done = false;
 
+    // Create a run record
+    let runId = null;
+    try {
+      const run = await api.createAutoTagRun(autoTagScope);
+      runId = run.id;
+    } catch (_) {} // non-critical
+
     setBatchProgress({ processed: 0, total: scopeCount, tagged: 0, newTags: 0 });
 
     try {
@@ -210,6 +234,18 @@ export default function TagsManager() {
       setAutoTagResult(finalResult);
       loadTags();
 
+      // Log completed run
+      if (runId) {
+        api.updateAutoTagRun(runId, {
+          status: 'completed',
+          total_images_processed: totalProcessed,
+          total_images_tagged: totalTagged,
+          total_tags_applied: totalNewTags,
+          suggested_tags_count: finalSuggestions.length,
+        }).catch(() => {});
+      }
+      loadHistory();
+
       // If AI suggested new tags, show the review modal
       if (finalSuggestions.length > 0) {
         setSuggestedTags(finalSuggestions);
@@ -223,6 +259,18 @@ export default function TagsManager() {
       } else {
         setError('AI auto-tagging failed: ' + err.message);
       }
+      // Log failed/partial run
+      if (runId) {
+        api.updateAutoTagRun(runId, {
+          status: totalProcessed > 0 ? 'partial' : 'failed',
+          total_images_processed: totalProcessed,
+          total_images_tagged: totalTagged,
+          total_tags_applied: totalNewTags,
+          error_message: err.message,
+        }).catch(() => {});
+      }
+      loadHistory();
+
       // Still show partial results if we processed some before the error
       if (totalProcessed > 0) {
         setAutoTagResult({
@@ -566,6 +614,79 @@ export default function TagsManager() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Auto-Tag History */}
+      {autoTagHistory.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-sm font-semibold text-surface-600 flex items-center gap-2">
+            <History className="w-4 h-4" />
+            Auto-Tag History
+          </h3>
+          <div className="card overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-surface-50 text-left text-xs font-medium text-surface-500 uppercase tracking-wider">
+                  <th className="px-4 py-2.5">Date</th>
+                  <th className="px-4 py-2.5">Scope</th>
+                  <th className="px-4 py-2.5 text-right">Images</th>
+                  <th className="px-4 py-2.5 text-right">Tagged</th>
+                  <th className="px-4 py-2.5 text-right">Tags Applied</th>
+                  <th className="px-4 py-2.5">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-100">
+                {autoTagHistory.map(run => (
+                  <tr key={run.id} className="hover:bg-surface-50/50">
+                    <td className="px-4 py-3 text-surface-700">
+                      <div className="flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-surface-400" />
+                        {new Date(run.started_at).toLocaleDateString('en-US', {
+                          month: 'short', day: 'numeric', year: 'numeric',
+                        })}
+                        <span className="text-surface-400 text-xs">
+                          {new Date(run.started_at).toLocaleTimeString('en-US', {
+                            hour: 'numeric', minute: '2-digit',
+                          })}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                        run.scope === 'untagged'
+                          ? 'bg-blue-50 text-blue-600'
+                          : 'bg-purple-50 text-purple-600'
+                      }`}>
+                        {run.scope === 'untagged' ? 'Untagged only' : 'All images'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right text-surface-700 tabular-nums">
+                      {(run.total_images_processed || 0).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3 text-right text-surface-700 tabular-nums">
+                      {(run.total_images_tagged || 0).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3 text-right text-surface-700 tabular-nums">
+                      {(run.total_tags_applied || 0).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                        run.status === 'completed' ? 'bg-green-50 text-green-600' :
+                        run.status === 'running' ? 'bg-amber-50 text-amber-600' :
+                        run.status === 'partial' ? 'bg-orange-50 text-orange-600' :
+                        'bg-red-50 text-red-600'
+                      }`}>
+                        {run.status === 'completed' ? 'Completed' :
+                         run.status === 'running' ? 'Running' :
+                         run.status === 'partial' ? 'Partial' : 'Failed'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

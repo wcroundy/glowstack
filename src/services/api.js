@@ -88,6 +88,11 @@ export const api = {
   aiAutoTag: ({ assetIds, untaggedOnly, limit, offset } = {}) => request('/ai/auto-tag', { method: 'POST', body: JSON.stringify({ assetIds, untaggedOnly, limit, offset }) }),
   aiAcceptSuggestedTags: (tags) => request('/ai/accept-suggested-tags', { method: 'POST', body: JSON.stringify({ tags }) }),
 
+  // Auto-Tag Run History
+  getAutoTagRuns: (limit) => request(`/tags/auto-tag-runs?${new URLSearchParams({ limit: limit || 20 })}`),
+  createAutoTagRun: (scope) => request('/tags/auto-tag-runs', { method: 'POST', body: JSON.stringify({ scope }) }),
+  updateAutoTagRun: (id, data) => request(`/tags/auto-tag-runs/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+
   // Reports
   generateReport: (data) => request('/reports/generate', { method: 'POST', body: JSON.stringify(data) }),
 
