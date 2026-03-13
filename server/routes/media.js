@@ -80,30 +80,31 @@ router.get('/counts', async (req, res) => {
       return res.json({ total: demoMedia.length, untagged: demoMedia.filter(m => !m.tags || m.tags.length === 0).length });
     }
 
-    // Total count
-    const { count: total, error: totalErr } = await supabase
-      .from('media_assets')
-      .select('id', { count: 'exact', head: true })
-      .eq('is_archived', false);
-    if (totalErr) throw totalErr;
-
-    // Untagged: assets with no rows in media_tags
-    const { data: taggedIds, error: taggedErr } = await supabase
-      .from('media_tags')
-      .select('media_id');
-    if (taggedErr) throw taggedErr;
-
-    const taggedSet = new Set((taggedIds || []).map(r => r.media_id));
-
+    // Get all asset IDs (raise limit to handle large libraries)
     const { data: allIds, error: allErr } = await supabase
       .from('media_assets')
       .select('id')
-      .eq('is_archived', false);
+      .eq('is_archived', false)
+      .limit(50000);
     if (allErr) throw allErr;
 
-    const untagged = (allIds || []).filter(a => !taggedSet.has(a.id)).length;
+    const total = (allIds || []).length;
 
-    res.json({ total: total || 0, untagged });
+    // Get distinct tagged asset IDs
+    const { data: taggedRows, error: taggedErr } = await supabase
+      .from('media_tags')
+      .select('media_id')
+      .limit(50000);
+    if (taggedErr) throw taggedErr;
+
+    const taggedSet = new Set((taggedRows || []).map(r => r.media_id));
+    const allAssetIds = new Set((allIds || []).map(a => a.id));
+
+    // Only count tags for assets that actually exist and aren't archived
+    const taggedCount = [...taggedSet].filter(id => allAssetIds.has(id)).length;
+    const untagged = total - taggedCount;
+
+    res.json({ total, untagged });
   } catch (err) {
     console.error('Media counts error:', err.message);
     res.status(500).json({ error: err.message });
