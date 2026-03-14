@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Image, BarChart3, CalendarDays, MessageCircle,
-  Settings, Sparkles, Menu, X, ChevronRight, LogOut, Tags
+  Settings, Sparkles, Menu, X, ChevronRight, LogOut, Tags, TrendingUp,
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import MediaLibrary from './pages/MediaLibrary';
@@ -11,6 +11,7 @@ import ContentCalendar from './pages/ContentCalendar';
 import AiChat from './pages/AiChat';
 import SetupWizard from './pages/SetupWizard';
 import TagsManager from './pages/TagsManager';
+import SocialInsights from './pages/SocialInsights';
 import ChatDrawer from './components/chat/ChatDrawer';
 import Login from './pages/Login';
 import { setAuthToken } from './services/api';
@@ -19,6 +20,7 @@ const NAV_ITEMS = [
   { to: '/',           icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/media',      icon: Image,           label: 'Media Library' },
   { to: '/analytics',  icon: BarChart3,       label: 'Analytics' },
+  { to: '/social',     icon: TrendingUp,      label: 'Social Insights' },
   { to: '/calendar',   icon: CalendarDays,    label: 'Calendar' },
   { to: '/tags',       icon: Tags,            label: 'Tag Manager' },
   { to: '/chat',       icon: MessageCircle,   label: 'AI Assistant' },
@@ -198,6 +200,7 @@ export default function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/media" element={<MediaLibrary />} />
             <Route path="/analytics" element={<Analytics />} />
+            <Route path="/social" element={<SocialInsights />} />
             <Route path="/calendar" element={<ContentCalendar />} />
             <Route path="/tags" element={<TagsManager />} />
             <Route path="/chat" element={<AiChat />} />

@@ -31,11 +31,18 @@ app.use('/api/auth', authRoutes);
 import googlePhotosRoutes from './routes/googlePhotos.js';
 app.use('/api/auth/google', googlePhotosRoutes); // callback route
 
+// Meta OAuth callback (before auth middleware — browser redirect, no Bearer token)
+import metaRoutes from './routes/meta.js';
+app.use('/api/auth/meta', metaRoutes); // callback route
+
 // Protect all other API routes
 app.use('/api', requireAuth);
 
 // Google Photos API routes (protected)
 app.use('/api/google-photos', googlePhotosRoutes);
+
+// Meta API routes (protected)
+app.use('/api/meta', metaRoutes);
 
 // Routes
 import mediaRoutes from './routes/media.js';

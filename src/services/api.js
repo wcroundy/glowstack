@@ -93,6 +93,18 @@ export const api = {
   createAutoTagRun: (scope) => request('/tags/auto-tag-runs', { method: 'POST', body: JSON.stringify({ scope }) }),
   updateAutoTagRun: (id, data) => request(`/tags/auto-tag-runs/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
 
+  // Meta (Instagram + Facebook)
+  metaStatus: () => request('/meta/status'),
+  metaAuthUrl: () => request('/meta/auth-url'),
+  metaDisconnect: () => request('/meta/disconnect', { method: 'POST' }),
+  metaSyncInstagram: () => request('/meta/sync/instagram', { method: 'POST' }),
+  metaSyncFacebook: () => request('/meta/sync/facebook', { method: 'POST' }),
+  metaInstagramPosts: (params) => request(`/meta/instagram/posts?${new URLSearchParams(params || {})}`),
+  metaInstagramSummary: () => request('/meta/instagram/summary'),
+  metaFacebookPosts: (params) => request(`/meta/facebook/posts?${new URLSearchParams(params || {})}`),
+  metaFacebookSummary: () => request('/meta/facebook/summary'),
+  metaSyncLog: () => request('/meta/sync-log'),
+
   // Reports
   generateReport: (data) => request('/reports/generate', { method: 'POST', body: JSON.stringify(data) }),
 
