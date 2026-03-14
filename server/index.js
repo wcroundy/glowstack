@@ -35,6 +35,10 @@ app.use('/api/auth/google', googlePhotosRoutes); // callback route
 import metaRoutes from './routes/meta.js';
 app.use('/api/auth/meta', metaRoutes); // callback route
 
+// TikTok OAuth callback (before auth middleware — browser redirect, no Bearer token)
+import tiktokRoutes from './routes/tiktok.js';
+app.use('/api/auth/tiktok', tiktokRoutes); // callback route
+
 // Protect all other API routes
 app.use('/api', requireAuth);
 
@@ -43,6 +47,9 @@ app.use('/api/google-photos', googlePhotosRoutes);
 
 // Meta API routes (protected)
 app.use('/api/meta', metaRoutes);
+
+// TikTok API routes (protected)
+app.use('/api/tiktok', tiktokRoutes);
 
 // Routes
 import mediaRoutes from './routes/media.js';

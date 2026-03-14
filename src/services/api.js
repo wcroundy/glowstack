@@ -105,6 +105,14 @@ export const api = {
   metaFacebookSummary: () => request('/meta/facebook/summary'),
   metaSyncLog: () => request('/meta/sync-log'),
 
+  // TikTok
+  tiktokStatus: () => request('/tiktok/status'),
+  tiktokAuthUrl: () => request('/tiktok/auth-url'),
+  tiktokDisconnect: () => request('/tiktok/disconnect', { method: 'POST' }),
+  tiktokSync: () => request('/tiktok/sync', { method: 'POST' }),
+  tiktokVideos: (params) => request(`/tiktok/videos?${new URLSearchParams(params || {})}`),
+  tiktokSummary: () => request('/tiktok/summary'),
+
   // Reports
   generateReport: (data) => request('/reports/generate', { method: 'POST', body: JSON.stringify(data) }),
 

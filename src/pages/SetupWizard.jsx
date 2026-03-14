@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Check, ChevronRight, ExternalLink, Plug, AlertCircle,
-  RefreshCw, Unplug, Sparkles, Shield, Instagram, Facebook, Link2, Loader2,
+  RefreshCw, Unplug, Sparkles, Shield, Instagram, Facebook, Link2, Loader2, Music2,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
@@ -326,6 +326,172 @@ function MetaCard() {
   );
 }
 
+function TikTokCard() {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    api.tiktokStatus().then(s => { setStatus(s); setLoading(false); }).catch(() => setLoading(false));
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('tiktok_connected') === 'true') {
+      api.tiktokStatus().then(s => { setStatus(s); setLoading(false); });
+      setExpanded(true);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+    if (params.get('tiktok_error')) {
+      setExpanded(true);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  const handleConnect = async () => {
+    try {
+      const { url } = await api.tiktokAuthUrl();
+      window.location.href = url;
+    } catch (err) {
+      console.error('TikTok auth error:', err);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    setDisconnecting(true);
+    try {
+      await api.tiktokDisconnect();
+      setStatus(prev => ({ ...prev, connected: false, account: null }));
+    } catch (err) {
+      console.error('TikTok disconnect error:', err);
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
+  if (loading) return null;
+  if (!status?.configured) return null;
+
+  return (
+    <div className={`card transition-all ${expanded ? 'ring-2 ring-brand-300' : ''}`}>
+      <div
+        className="flex items-center gap-4 p-4 cursor-pointer hover:bg-surface-50 rounded-t-2xl transition-colors"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <div className="w-10 h-10 rounded-xl bg-black flex items-center justify-center flex-shrink-0">
+          <Music2 className="w-5 h-5 text-white" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <h3 className="font-semibold text-surface-900">TikTok</h3>
+            {status.connected ? (
+              <span className="badge bg-emerald-100 text-emerald-700 text-[10px]">
+                <Check className="w-3 h-3 mr-0.5" /> Connected
+              </span>
+            ) : (
+              <span className="badge bg-surface-100 text-surface-500 text-[10px]">Not Connected</span>
+            )}
+          </div>
+          <p className="text-xs text-surface-500 mt-0.5">
+            {status.connected
+              ? `${status.account?.displayName || 'Connected'}${status.account?.followers != null ? ` · ${status.account.followers.toLocaleString()} followers` : ''}`
+              : 'Connect TikTok to pull video performance, engagement metrics, and audience insights.'}
+          </p>
+        </div>
+        <ChevronRight className={`w-5 h-5 text-surface-300 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+      </div>
+
+      {expanded && (
+        <div className="border-t px-4 pb-4">
+          {status.connected ? (
+            <div className="pt-4 space-y-4">
+              <div className="flex items-center gap-3 p-3 rounded-xl bg-emerald-50 border border-emerald-200">
+                <Check className="w-5 h-5 text-emerald-600" />
+                <div>
+                  <p className="text-sm font-medium text-emerald-800">Connected successfully</p>
+                  <p className="text-xs text-emerald-600">
+                    {status.account?.displayName}
+                    {status.account?.followers != null && ` · ${status.account.followers.toLocaleString()} followers`}
+                    {status.account?.likes != null && ` · ${status.account.likes.toLocaleString()} likes`}
+                  </p>
+                </div>
+              </div>
+
+              {status.account?.avatar && (
+                <div className="flex items-center gap-3">
+                  <img src={status.account.avatar} alt="" className="w-10 h-10 rounded-full" />
+                  <div>
+                    <p className="text-sm font-medium text-surface-800">{status.account.displayName}</p>
+                    {status.account.videoCount != null && (
+                      <p className="text-xs text-surface-500">{status.account.videoCount} videos</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => navigate('/social')}
+                  className="btn-secondary text-xs flex items-center gap-1.5"
+                >
+                  <Sparkles className="w-3.5 h-3.5" /> View Insights
+                </button>
+                <button
+                  onClick={handleDisconnect}
+                  disabled={disconnecting}
+                  className="btn-ghost text-xs text-red-500 hover:bg-red-50 flex items-center gap-1.5"
+                >
+                  {disconnecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Unplug className="w-3.5 h-3.5" />}
+                  Disconnect
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="pt-4 space-y-4">
+              <p className="text-sm text-surface-600">
+                Connect your TikTok account to pull in video performance data, view counts,
+                engagement metrics, and audience insights.
+              </p>
+
+              <div className="space-y-3">
+                <div className="flex gap-3">
+                  <div className="w-6 h-6 rounded-full bg-brand-100 text-brand-600 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">1</div>
+                  <div>
+                    <p className="text-sm font-medium text-surface-800">Click Connect below</p>
+                    <p className="text-xs text-surface-500 mt-0.5">You'll be redirected to TikTok to log in and grant permissions.</p>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <div className="w-6 h-6 rounded-full bg-brand-100 text-brand-600 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">2</div>
+                  <div>
+                    <p className="text-sm font-medium text-surface-800">Authorize GlowStack</p>
+                    <p className="text-xs text-surface-500 mt-0.5">Allow access to your profile info and video analytics.</p>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <div className="w-6 h-6 rounded-full bg-brand-100 text-brand-600 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">3</div>
+                  <div>
+                    <p className="text-sm font-medium text-surface-800">Start syncing insights</p>
+                    <p className="text-xs text-surface-500 mt-0.5">GlowStack will pull in your video performance data automatically.</p>
+                  </div>
+                </div>
+              </div>
+
+              <button onClick={handleConnect} className="btn-primary w-full flex items-center justify-center gap-2">
+                <Link2 className="w-4 h-4" /> Connect TikTok
+              </button>
+
+              <p className="text-xs text-surface-400 text-center">
+                Requires a TikTok account with Creator or Business permissions.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SetupWizard() {
   const [platforms, setPlatforms] = useState([]);
   const [expanded, setExpanded] = useState(null);
@@ -368,7 +534,8 @@ export default function SetupWizard() {
         {/* Social Platforms */}
         <h2 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mt-4 mb-2">Social Platforms</h2>
         <MetaCard />
-        {platforms.filter(p => ['tiktok', 'youtube', 'pinterest'].includes(p.platform)).map(p => (
+        <TikTokCard />
+        {platforms.filter(p => ['youtube', 'pinterest'].includes(p.platform)).map(p => (
           <PlatformCard key={p.id} platform={p} expanded={expanded === p.platform} onExpand={setExpanded} />
         ))}
 

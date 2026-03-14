@@ -3,7 +3,7 @@ import {
   Instagram, Facebook, Link2, Unlink, RefreshCw, Loader2, AlertCircle,
   CheckCircle2, Heart, MessageCircle, Eye, Bookmark, Share2, TrendingUp,
   BarChart3, Clock, ExternalLink, Play, Image as ImageIcon, Layers,
-  ArrowUpRight, ArrowDownRight, MousePointerClick,
+  ArrowUpRight, ArrowDownRight, MousePointerClick, Music2, Timer,
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -110,8 +110,14 @@ export default function SocialInsights() {
   const [fbPosts, setFbPosts] = useState([]);
   const [fbTotal, setFbTotal] = useState(0);
 
+  // TikTok data
+  const [tiktokStatus, setTiktokStatus] = useState(null);
+  const [tkSummary, setTkSummary] = useState(null);
+  const [tkVideos, setTkVideos] = useState([]);
+  const [tkTotal, setTkTotal] = useState(0);
+
   // Sync state
-  const [syncing, setSyncing] = useState(null); // 'instagram' | 'facebook' | 'both' | null
+  const [syncing, setSyncing] = useState(null); // 'instagram' | 'facebook' | 'tiktok' | 'both' | null
   const [syncResult, setSyncResult] = useState(null);
 
   // Sort
@@ -125,32 +131,60 @@ export default function SocialInsights() {
   const loadStatus = async () => {
     setLoading(true);
     try {
-      const s = await api.metaStatus();
-      setStatus(s);
-      if (s.connected) {
-        loadData();
+      const [metaS, tkS] = await Promise.all([
+        api.metaStatus().catch(() => ({ configured: false, connected: false })),
+        api.tiktokStatus().catch(() => ({ configured: false, connected: false })),
+      ]);
+      setStatus(metaS);
+      setTiktokStatus(tkS);
+      // Set default active tab based on what's connected
+      if (!metaS.connected && tkS.connected) {
+        setActiveTab('tiktok');
+      }
+      if (metaS.connected || tkS.connected) {
+        loadData(metaS.connected, tkS.connected);
       }
     } catch (err) {
-      setError('Failed to check Meta connection status');
+      setError('Failed to check connection status');
     } finally {
       setLoading(false);
     }
   };
 
-  const loadData = async () => {
+  const loadData = async (metaConnected, tkConnected) => {
+    const metaConn = metaConnected ?? status?.connected;
+    const tkConn = tkConnected ?? tiktokStatus?.connected;
     try {
-      const [igS, igP, fbS, fbP] = await Promise.all([
-        api.metaInstagramSummary().catch(() => null),
-        api.metaInstagramPosts({ limit: 50, sort: sortField, order: sortOrder }).catch(() => ({ data: [], total: 0 })),
-        api.metaFacebookSummary().catch(() => null),
-        api.metaFacebookPosts({ limit: 50 }).catch(() => ({ data: [], total: 0 })),
-      ]);
+      const promises = [];
+      if (metaConn) {
+        promises.push(
+          api.metaInstagramSummary().catch(() => null),
+          api.metaInstagramPosts({ limit: 50, sort: sortField, order: sortOrder }).catch(() => ({ data: [], total: 0 })),
+          api.metaFacebookSummary().catch(() => null),
+          api.metaFacebookPosts({ limit: 50 }).catch(() => ({ data: [], total: 0 })),
+        );
+      } else {
+        promises.push(null, { data: [], total: 0 }, null, { data: [], total: 0 });
+      }
+      if (tkConn) {
+        promises.push(
+          api.tiktokSummary().catch(() => null),
+          api.tiktokVideos({ limit: 50 }).catch(() => ({ data: [], total: 0 })),
+        );
+      } else {
+        promises.push(null, { data: [], total: 0 });
+      }
+
+      const [igS, igP, fbS, fbP, tkS, tkV] = await Promise.all(promises);
       setIgSummary(igS);
-      setIgPosts(igP.data || []);
-      setIgTotal(igP.total || 0);
+      setIgPosts(igP?.data || []);
+      setIgTotal(igP?.total || 0);
       setFbSummary(fbS);
-      setFbPosts(fbP.data || []);
-      setFbTotal(fbP.total || 0);
+      setFbPosts(fbP?.data || []);
+      setFbTotal(fbP?.total || 0);
+      setTkSummary(tkS);
+      setTkVideos(tkV?.data || []);
+      setTkTotal(tkV?.total || 0);
     } catch (err) {
       // non-critical
     }
@@ -184,18 +218,31 @@ export default function SocialInsights() {
     setError('');
     try {
       let result;
-      if (platform === 'both') {
-        const [igRes, fbRes] = await Promise.all([
-          api.metaSyncInstagram(),
-          api.metaSyncFacebook(),
-        ]);
-        result = {
-          message: `Synced ${igRes.synced} Instagram posts and ${fbRes.synced} Facebook posts`,
-        };
+      if (platform === 'all') {
+        const promises = [];
+        if (status?.connected) {
+          promises.push(api.metaSyncInstagram(), api.metaSyncFacebook());
+        }
+        if (tiktokStatus?.connected) {
+          promises.push(api.tiktokSync());
+        }
+        const results = await Promise.all(promises);
+        const parts = [];
+        let i = 0;
+        if (status?.connected) {
+          parts.push(`${results[i]?.synced || 0} IG posts`, `${results[i + 1]?.synced || 0} FB posts`);
+          i += 2;
+        }
+        if (tiktokStatus?.connected) {
+          parts.push(`${results[i]?.synced || 0} TikTok videos`);
+        }
+        result = { message: `Synced ${parts.join(', ')}` };
       } else if (platform === 'instagram') {
         result = await api.metaSyncInstagram();
-      } else {
+      } else if (platform === 'facebook') {
         result = await api.metaSyncFacebook();
+      } else if (platform === 'tiktok') {
+        result = await api.tiktokSync();
       }
       setSyncResult(result);
       loadData();
@@ -216,6 +263,14 @@ export default function SocialInsights() {
     }
     if (params.get('meta_error')) {
       setError(`Meta connection failed: ${params.get('meta_error')}`);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+    if (params.get('tiktok_connected') === 'true') {
+      loadStatus();
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+    if (params.get('tiktok_error')) {
+      setError(`TikTok connection failed: ${params.get('tiktok_error')}`);
       window.history.replaceState({}, '', window.location.pathname);
     }
   }, []);
@@ -239,13 +294,13 @@ export default function SocialInsights() {
             Social Insights
           </h1>
           <p className="text-sm text-surface-500 mt-1">
-            Instagram & Facebook post performance analytics
+            Instagram, Facebook & TikTok post performance analytics
           </p>
         </div>
-        {status?.connected && (
+        {(status?.connected || tiktokStatus?.connected) && (
           <div className="flex items-center gap-2">
             <button
-              onClick={() => handleSync('both')}
+              onClick={() => handleSync('all')}
               disabled={!!syncing}
               className="btn-primary text-sm flex items-center gap-2"
             >
@@ -277,17 +332,16 @@ export default function SocialInsights() {
         </div>
       )}
 
-      {/* Not Connected */}
-      {!status?.connected && (
+      {/* Not Connected — show only when NEITHER Meta nor TikTok is connected */}
+      {!status?.connected && !tiktokStatus?.connected && (
         <div className="card p-8 text-center space-y-4">
-          {!status?.configured ? (
+          {!status?.configured && !tiktokStatus?.configured ? (
             <>
               <AlertCircle className="w-12 h-12 text-amber-400 mx-auto" />
-              <h2 className="text-lg font-semibold text-surface-800">Meta API Not Configured</h2>
+              <h2 className="text-lg font-semibold text-surface-800">Social APIs Not Configured</h2>
               <p className="text-sm text-surface-500 max-w-md mx-auto">
-                Add <code className="bg-surface-100 px-1.5 py-0.5 rounded text-xs">META_APP_ID</code> and{' '}
-                <code className="bg-surface-100 px-1.5 py-0.5 rounded text-xs">META_APP_SECRET</code> to your
-                environment variables to enable the Instagram & Facebook integration.
+                Add your Meta or TikTok API credentials to environment variables to enable social insights.
+                Visit the Integrations page to get started.
               </p>
             </>
           ) : (
@@ -299,89 +353,127 @@ export default function SocialInsights() {
                 <div className="w-14 h-14 rounded-2xl bg-blue-600 flex items-center justify-center">
                   <Facebook className="w-7 h-7 text-white" />
                 </div>
+                <div className="w-14 h-14 rounded-2xl bg-black flex items-center justify-center">
+                  <Music2 className="w-7 h-7 text-white" />
+                </div>
               </div>
-              <h2 className="text-lg font-semibold text-surface-800">Connect Instagram & Facebook</h2>
+              <h2 className="text-lg font-semibold text-surface-800">Connect Your Social Accounts</h2>
               <p className="text-sm text-surface-500 max-w-md mx-auto">
-                Connect your Instagram Business account and Facebook Page to pull in post performance data,
+                Connect Instagram, Facebook, and TikTok to pull in post performance data,
                 engagement metrics, and audience insights.
               </p>
-              <button
-                onClick={handleConnect}
-                className="btn-primary text-sm inline-flex items-center gap-2"
-              >
-                <Link2 className="w-4 h-4" />
-                Connect with Facebook
-              </button>
+              {status?.configured && (
+                <button
+                  onClick={handleConnect}
+                  className="btn-primary text-sm inline-flex items-center gap-2"
+                >
+                  <Link2 className="w-4 h-4" />
+                  Connect with Facebook
+                </button>
+              )}
               <p className="text-xs text-surface-400">
-                This will ask you to log into Facebook and grant access to your Page and Instagram insights.
+                Visit the Integrations page to connect your accounts.
               </p>
             </>
           )}
         </div>
       )}
 
-      {/* Connected */}
-      {status?.connected && (
+      {/* Connected — show when at least one platform is connected */}
+      {(status?.connected || tiktokStatus?.connected) && (
         <>
           {/* Connection Info */}
           <div className="card p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-4">
-              {status.instagram?.profilePicture && (
-                <img src={status.instagram.profilePicture} alt="" className="w-12 h-12 rounded-full" />
-              )}
-              <div>
-                <div className="flex items-center gap-2">
-                  <Instagram className="w-4 h-4 text-pink-500" />
-                  <span className="font-semibold text-surface-800">
-                    @{status.instagram?.username || 'Connected'}
-                  </span>
-                  {status.instagram?.followers && (
-                    <span className="text-xs text-surface-400">{status.instagram.followers.toLocaleString()} followers</span>
+            <div className="flex items-center gap-4 flex-wrap">
+              {status?.connected && (
+                <>
+                  {status.instagram?.profilePicture && (
+                    <img src={status.instagram.profilePicture} alt="" className="w-12 h-12 rounded-full" />
                   )}
-                </div>
-                {status.facebook?.pageName && (
-                  <div className="flex items-center gap-2 mt-1">
-                    <Facebook className="w-4 h-4 text-blue-600" />
-                    <span className="text-sm text-surface-600">{status.facebook.pageName}</span>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Instagram className="w-4 h-4 text-pink-500" />
+                      <span className="font-semibold text-surface-800">
+                        @{status.instagram?.username || 'Connected'}
+                      </span>
+                      {status.instagram?.followers && (
+                        <span className="text-xs text-surface-400">{status.instagram.followers.toLocaleString()} followers</span>
+                      )}
+                    </div>
+                    {status.facebook?.pageName && (
+                      <div className="flex items-center gap-2 mt-1">
+                        <Facebook className="w-4 h-4 text-blue-600" />
+                        <span className="text-sm text-surface-600">{status.facebook.pageName}</span>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
+                </>
+              )}
+              {tiktokStatus?.connected && (
+                <div className={`flex items-center gap-2 ${status?.connected ? 'ml-4 pl-4 border-l' : ''}`}>
+                  {tiktokStatus.account?.avatar && (
+                    <img src={tiktokStatus.account.avatar} alt="" className="w-10 h-10 rounded-full" />
+                  )}
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Music2 className="w-4 h-4 text-surface-900" />
+                      <span className="font-semibold text-surface-800">
+                        {tiktokStatus.account?.displayName || tiktokStatus.account?.username || 'TikTok Connected'}
+                      </span>
+                      {tiktokStatus.account?.followers != null && (
+                        <span className="text-xs text-surface-400">{tiktokStatus.account.followers.toLocaleString()} followers</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-            <button
-              onClick={handleDisconnect}
-              className="btn-ghost text-sm text-red-500 hover:text-red-600 flex items-center gap-1.5"
-            >
-              <Unlink className="w-3.5 h-3.5" />
-              Disconnect
-            </button>
           </div>
 
           {/* Tab Switcher */}
           <div className="flex items-center gap-1 bg-surface-100 rounded-xl p-1 w-fit">
-            <button
-              onClick={() => setActiveTab('instagram')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                activeTab === 'instagram'
-                  ? 'bg-white shadow-sm text-surface-900'
-                  : 'text-surface-500 hover:text-surface-700'
-              }`}
-            >
-              <Instagram className="w-4 h-4" />
-              Instagram
-              {igTotal > 0 && <span className="text-xs text-surface-400">({igTotal})</span>}
-            </button>
-            <button
-              onClick={() => setActiveTab('facebook')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                activeTab === 'facebook'
-                  ? 'bg-white shadow-sm text-surface-900'
-                  : 'text-surface-500 hover:text-surface-700'
-              }`}
-            >
-              <Facebook className="w-4 h-4" />
-              Facebook
-              {fbTotal > 0 && <span className="text-xs text-surface-400">({fbTotal})</span>}
-            </button>
+            {status?.connected && (
+              <>
+                <button
+                  onClick={() => setActiveTab('instagram')}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    activeTab === 'instagram'
+                      ? 'bg-white shadow-sm text-surface-900'
+                      : 'text-surface-500 hover:text-surface-700'
+                  }`}
+                >
+                  <Instagram className="w-4 h-4" />
+                  Instagram
+                  {igTotal > 0 && <span className="text-xs text-surface-400">({igTotal})</span>}
+                </button>
+                <button
+                  onClick={() => setActiveTab('facebook')}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    activeTab === 'facebook'
+                      ? 'bg-white shadow-sm text-surface-900'
+                      : 'text-surface-500 hover:text-surface-700'
+                  }`}
+                >
+                  <Facebook className="w-4 h-4" />
+                  Facebook
+                  {fbTotal > 0 && <span className="text-xs text-surface-400">({fbTotal})</span>}
+                </button>
+              </>
+            )}
+            {tiktokStatus?.connected && (
+              <button
+                onClick={() => setActiveTab('tiktok')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  activeTab === 'tiktok'
+                    ? 'bg-white shadow-sm text-surface-900'
+                    : 'text-surface-500 hover:text-surface-700'
+                }`}
+              >
+                <Music2 className="w-4 h-4" />
+                TikTok
+                {tkTotal > 0 && <span className="text-xs text-surface-400">({tkTotal})</span>}
+              </button>
+            )}
           </div>
 
           {/* Instagram Tab */}
@@ -555,6 +647,121 @@ export default function SocialInsights() {
                       <><Loader2 className="w-4 h-4 animate-spin" /> Syncing...</>
                     ) : (
                       <><RefreshCw className="w-4 h-4" /> Sync Facebook</>
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TikTok Tab */}
+          {activeTab === 'tiktok' && (
+            <div className="space-y-6">
+              {tkSummary && tkSummary.totalVideos > 0 ? (
+                <>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <StatCard label="Total Videos" value={tkSummary.totalVideos} icon={Play} color="brand" />
+                    <StatCard label="Total Views" value={tkSummary.totalViews} icon={Eye} color="blue" />
+                    <StatCard label="Total Likes" value={tkSummary.totalLikes} icon={Heart} color="pink" />
+                    <StatCard label="Avg Engagement" value={`${tkSummary.avgEngagement}%`} icon={TrendingUp} color="green" />
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <StatCard label="Comments" value={tkSummary.totalComments} icon={MessageCircle} color="amber" />
+                    <StatCard label="Shares" value={tkSummary.totalShares} icon={Share2} color="purple" />
+                    <StatCard label="Avg Views" value={tkSummary.avgViews} icon={BarChart3} color="indigo" />
+                    <StatCard
+                      label="Total Duration"
+                      value={tkSummary.totalDuration > 3600
+                        ? `${Math.floor(tkSummary.totalDuration / 3600)}h ${Math.floor((tkSummary.totalDuration % 3600) / 60)}m`
+                        : `${Math.floor(tkSummary.totalDuration / 60)}m ${tkSummary.totalDuration % 60}s`}
+                      icon={Timer}
+                      color="red"
+                    />
+                  </div>
+
+                  {/* Videos Table */}
+                  <div className="card overflow-hidden">
+                    <div className="px-4 py-3 border-b flex items-center justify-between">
+                      <h3 className="text-sm font-semibold text-surface-700">TikTok Videos</h3>
+                      <button
+                        onClick={() => handleSync('tiktok')}
+                        disabled={!!syncing}
+                        className="text-xs text-brand-500 hover:text-brand-600 flex items-center gap-1"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${syncing === 'tiktok' ? 'animate-spin' : ''}`} />
+                        {syncing === 'tiktok' ? 'Syncing...' : 'Refresh'}
+                      </button>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-surface-50 text-left text-xs font-medium text-surface-500 uppercase tracking-wider">
+                            <th className="px-4 py-2.5">Video</th>
+                            <th className="px-4 py-2.5 text-right">Views</th>
+                            <th className="px-4 py-2.5 text-right">Likes</th>
+                            <th className="px-4 py-2.5 text-right">Comments</th>
+                            <th className="px-4 py-2.5 text-right">Shares</th>
+                            <th className="px-4 py-2.5 text-right">Duration</th>
+                            <th className="px-4 py-2.5 w-10"></th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-surface-100">
+                          {tkVideos.map(video => (
+                            <tr key={video.id} className="hover:bg-surface-50/50">
+                              <td className="px-4 py-3">
+                                <div className="flex items-center gap-3">
+                                  {video.cover_image_url && (
+                                    <img
+                                      src={video.cover_image_url}
+                                      alt=""
+                                      className="w-10 h-10 rounded-lg object-cover flex-shrink-0"
+                                    />
+                                  )}
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-sm text-surface-800 truncate max-w-xs">
+                                      {video.title || video.description?.slice(0, 80) || '(no title)'}
+                                    </p>
+                                    <span className="text-xs text-surface-400">
+                                      {video.create_time
+                                        ? new Date(video.create_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                                        : ''}
+                                    </span>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-right text-sm tabular-nums">{(video.view_count || 0).toLocaleString()}</td>
+                              <td className="px-4 py-3 text-right text-sm tabular-nums">{(video.like_count || 0).toLocaleString()}</td>
+                              <td className="px-4 py-3 text-right text-sm tabular-nums">{(video.comment_count || 0).toLocaleString()}</td>
+                              <td className="px-4 py-3 text-right text-sm tabular-nums">{(video.share_count || 0).toLocaleString()}</td>
+                              <td className="px-4 py-3 text-right text-sm tabular-nums">{video.duration ? `${video.duration}s` : '—'}</td>
+                              <td className="px-4 py-3 text-right">
+                                {video.share_url && (
+                                  <a href={video.share_url} target="_blank" rel="noopener noreferrer" className="text-brand-500 hover:text-brand-600">
+                                    <ExternalLink className="w-3.5 h-3.5" />
+                                  </a>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="card p-8 text-center space-y-3">
+                  <Music2 className="w-10 h-10 text-surface-300 mx-auto" />
+                  <h3 className="font-semibold text-surface-700">No TikTok Data Yet</h3>
+                  <p className="text-sm text-surface-400">Click "Sync All" or the button below to pull in your TikTok video data.</p>
+                  <button
+                    onClick={() => handleSync('tiktok')}
+                    disabled={!!syncing}
+                    className="btn-primary text-sm inline-flex items-center gap-2"
+                  >
+                    {syncing === 'tiktok' ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" /> Syncing...</>
+                    ) : (
+                      <><RefreshCw className="w-4 h-4" /> Sync TikTok</>
                     )}
                   </button>
                 </div>
