@@ -67,12 +67,14 @@ export async function exchangeCode(code) {
 
 // Get user's Facebook Pages (needed to find connected IG account)
 export async function getPages(userAccessToken) {
-  const res = await fetch(`${GRAPH_API}/me/accounts?fields=id,name,access_token,instagram_business_account&access_token=${userAccessToken}`);
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(`Failed to get pages: ${err.error?.message}`);
-  }
+  const url = `${GRAPH_API}/me/accounts?fields=id,name,access_token,instagram_business_account&access_token=${userAccessToken}`;
+  console.log('Fetching pages from:', url.replace(userAccessToken, '[REDACTED]'));
+  const res = await fetch(url);
   const data = await res.json();
+  console.log('Pages API response status:', res.status, 'data:', JSON.stringify(data).substring(0, 500));
+  if (!res.ok) {
+    throw new Error(`Failed to get pages: ${data.error?.message}`);
+  }
   return data.data || [];
 }
 
