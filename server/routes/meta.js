@@ -78,10 +78,13 @@ router.get('/callback', async (req, res) => {
     }
 
     // Exchange code for long-lived user token
+    console.log('Meta callback: exchanging code for token...');
     const tokenData = await exchangeCode(code);
+    console.log('Meta callback: token obtained, fetching pages...');
 
     // Get user's Facebook Pages
     const pages = await getPages(tokenData.access_token);
+    console.log('Meta callback: found', pages?.length || 0, 'pages');
 
     if (!pages || pages.length === 0) {
       return res.redirect(`${CLIENT_REDIRECT}/settings?meta_error=${encodeURIComponent('No Facebook Pages found. Make sure your Instagram Business account is connected to a Facebook Page.')}`);
@@ -103,28 +106,36 @@ router.get('/callback', async (req, res) => {
       page_access_token: selectedPage.access_token,
     };
 
-    // If there's a connected Instagram Business Account, get its info
+    // If there's a connected Instagram Business Account, try to get its info
+    // This may fail without instagram_basic scope — that's OK, we still save the FB connection
     if (selectedPage.instagram_business_account) {
-      const igAccount = await getInstagramAccount(
-        selectedPage.instagram_business_account.id,
-        selectedPage.access_token
-      );
-      metadata.ig_user_id = igAccount.id;
-      metadata.ig_username = igAccount.username;
-      metadata.ig_name = igAccount.name;
-      metadata.ig_followers = igAccount.followers_count;
-      metadata.ig_following = igAccount.follows_count;
-      metadata.ig_media_count = igAccount.media_count;
-      metadata.ig_profile_picture = igAccount.profile_picture_url;
-      metadata.ig_bio = igAccount.biography;
+      try {
+        const igAccount = await getInstagramAccount(
+          selectedPage.instagram_business_account.id,
+          selectedPage.access_token
+        );
+        metadata.ig_user_id = igAccount.id;
+        metadata.ig_username = igAccount.username;
+        metadata.ig_name = igAccount.name;
+        metadata.ig_followers = igAccount.followers_count;
+        metadata.ig_following = igAccount.follows_count;
+        metadata.ig_media_count = igAccount.media_count;
+        metadata.ig_profile_picture = igAccount.profile_picture_url;
+        metadata.ig_bio = igAccount.biography;
+      } catch (igErr) {
+        console.warn('Could not fetch Instagram account (may need instagram_basic scope):', igErr.message);
+        metadata.ig_user_id = selectedPage.instagram_business_account.id;
+      }
     }
 
     // Save to Supabase
+    console.log('Meta callback: saving connection for page:', metadata.page_name);
     await saveConnection(metadata);
+    console.log('Meta callback: connection saved successfully');
 
     res.redirect(`${CLIENT_REDIRECT}/settings?meta_connected=true`);
   } catch (err) {
-    console.error('Meta callback error:', err.message);
+    console.error('Meta callback error:', err.message, err.stack);
     res.redirect(`${CLIENT_REDIRECT}/settings?meta_error=${encodeURIComponent(err.message)}`);
   }
 });
