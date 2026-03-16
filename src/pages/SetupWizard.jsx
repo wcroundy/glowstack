@@ -163,6 +163,7 @@ function MetaCard() {
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [error, setError] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -176,6 +177,7 @@ function MetaCard() {
       window.history.replaceState({}, '', window.location.pathname);
     }
     if (params.get('meta_error')) {
+      setError(decodeURIComponent(params.get('meta_error')));
       setExpanded(true);
       window.history.replaceState({}, '', window.location.pathname);
     }
@@ -311,7 +313,13 @@ function MetaCard() {
                 </div>
               </div>
 
-              <button onClick={handleConnect} className="btn-primary w-full flex items-center justify-center gap-2">
+              {error && (
+                <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">
+                  {error}
+                </div>
+              )}
+
+              <button onClick={() => { setError(null); handleConnect(); }} className="btn-primary w-full flex items-center justify-center gap-2">
                 <Link2 className="w-4 h-4" /> Connect with Facebook
               </button>
 

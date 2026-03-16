@@ -87,7 +87,7 @@ router.get('/callback', async (req, res) => {
     console.log('Meta callback: found', pages?.length || 0, 'pages');
 
     if (!pages || pages.length === 0) {
-      return res.redirect(`${CLIENT_REDIRECT}/settings?meta_error=${encodeURIComponent('No Facebook Pages found. Make sure your Instagram Business account is connected to a Facebook Page.')}`);
+      return res.redirect(`${CLIENT_REDIRECT}/settings?meta_error=${encodeURIComponent('No Facebook Pages found. Create a Facebook Page and link your Instagram account to it, then try connecting again.')}`);
     }
 
     // Use the first page that has an Instagram Business Account connected
