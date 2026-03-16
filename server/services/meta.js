@@ -6,12 +6,12 @@ const META_REDIRECT_URI = process.env.META_REDIRECT_URI || 'http://localhost:300
 const GRAPH_API = 'https://graph.facebook.com/v22.0';
 
 // Permissions needed for Instagram + Facebook insights
+// Note: pages_read_user_content, instagram_basic, and instagram_manage_insights
+// require App Review. For development mode, use only default-available scopes.
+// Once app is approved, re-enable the full set.
 const SCOPES = [
   'pages_show_list',
   'pages_read_engagement',
-  'pages_read_user_content',
-  'instagram_basic',
-  'instagram_manage_insights',
 ].join(',');
 
 export function isMetaConfigured() {
