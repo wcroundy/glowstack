@@ -72,8 +72,10 @@ export default function TagsManager() {
   const [deleteCategoryId, setDeleteCategoryId] = useState(null);
   const [deletingCategory, setDeletingCategory] = useState(false);
 
-  // Tag editing (category reassignment)
+  // Tag editing (full edit: name, color, category)
   const [editingTagId, setEditingTagId] = useState(null);
+  const [editTagData, setEditTagData] = useState({ name: '', color: '', category: '' });
+  const [savingTag, setSavingTag] = useState(false);
 
   // Filter
   const [filterCategory, setFilterCategory] = useState('');
@@ -153,13 +155,33 @@ export default function TagsManager() {
     }
   };
 
-  const handleChangeTagCategory = async (tagId, newCat) => {
+  const startEditTag = (tag) => {
+    setEditingTagId(tag.id);
+    setEditTagData({ name: tag.name, color: tag.color || '#ec4899', category: tag.category || 'custom' });
+  };
+
+  const cancelEditTag = () => {
+    setEditingTagId(null);
+    setEditTagData({ name: '', color: '', category: '' });
+  };
+
+  const handleSaveTag = async (tagId) => {
+    if (!editTagData.name.trim()) return;
+    setSavingTag(true);
+    setError('');
     try {
-      await api.updateTag(tagId, { category: newCat });
-      setTags(prev => prev.map(t => t.id === tagId ? { ...t, category: newCat } : t));
+      const updates = {
+        name: editTagData.name.trim(),
+        color: editTagData.color,
+        category: editTagData.category,
+      };
+      await api.updateTag(tagId, updates);
+      setTags(prev => prev.map(t => t.id === tagId ? { ...t, ...updates } : t));
       setEditingTagId(null);
     } catch (err) {
-      setError('Failed to update tag category');
+      setError(err.message?.includes('duplicate') ? 'A tag with that name already exists' : 'Failed to update tag');
+    } finally {
+      setSavingTag(false);
     }
   };
 
@@ -750,73 +772,140 @@ export default function TagsManager() {
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {categoryTags.map(tag => (
-                  <div
-                    key={tag.id}
-                    className="card px-4 py-3 flex items-center justify-between group hover:shadow-md transition-shadow"
-                  >
-                    <div className="flex items-center gap-3 min-w-0 flex-1">
-                      <div
-                        className="w-3 h-3 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: tag.color || '#ec4899' }}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-sm text-surface-800 truncate">{tag.name}</p>
-                        <div className="flex items-center gap-2">
-                          <p className="text-xs text-surface-400">
-                            {tag.usage_count || 0} asset{(tag.usage_count || 0) !== 1 ? 's' : ''}
-                          </p>
-                          {/* Category reassignment */}
-                          {editingTagId === tag.id ? (
-                            <select
-                              value={tag.category || 'custom'}
-                              onChange={e => handleChangeTagCategory(tag.id, e.target.value)}
-                              onBlur={() => setEditingTagId(null)}
-                              className="text-xs border border-surface-200 rounded px-1.5 py-0.5 bg-white"
-                              autoFocus
-                            >
-                              {categories.map(c => (
-                                <option key={c.name} value={c.name}>{c.label}</option>
-                              ))}
-                            </select>
-                          ) : (
-                            <button
-                              onClick={() => setEditingTagId(tag.id)}
-                              className="text-xs text-surface-400 hover:text-brand-500 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all"
-                              title="Change category"
-                            >
-                              <ChevronDown className="w-3 h-3" />
-                              {categoryLabel(tag.category || 'custom')}
-                            </button>
-                          )}
-                        </div>
+                  editingTagId === tag.id ? (
+                    /* Inline Edit Mode */
+                    <div key={tag.id} className="card px-4 py-3 ring-2 ring-brand-300 space-y-3">
+                      {/* Name input */}
+                      <div className="flex items-center gap-3">
+                        <div
+                          className="w-3 h-3 rounded-full flex-shrink-0"
+                          style={{ backgroundColor: editTagData.color }}
+                        />
+                        <input
+                          type="text"
+                          value={editTagData.name}
+                          onChange={e => setEditTagData(d => ({ ...d, name: e.target.value }))}
+                          className="input text-sm flex-1 py-1.5"
+                          autoFocus
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') { e.preventDefault(); handleSaveTag(tag.id); }
+                            if (e.key === 'Escape') cancelEditTag();
+                          }}
+                        />
                       </div>
-                    </div>
 
-                    {deleteId === tag.id ? (
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={() => handleDelete(tag.id)}
-                          disabled={deleting}
-                          className="text-xs text-red-600 hover:text-red-700 font-medium"
+                      {/* Color picker */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {TAG_COLORS.map(color => (
+                          <button
+                            key={color}
+                            type="button"
+                            onClick={() => setEditTagData(d => ({ ...d, color }))}
+                            className={`w-5 h-5 rounded-full transition-all ${
+                              editTagData.color === color ? 'ring-2 ring-offset-1 ring-brand-500 scale-110' : 'hover:scale-110'
+                            }`}
+                            style={{ backgroundColor: color }}
+                          />
+                        ))}
+                      </div>
+
+                      {/* Category + actions */}
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={editTagData.category}
+                          onChange={e => setEditTagData(d => ({ ...d, category: e.target.value }))}
+                          className="text-xs border border-surface-200 rounded px-2 py-1 bg-white flex-1"
                         >
-                          {deleting ? 'Deleting...' : 'Confirm'}
+                          {categories.map(c => (
+                            <option key={c.name} value={c.name}>{c.label}</option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={() => handleSaveTag(tag.id)}
+                          disabled={savingTag || !editTagData.name.trim()}
+                          className="text-xs font-medium text-brand-600 hover:text-brand-700 flex items-center gap-1"
+                        >
+                          {savingTag ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                          Save
                         </button>
                         <button
-                          onClick={() => setDeleteId(null)}
+                          onClick={cancelEditTag}
                           className="text-xs text-surface-400 hover:text-surface-600"
                         >
                           Cancel
                         </button>
                       </div>
-                    ) : (
-                      <button
-                        onClick={() => setDeleteId(tag.id)}
-                        className="p-1.5 rounded-lg text-surface-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
+
+                      {/* Live preview */}
+                      {editTagData.name.trim() && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-surface-400">Preview:</span>
+                          <span
+                            className="inline-flex items-center text-xs font-medium px-2.5 py-1 rounded-full text-white"
+                            style={{ backgroundColor: editTagData.color }}
+                          >
+                            {editTagData.name.trim()}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    /* Normal Display Mode */
+                    <div
+                      key={tag.id}
+                      className="card px-4 py-3 flex items-center justify-between group hover:shadow-md transition-shadow"
+                    >
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div
+                          className="w-3 h-3 rounded-full flex-shrink-0"
+                          style={{ backgroundColor: tag.color || '#ec4899' }}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-sm text-surface-800 truncate">{tag.name}</p>
+                          <p className="text-xs text-surface-400">
+                            {tag.usage_count || 0} asset{(tag.usage_count || 0) !== 1 ? 's' : ''}
+                            <span className="mx-1">·</span>
+                            {categoryLabel(tag.category || 'custom')}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                        <button
+                          onClick={() => startEditTag(tag)}
+                          className="p-1.5 rounded-lg text-surface-300 hover:text-brand-500 hover:bg-brand-50"
+                          title="Edit tag"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        {deleteId === tag.id ? (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => handleDelete(tag.id)}
+                              disabled={deleting}
+                              className="text-xs text-red-600 hover:text-red-700 font-medium"
+                            >
+                              {deleting ? '...' : 'Delete?'}
+                            </button>
+                            <button
+                              onClick={() => setDeleteId(null)}
+                              className="text-xs text-surface-400 hover:text-surface-600"
+                            >
+                              No
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setDeleteId(tag.id)}
+                            className="p-1.5 rounded-lg text-surface-300 hover:text-red-500 hover:bg-red-50"
+                            title="Delete tag"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )
                 ))}
               </div>
             </div>
