@@ -3,6 +3,7 @@ import {
   Tags, Plus, Trash2, Sparkles, Loader2, AlertCircle,
   CheckCircle2, Hash, Palette, FolderOpen, Wand2, X, DollarSign, CreditCard,
   ThumbsUp, ThumbsDown, Lightbulb, Check, Image as ImageIcon, History, Clock,
+  Pencil, ChevronDown,
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -12,14 +13,15 @@ const TAG_COLORS = [
   '#6366f1', '#8b5cf6', '#a855f7', '#d946ef',
 ];
 
-const TAG_CATEGORIES = [
-  { value: 'content_type', label: 'Content Type' },
-  { value: 'aesthetic', label: 'Aesthetic' },
-  { value: 'product', label: 'Product' },
-  { value: 'brand', label: 'Brand' },
-  { value: 'platform', label: 'Platform' },
-  { value: 'campaign', label: 'Campaign' },
-  { value: 'custom', label: 'Custom' },
+// Fallback categories if API fails or during loading
+const DEFAULT_CATEGORIES = [
+  { name: 'content_type', label: 'Content Type', color: '#3b82f6', is_default: true },
+  { name: 'aesthetic', label: 'Aesthetic', color: '#ec4899', is_default: true },
+  { name: 'product', label: 'Product', color: '#f97316', is_default: true },
+  { name: 'brand', label: 'Brand', color: '#8b5cf6', is_default: true },
+  { name: 'platform', label: 'Platform', color: '#06b6d4', is_default: true },
+  { name: 'campaign', label: 'Campaign', color: '#22c55e', is_default: true },
+  { name: 'custom', label: 'Custom', color: '#6366f1', is_default: true },
 ];
 
 export default function TagsManager() {
@@ -61,11 +63,24 @@ export default function TagsManager() {
   const [autoTagHistory, setAutoTagHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
+  // Categories (dynamic)
+  const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  const [showCreateCategory, setShowCreateCategory] = useState(false);
+  const [newCategoryLabel, setNewCategoryLabel] = useState('');
+  const [newCategoryColor, setNewCategoryColor] = useState('#6366f1');
+  const [creatingCategory, setCreatingCategory] = useState(false);
+  const [deleteCategoryId, setDeleteCategoryId] = useState(null);
+  const [deletingCategory, setDeletingCategory] = useState(false);
+
+  // Tag editing (category reassignment)
+  const [editingTagId, setEditingTagId] = useState(null);
+
   // Filter
   const [filterCategory, setFilterCategory] = useState('');
 
   useEffect(() => {
     loadTags();
+    loadCategories();
     loadHistory();
   }, []);
 
@@ -91,6 +106,60 @@ export default function TagsManager() {
       // non-critical — don't show error
     } finally {
       setHistoryLoading(false);
+    }
+  };
+
+  const loadCategories = async () => {
+    try {
+      const res = await api.getTagCategories();
+      if (res.data?.length > 0) setCategories(res.data);
+    } catch (err) {
+      // Fall back to defaults silently
+    }
+  };
+
+  const handleCreateCategory = async (e) => {
+    e.preventDefault();
+    if (!newCategoryLabel.trim()) return;
+    setCreatingCategory(true);
+    setError('');
+    try {
+      const cat = await api.createTagCategory({ label: newCategoryLabel.trim(), color: newCategoryColor });
+      setCategories(prev => [...prev, cat]);
+      setNewCategoryLabel('');
+      setNewCategoryColor('#6366f1');
+      setShowCreateCategory(false);
+    } catch (err) {
+      setError(err.message?.includes('duplicate') ? 'A category with that name already exists' : 'Failed to create category');
+    } finally {
+      setCreatingCategory(false);
+    }
+  };
+
+  const handleDeleteCategory = async (cat) => {
+    setDeletingCategory(true);
+    setError('');
+    try {
+      await api.deleteTagCategory(cat.id);
+      setCategories(prev => prev.filter(c => c.id !== cat.id));
+      // Tags in this category got moved to 'custom' server-side, reflect locally
+      setTags(prev => prev.map(t => t.category === cat.name ? { ...t, category: 'custom' } : t));
+      setDeleteCategoryId(null);
+      if (filterCategory === cat.name) setFilterCategory('');
+    } catch (err) {
+      setError(err.message || 'Failed to delete category');
+    } finally {
+      setDeletingCategory(false);
+    }
+  };
+
+  const handleChangeTagCategory = async (tagId, newCat) => {
+    try {
+      await api.updateTag(tagId, { category: newCat });
+      setTags(prev => prev.map(t => t.id === tagId ? { ...t, category: newCat } : t));
+      setEditingTagId(null);
+    } catch (err) {
+      setError('Failed to update tag category');
     }
   };
 
@@ -340,7 +409,7 @@ export default function TagsManager() {
 
   const categoryLabel = (cat) => {
     if (cat === 'ai_suggested') return 'AI Suggested';
-    return TAG_CATEGORIES.find(c => c.value === cat)?.label || cat;
+    return categories.find(c => c.name === cat)?.label || cat;
   };
 
   // Group tags by category for display
@@ -469,8 +538,8 @@ export default function TagsManager() {
                   onChange={e => setNewCategory(e.target.value)}
                   className="input w-full"
                 >
-                  {TAG_CATEGORIES.map(c => (
-                    <option key={c.value} value={c.value}>{c.label}</option>
+                  {categories.map(c => (
+                    <option key={c.name} value={c.name}>{c.label}</option>
                   ))}
                 </select>
               </div>
@@ -520,31 +589,133 @@ export default function TagsManager() {
         </div>
       )}
 
-      {/* Category Filter */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <button
-          onClick={() => setFilterCategory('')}
-          className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
-            !filterCategory ? 'bg-brand-500 text-white' : 'bg-surface-100 text-surface-600 hover:bg-surface-200'
-          }`}
-        >
-          All ({tags.length})
-        </button>
-        {TAG_CATEGORIES.map(cat => {
-          const count = tags.filter(t => t.category === cat.value).length;
-          if (count === 0) return null;
-          return (
+      {/* Category Filter + Management */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => setFilterCategory('')}
+            className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
+              !filterCategory ? 'bg-brand-500 text-white' : 'bg-surface-100 text-surface-600 hover:bg-surface-200'
+            }`}
+          >
+            All ({tags.length})
+          </button>
+          {categories.map(cat => {
+            const count = tags.filter(t => t.category === cat.name).length;
+            if (count === 0 && filterCategory !== cat.name) return null;
+            return (
+              <div key={cat.name} className="relative group/cat inline-flex">
+                <button
+                  onClick={() => setFilterCategory(filterCategory === cat.name ? '' : cat.name)}
+                  className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors flex items-center gap-1.5 ${
+                    filterCategory === cat.name ? 'bg-brand-500 text-white' : 'bg-surface-100 text-surface-600 hover:bg-surface-200'
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: cat.color || '#6366f1' }} />
+                  {cat.label} ({count})
+                </button>
+                {!cat.is_default && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setDeleteCategoryId(deleteCategoryId === cat.id ? null : cat.id); }}
+                    className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-100 text-red-500 hover:bg-red-200 items-center justify-center text-[10px] hidden group-hover/cat:flex"
+                    title="Delete category"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          {/* AI Suggested filter (if any tags have this category) */}
+          {tags.some(t => t.category === 'ai_suggested') && (
             <button
-              key={cat.value}
-              onClick={() => setFilterCategory(filterCategory === cat.value ? '' : cat.value)}
+              onClick={() => setFilterCategory(filterCategory === 'ai_suggested' ? '' : 'ai_suggested')}
               className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
-                filterCategory === cat.value ? 'bg-brand-500 text-white' : 'bg-surface-100 text-surface-600 hover:bg-surface-200'
+                filterCategory === 'ai_suggested' ? 'bg-brand-500 text-white' : 'bg-surface-100 text-surface-600 hover:bg-surface-200'
               }`}
             >
-              {cat.label} ({count})
+              AI Suggested ({tags.filter(t => t.category === 'ai_suggested').length})
             </button>
+          )}
+          <button
+            onClick={() => setShowCreateCategory(true)}
+            className="text-xs px-3 py-1.5 rounded-full font-medium border border-dashed border-surface-300 text-surface-500 hover:border-brand-300 hover:text-brand-600 hover:bg-brand-50 transition-colors flex items-center gap-1"
+          >
+            <Plus className="w-3 h-3" /> New Category
+          </button>
+        </div>
+
+        {/* Delete category confirmation */}
+        {deleteCategoryId && (() => {
+          const cat = categories.find(c => c.id === deleteCategoryId);
+          if (!cat) return null;
+          const tagCount = tags.filter(t => t.category === cat.name).length;
+          return (
+            <div className="flex items-center gap-2 text-sm bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+              <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+              <span className="text-red-700">
+                Delete <strong>{cat.label}</strong>?
+                {tagCount > 0 && ` ${tagCount} tag${tagCount !== 1 ? 's' : ''} will be moved to Custom.`}
+              </span>
+              <button
+                onClick={() => handleDeleteCategory(cat)}
+                disabled={deletingCategory}
+                className="ml-auto text-xs font-medium text-red-600 hover:text-red-700"
+              >
+                {deletingCategory ? 'Deleting...' : 'Delete'}
+              </button>
+              <button
+                onClick={() => setDeleteCategoryId(null)}
+                className="text-xs text-surface-400 hover:text-surface-600"
+              >
+                Cancel
+              </button>
+            </div>
           );
-        })}
+        })()}
+
+        {/* Create Category Form */}
+        {showCreateCategory && (
+          <form onSubmit={handleCreateCategory} className="card p-4 flex items-end gap-3">
+            <div className="flex-1">
+              <label className="block text-xs font-medium text-surface-500 mb-1.5">
+                <FolderOpen className="w-3 h-3 inline mr-1" />Category Name
+              </label>
+              <input
+                type="text"
+                value={newCategoryLabel}
+                onChange={e => setNewCategoryLabel(e.target.value)}
+                placeholder="e.g. Season, Mood, Location"
+                className="input w-full"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-surface-500 mb-1.5">
+                <Palette className="w-3 h-3 inline mr-1" />Color
+              </label>
+              <div className="flex gap-1">
+                {['#3b82f6', '#ec4899', '#f97316', '#8b5cf6', '#06b6d4', '#22c55e', '#6366f1', '#ef4444'].map(c => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setNewCategoryColor(c)}
+                    className={`w-6 h-6 rounded-full transition-all ${
+                      newCategoryColor === c ? 'ring-2 ring-offset-1 ring-brand-500 scale-110' : 'hover:scale-110'
+                    }`}
+                    style={{ backgroundColor: c }}
+                  />
+                ))}
+              </div>
+            </div>
+            <button type="submit" disabled={creatingCategory || !newCategoryLabel.trim()} className="btn-primary text-sm whitespace-nowrap">
+              {creatingCategory ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create'}
+            </button>
+            <button type="button" onClick={() => { setShowCreateCategory(false); setNewCategoryLabel(''); }} className="btn-ghost text-sm">
+              Cancel
+            </button>
+          </form>
+        )}
       </div>
 
       {/* Tags List */}
@@ -583,16 +754,41 @@ export default function TagsManager() {
                     key={tag.id}
                     className="card px-4 py-3 flex items-center justify-between group hover:shadow-md transition-shadow"
                   >
-                    <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
                       <div
                         className="w-3 h-3 rounded-full flex-shrink-0"
                         style={{ backgroundColor: tag.color || '#ec4899' }}
                       />
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <p className="font-medium text-sm text-surface-800 truncate">{tag.name}</p>
-                        <p className="text-xs text-surface-400">
-                          {tag.usage_count || 0} asset{(tag.usage_count || 0) !== 1 ? 's' : ''}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-xs text-surface-400">
+                            {tag.usage_count || 0} asset{(tag.usage_count || 0) !== 1 ? 's' : ''}
+                          </p>
+                          {/* Category reassignment */}
+                          {editingTagId === tag.id ? (
+                            <select
+                              value={tag.category || 'custom'}
+                              onChange={e => handleChangeTagCategory(tag.id, e.target.value)}
+                              onBlur={() => setEditingTagId(null)}
+                              className="text-xs border border-surface-200 rounded px-1.5 py-0.5 bg-white"
+                              autoFocus
+                            >
+                              {categories.map(c => (
+                                <option key={c.name} value={c.name}>{c.label}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <button
+                              onClick={() => setEditingTagId(tag.id)}
+                              className="text-xs text-surface-400 hover:text-brand-500 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all"
+                              title="Change category"
+                            >
+                              <ChevronDown className="w-3 h-3" />
+                              {categoryLabel(tag.category || 'custom')}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
 

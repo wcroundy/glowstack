@@ -82,7 +82,14 @@ export const api = {
   // Tags
   getTags: (params) => request(`/tags?${new URLSearchParams(params || {})}`),
   createTag: (data) => request('/tags', { method: 'POST', body: JSON.stringify(data) }),
+  updateTag: (id, data) => request(`/tags/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteTag: (id) => request(`/tags/${id}`, { method: 'DELETE' }),
+
+  // Tag Categories
+  getTagCategories: () => request('/tags/categories'),
+  createTagCategory: (data) => request('/tags/categories', { method: 'POST', body: JSON.stringify(data) }),
+  updateTagCategory: (id, data) => request(`/tags/categories/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteTagCategory: (id) => request(`/tags/categories/${id}`, { method: 'DELETE' }),
 
   // AI Auto-Tag
   aiAutoTag: ({ assetIds, untaggedOnly, limit, offset } = {}) => request('/ai/auto-tag', { method: 'POST', body: JSON.stringify({ assetIds, untaggedOnly, limit, offset }) }),
