@@ -112,7 +112,7 @@ export default function App() {
 
       {/* Sidebar */}
       <aside className={`
-        fixed inset-y-0 left-0 z-40 w-64 bg-white dark:bg-surface-100 border-r border-surface-200
+        fixed inset-y-0 left-0 z-40 w-64 bg-white border-r border-surface-200
         transform transition-transform duration-200 lg:translate-x-0 lg:static lg:z-auto
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
@@ -189,7 +189,7 @@ export default function App() {
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Mobile header */}
-        <header className="lg:hidden flex items-center justify-between px-4 py-3 bg-white dark:bg-surface-100 border-b border-surface-200">
+        <header className="lg:hidden flex items-center justify-between px-4 py-3 bg-white border-b border-surface-200">
           <button onClick={() => setSidebarOpen(true)} className="p-1.5 rounded-lg hover:bg-surface-100">
             <Menu className="w-5 h-5 text-surface-600" />
           </button>

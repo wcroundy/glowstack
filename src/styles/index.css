@@ -64,7 +64,8 @@
 
 @layer components {
   .card {
-    @apply bg-white dark:bg-surface-100 rounded-2xl border border-surface-200 shadow-sm;
+    @apply rounded-2xl border border-surface-200 shadow-sm;
+    background-color: white;
   }
   .card-hover {
     @apply card transition-all duration-200 hover:shadow-md hover:border-brand-200;
@@ -77,9 +78,10 @@
   }
   .btn-secondary {
     @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl
-           bg-white dark:bg-surface-100 text-surface-700 font-medium text-sm border border-surface-200
-           hover:bg-surface-50 dark:hover:bg-surface-200 active:bg-surface-100
+           text-surface-700 font-medium text-sm border border-surface-200
+           hover:bg-surface-50 active:bg-surface-100
            transition-colors duration-150;
+    background-color: white;
   }
   .btn-ghost {
     @apply inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl
@@ -88,22 +90,39 @@
            transition-colors duration-150;
   }
   .input {
-    @apply w-full px-4 py-2.5 rounded-xl border border-surface-200 bg-white dark:bg-surface-100
+    @apply w-full px-4 py-2.5 rounded-xl border border-surface-200
            text-sm text-surface-800 placeholder-surface-400
            focus:outline-none focus:ring-2 focus:ring-brand-300 focus:border-brand-400
            transition-all duration-150;
+    background-color: white;
   }
   .badge {
     @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
   }
   .sidebar-link {
     @apply flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium
-           text-surface-600 hover:bg-brand-50 dark:hover:bg-brand-900/30 hover:text-brand-600
+           text-surface-600 hover:bg-brand-50 hover:text-brand-600
            transition-colors duration-150;
   }
   .sidebar-link-active {
-    @apply sidebar-link bg-brand-50 dark:bg-brand-900/30 text-brand-600;
+    @apply sidebar-link bg-brand-50 text-brand-600;
   }
+}
+
+/* Dark mode component overrides */
+.dark .card,
+.dark .btn-secondary,
+.dark .input {
+  background-color: var(--surface-100);
+}
+.dark .btn-secondary:hover {
+  background-color: var(--surface-200);
+}
+.dark .sidebar-link:hover {
+  background-color: rgba(20, 83, 45, 0.3);
+}
+.dark .sidebar-link-active {
+  background-color: rgba(20, 83, 45, 0.3);
 }
 
 /* Custom scrollbar */
