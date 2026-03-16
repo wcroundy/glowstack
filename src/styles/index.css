@@ -2,14 +2,69 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+   Theme Variables — Light (Pink) / Dark (Green)
+   ============================================================ */
+:root {
+  /* Brand — Pink */
+  --brand-50: #fdf2f8;
+  --brand-100: #fce7f3;
+  --brand-200: #fbcfe8;
+  --brand-300: #f9a8d4;
+  --brand-400: #f472b6;
+  --brand-500: #ec4899;
+  --brand-600: #db2777;
+  --brand-700: #be185d;
+  --brand-800: #9d174d;
+  --brand-900: #831843;
+
+  /* Surface — Light */
+  --surface-50: #f8fafc;
+  --surface-100: #f1f5f9;
+  --surface-200: #e2e8f0;
+  --surface-300: #cbd5e1;
+  --surface-400: #94a3b8;
+  --surface-500: #64748b;
+  --surface-600: #475569;
+  --surface-700: #334155;
+  --surface-800: #1e293b;
+  --surface-900: #0f172a;
+}
+
+.dark {
+  /* Brand — Bright Green */
+  --brand-50: #f0fdf4;
+  --brand-100: #dcfce7;
+  --brand-200: #bbf7d0;
+  --brand-300: #86efac;
+  --brand-400: #4ade80;
+  --brand-500: #22c55e;
+  --brand-600: #16a34a;
+  --brand-700: #15803d;
+  --brand-800: #166534;
+  --brand-900: #14532d;
+
+  /* Surface — Dark (inverted) */
+  --surface-50: #0f172a;
+  --surface-100: #1e293b;
+  --surface-200: #334155;
+  --surface-300: #475569;
+  --surface-400: #64748b;
+  --surface-500: #94a3b8;
+  --surface-600: #cbd5e1;
+  --surface-700: #e2e8f0;
+  --surface-800: #f1f5f9;
+  --surface-900: #f8fafc;
+}
+
 @layer base {
   * { @apply border-surface-200; }
-  body { @apply bg-surface-50 text-surface-800; }
+  body { @apply bg-surface-50 text-surface-800 transition-colors duration-200; }
 }
 
 @layer components {
   .card {
-    @apply bg-white rounded-2xl border border-surface-200 shadow-sm;
+    @apply bg-white dark:bg-surface-100 rounded-2xl border border-surface-200 shadow-sm;
   }
   .card-hover {
     @apply card transition-all duration-200 hover:shadow-md hover:border-brand-200;
@@ -22,8 +77,8 @@
   }
   .btn-secondary {
     @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl
-           bg-white text-surface-700 font-medium text-sm border border-surface-200
-           hover:bg-surface-50 active:bg-surface-100
+           bg-white dark:bg-surface-100 text-surface-700 font-medium text-sm border border-surface-200
+           hover:bg-surface-50 dark:hover:bg-surface-200 active:bg-surface-100
            transition-colors duration-150;
   }
   .btn-ghost {
@@ -33,8 +88,8 @@
            transition-colors duration-150;
   }
   .input {
-    @apply w-full px-4 py-2.5 rounded-xl border border-surface-200 bg-white
-           text-sm placeholder-surface-400
+    @apply w-full px-4 py-2.5 rounded-xl border border-surface-200 bg-white dark:bg-surface-100
+           text-sm text-surface-800 placeholder-surface-400
            focus:outline-none focus:ring-2 focus:ring-brand-300 focus:border-brand-400
            transition-all duration-150;
   }
@@ -43,11 +98,11 @@
   }
   .sidebar-link {
     @apply flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium
-           text-surface-600 hover:bg-brand-50 hover:text-brand-600
+           text-surface-600 hover:bg-brand-50 dark:hover:bg-brand-900/30 hover:text-brand-600
            transition-colors duration-150;
   }
   .sidebar-link-active {
-    @apply sidebar-link bg-brand-50 text-brand-600;
+    @apply sidebar-link bg-brand-50 dark:bg-brand-900/30 text-brand-600;
   }
 }
 
@@ -63,3 +118,23 @@
 .chat-markdown strong { @apply font-semibold; }
 .chat-markdown ul, .chat-markdown ol { @apply ml-4 mb-2; }
 .chat-markdown li { @apply mb-1; }
+
+/* Dark mode overrides for white backgrounds in components */
+.dark .bg-white { background-color: var(--surface-100); }
+.dark .hover\:bg-white:hover { background-color: var(--surface-200); }
+
+/* Modal overlays stay consistent */
+.dark .bg-black\/50 { background-color: rgba(0, 0, 0, 0.6); }
+.dark .bg-black\/30 { background-color: rgba(0, 0, 0, 0.5); }
+
+/* Fix colored status badges in dark mode */
+.dark .bg-emerald-50 { background-color: rgba(16, 185, 129, 0.15); }
+.dark .bg-emerald-100 { background-color: rgba(16, 185, 129, 0.2); }
+.dark .bg-red-50 { background-color: rgba(239, 68, 68, 0.15); }
+.dark .bg-amber-50 { background-color: rgba(245, 158, 11, 0.15); }
+.dark .bg-blue-50 { background-color: rgba(59, 130, 246, 0.15); }
+.dark .bg-purple-50 { background-color: rgba(139, 92, 246, 0.15); }
+.dark .bg-pink-50 { background-color: rgba(236, 72, 153, 0.15); }
+.dark .bg-green-50 { background-color: rgba(34, 197, 94, 0.15); }
+.dark .bg-indigo-50 { background-color: rgba(99, 102, 241, 0.15); }
+.dark .bg-orange-50 { background-color: rgba(249, 115, 22, 0.15); }

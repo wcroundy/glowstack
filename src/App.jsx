@@ -3,7 +3,9 @@ import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Image, BarChart3, CalendarDays, MessageCircle,
   Settings, Sparkles, Menu, X, ChevronRight, LogOut, Tags, TrendingUp,
+  Sun, Moon,
 } from 'lucide-react';
+import { useTheme } from './contexts/ThemeContext';
 import Dashboard from './pages/Dashboard';
 import MediaLibrary from './pages/MediaLibrary';
 import Analytics from './pages/Analytics';
@@ -32,6 +34,7 @@ export default function App() {
   const [chatDrawerOpen, setChatDrawerOpen] = useState(false);
   const [authed, setAuthed] = useState(null); // null = checking, false = not authed, true = authed
   const location = useLocation();
+  const { theme, toggleTheme } = useTheme();
 
   const isChatPage = location.pathname === '/chat';
 
@@ -109,7 +112,7 @@ export default function App() {
 
       {/* Sidebar */}
       <aside className={`
-        fixed inset-y-0 left-0 z-40 w-64 bg-white border-r border-surface-200
+        fixed inset-y-0 left-0 z-40 w-64 bg-white dark:bg-surface-100 border-r border-surface-200
         transform transition-transform duration-200 lg:translate-x-0 lg:static lg:z-auto
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
@@ -151,7 +154,7 @@ export default function App() {
             <div className="p-3 border-t border-surface-100">
               <button
                 onClick={() => setChatDrawerOpen(true)}
-                className="w-full flex items-center gap-3 px-3 py-3 rounded-xl bg-gradient-to-r from-brand-50 to-purple-50 text-brand-600 hover:from-brand-100 hover:to-purple-100 transition-colors"
+                className="w-full flex items-center gap-3 px-3 py-3 rounded-xl bg-gradient-to-r from-brand-50 to-brand-100 text-brand-600 hover:from-brand-100 hover:to-brand-200 transition-colors"
               >
                 <Sparkles className="w-5 h-5" />
                 <span className="text-sm font-medium">Ask AI anything</span>
@@ -160,8 +163,18 @@ export default function App() {
             </div>
           )}
 
-          {/* Logout */}
-          <div className="p-3 border-t border-surface-100">
+          {/* Theme Toggle + Logout */}
+          <div className="p-3 border-t border-surface-100 space-y-1">
+            <button
+              onClick={toggleTheme}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-surface-500 hover:bg-surface-100 hover:text-surface-700 transition-colors"
+            >
+              {theme === 'dark' ? (
+                <><Sun className="w-4 h-4" /> Light Mode</>
+              ) : (
+                <><Moon className="w-4 h-4" /> Dark Mode</>
+              )}
+            </button>
             <button
               onClick={handleLogout}
               className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-surface-500 hover:bg-surface-100 hover:text-surface-700 transition-colors"
@@ -176,7 +189,7 @@ export default function App() {
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Mobile header */}
-        <header className="lg:hidden flex items-center justify-between px-4 py-3 bg-white border-b border-surface-200">
+        <header className="lg:hidden flex items-center justify-between px-4 py-3 bg-white dark:bg-surface-100 border-b border-surface-200">
           <button onClick={() => setSidebarOpen(true)} className="p-1.5 rounded-lg hover:bg-surface-100">
             <Menu className="w-5 h-5 text-surface-600" />
           </button>

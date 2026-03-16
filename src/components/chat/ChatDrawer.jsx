@@ -43,7 +43,7 @@ export default function ChatDrawer({ isOpen, onClose }) {
   return (
     <div className="fixed bottom-4 right-4 w-96 h-[32rem] max-h-[80vh] bg-white rounded-2xl shadow-2xl border border-surface-200 flex flex-col z-50 overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b bg-gradient-to-r from-brand-500 to-purple-500">
+      <div className="flex items-center justify-between px-4 py-3 border-b bg-gradient-to-r from-brand-500 to-brand-600">
         <div className="flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-white" />
           <span className="text-sm font-semibold text-white">AI Assistant</span>
