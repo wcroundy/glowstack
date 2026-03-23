@@ -140,4 +140,6 @@ export const api = {
   videoBreakdownProcess: (assetId, frames) => request('/video-breakdown/process', { method: 'POST', body: JSON.stringify({ assetId, frames }) }),
   videoBreakdownFrames: (assetId) => request(`/video-breakdown/frames/${assetId}`),
   videoBreakdownRuns: () => request('/video-breakdown/runs'),
+  videoBreakdownReset: (assetId) => request(`/video-breakdown/reset/${assetId}`, { method: 'DELETE' }),
+  videoBreakdownResetAll: () => request('/video-breakdown/reset-all', { method: 'DELETE' }),
 };

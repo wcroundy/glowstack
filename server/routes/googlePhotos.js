@@ -253,9 +253,11 @@ router.post('/import', async (req, res) => {
           const thumbPath = `google-photos/${item.id}/thumb.jpg`;
 
           let thumbnailUrl = '';
+          let videoUrl = '';
           const baseUrl = item.baseUrl || '';
 
           if (baseUrl) {
+            // Download thumbnail for all items
             try {
               const thumbSrc = `${baseUrl}=w400-h400-c`;
               const thumbRes = await fetch(thumbSrc, {
@@ -271,11 +273,40 @@ router.post('/import', async (req, res) => {
             } catch (err) {
               console.error(`Thumb error for ${item.id}:`, err.message);
             }
+
+            // For videos, also download the full video file to media bucket
+            if (isVideo) {
+              try {
+                const videoSrc = `${baseUrl}=dv`;
+                console.log(`Downloading video for ${item.id}...`);
+                const videoRes = await fetch(videoSrc, {
+                  headers: { Authorization: `Bearer ${accessToken}` },
+                });
+                if (videoRes.ok) {
+                  const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
+                  const sizeMB = (videoBuffer.length / (1024 * 1024)).toFixed(1);
+                  console.log(`Video ${item.id}: ${sizeMB}MB`);
+                  // Only store if under 50MB (Supabase media bucket limit)
+                  if (videoBuffer.length <= 50 * 1024 * 1024) {
+                    const ext = (item.mimeType || 'video/mp4').includes('quicktime') ? 'mov' : 'mp4';
+                    const videoPath = `google-photos/${item.id}/video.${ext}`;
+                    const uploadedVideo = await uploadFile('media', videoPath, videoBuffer, item.mimeType || 'video/mp4');
+                    videoUrl = uploadedVideo.publicUrl;
+                  } else {
+                    console.warn(`Video ${item.id} too large (${sizeMB}MB), skipping full download`);
+                  }
+                } else {
+                  console.error(`Video download failed for ${item.id}: ${videoRes.status}`);
+                }
+              } catch (videoErr) {
+                console.error(`Video download error for ${item.id}:`, videoErr.message);
+              }
+            }
           }
 
           return {
             file_name: filename,
-            file_url: thumbnailUrl,
+            file_url: videoUrl || thumbnailUrl,
             thumbnail_url: thumbnailUrl,
             file_type: isVideo ? 'video' : 'image',
             mime_type: item.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),

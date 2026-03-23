@@ -34,11 +34,16 @@ export default function VideoBreakdown({ asset, onComplete, onClose }) {
     fetchEstimate();
   }, [fetchEstimate]);
 
+  // Check if asset has a real video file (not just a thumbnail)
+  const hasVideoFile = asset.file_url && asset.thumbnail_url && asset.file_url !== asset.thumbnail_url;
+
   // Step 2: Extract frames from video using canvas
   const extractFrames = useCallback(async () => {
-    const videoUrl = asset.file_url || asset.thumbnail_url;
-    if (!videoUrl) {
-      setError('No video URL available. The video may need to be re-imported from Google Photos.');
+    if (!hasVideoFile) {
+      setError(
+        'This video only has a thumbnail stored — the full video file is needed for scene extraction. ' +
+        'Re-import this video from Google Photos to download the full file, then try again.'
+      );
       setStep('error');
       return;
     }
@@ -46,33 +51,24 @@ export default function VideoBreakdown({ asset, onComplete, onClose }) {
     setStep('extracting');
     setExtractionProgress(0);
 
-    // We'll use the video element to seek and capture frames
     const video = videoRef.current;
     const canvas = canvasRef.current;
 
     if (!video || !canvas) {
-      // Fallback: if we can't play the video (e.g., thumbnail only),
-      // just send the thumbnail as the only frame
-      setStep('analyzing');
-      const frames = [{ timestamp: 0, dataUrl: videoUrl }];
-      await analyzeFrames(frames);
+      setError('Browser does not support video frame extraction.');
+      setStep('error');
       return;
     }
 
-    // For Google Photos imported videos, we typically only have the thumbnail stored.
-    // In that case, we'll send just the thumbnail for analysis.
-    // This still gives value by describing what's in the video thumbnail.
-    // Full video frame extraction works when the video is directly accessible.
-
     try {
-      // Try loading the video
+      // Load the actual video file from Supabase storage
       video.crossOrigin = 'anonymous';
-      video.src = videoUrl;
+      video.src = asset.file_url;
 
       await new Promise((resolve, reject) => {
         video.onloadedmetadata = resolve;
-        video.onerror = () => reject(new Error('Could not load video'));
-        setTimeout(() => reject(new Error('Video load timeout')), 10000);
+        video.onerror = () => reject(new Error('Could not load video file'));
+        setTimeout(() => reject(new Error('Video load timeout — file may be too large')), 30000);
       });
 
       const duration = video.duration || (asset.duration_seconds || 30);
@@ -95,35 +91,28 @@ export default function VideoBreakdown({ asset, onComplete, onClose }) {
             setExtractionProgress(Math.round(((i + 1) / totalFrames) * 100));
             resolve();
           };
-          setTimeout(resolve, 2000); // timeout per frame seek
+          setTimeout(resolve, 3000); // timeout per frame seek
         });
       }
 
-      setExtractedFrames(frames);
-      setStep('analyzing');
-      await analyzeFrames(frames);
-    } catch (videoErr) {
-      console.warn('Video extraction failed, using thumbnail:', videoErr.message);
-      // Fallback: use the thumbnail image as a single frame
-      // Fetch the thumbnail and convert to data URL
-      try {
-        const thumbResponse = await fetch(videoUrl);
-        const blob = await thumbResponse.blob();
-        const dataUrl = await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result);
-          reader.readAsDataURL(blob);
-        });
-        const frames = [{ timestamp: 0, dataUrl }];
-        setExtractedFrames(frames);
-        setStep('analyzing');
-        await analyzeFrames(frames);
-      } catch (thumbErr) {
-        setError('Could not access video or thumbnail. Try re-importing the video from Google Photos.');
+      // Filter out any frames that failed (empty canvas produces tiny data URLs)
+      const validFrames = frames.filter(f => f.dataUrl.length > 1000);
+
+      if (validFrames.length === 0) {
+        setError('Could not extract frames from the video. The video format may not be supported by your browser.');
         setStep('error');
+        return;
       }
+
+      setExtractedFrames(validFrames);
+      setStep('analyzing');
+      await analyzeFrames(validFrames);
+    } catch (videoErr) {
+      console.error('Video extraction failed:', videoErr.message);
+      setError(`Video extraction failed: ${videoErr.message}`);
+      setStep('error');
     }
-  }, [asset]);
+  }, [asset, hasVideoFile]);
 
   // Step 3: Send frames to backend for AI analysis
   const analyzeFrames = async (frames) => {
@@ -195,6 +184,15 @@ export default function VideoBreakdown({ asset, onComplete, onClose }) {
                     </div>
                   </div>
 
+                  {!hasVideoFile && (
+                    <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200">
+                      <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                      <p className="text-xs text-amber-700">
+                        Full video file not stored. Re-import this video from Google Photos to enable scene extraction.
+                      </p>
+                    </div>
+                  )}
+
                   {!estimate.hasOpenAI && (
                     <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200">
                       <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
@@ -204,7 +202,7 @@ export default function VideoBreakdown({ asset, onComplete, onClose }) {
 
                   <button
                     onClick={extractFrames}
-                    disabled={!estimate.hasOpenAI}
+                    disabled={!estimate.hasOpenAI || !hasVideoFile}
                     className="btn-primary w-full flex items-center justify-center gap-2"
                   >
                     <Film className="w-4 h-4" />

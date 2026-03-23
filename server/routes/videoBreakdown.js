@@ -344,4 +344,99 @@ router.get('/runs', async (req, res) => {
   }
 });
 
+// DELETE /api/video-breakdown/reset/:assetId — remove all extracted frames for a video
+router.delete('/reset/:assetId', async (req, res) => {
+  try {
+    if (!isSupabaseConfigured()) {
+      return res.status(400).json({ error: 'Supabase not configured' });
+    }
+
+    const assetId = req.params.assetId;
+
+    // Delete child assets (frames) — storage files cleaned up by ON DELETE CASCADE won't help storage,
+    // so delete storage files first
+    const { data: children } = await supabase
+      .from('media_assets')
+      .select('id, file_url, thumbnail_url')
+      .eq('parent_asset_id', assetId);
+
+    if (children && children.length > 0) {
+      // Delete storage files
+      const storagePaths = children
+        .map(c => {
+          const url = c.thumbnail_url || c.file_url || '';
+          const match = url.match(/\/storage\/v1\/object\/public\/thumbnails\/(.+)/);
+          return match ? match[1] : null;
+        })
+        .filter(Boolean);
+
+      if (storagePaths.length > 0) {
+        await supabase.storage.from('thumbnails').remove(storagePaths);
+      }
+
+      // Delete child asset records
+      await supabase
+        .from('media_assets')
+        .delete()
+        .eq('parent_asset_id', assetId);
+    }
+
+    // Delete breakdown run records
+    await supabase
+      .from('video_breakdown_runs')
+      .delete()
+      .eq('video_asset_id', assetId);
+
+    res.json({ success: true, deletedFrames: children?.length || 0 });
+  } catch (err) {
+    console.error('Video breakdown reset error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/video-breakdown/reset-all — remove ALL breakdown data
+router.delete('/reset-all', async (req, res) => {
+  try {
+    if (!isSupabaseConfigured()) {
+      return res.status(400).json({ error: 'Supabase not configured' });
+    }
+
+    // Delete all child assets that have a parent
+    const { data: children } = await supabase
+      .from('media_assets')
+      .select('id, file_url, thumbnail_url')
+      .not('parent_asset_id', 'is', null);
+
+    if (children && children.length > 0) {
+      const storagePaths = children
+        .map(c => {
+          const url = c.thumbnail_url || c.file_url || '';
+          const match = url.match(/\/storage\/v1\/object\/public\/thumbnails\/(.+)/);
+          return match ? match[1] : null;
+        })
+        .filter(Boolean);
+
+      if (storagePaths.length > 0) {
+        await supabase.storage.from('thumbnails').remove(storagePaths);
+      }
+
+      await supabase
+        .from('media_assets')
+        .delete()
+        .not('parent_asset_id', 'is', null);
+    }
+
+    // Delete all breakdown runs
+    await supabase
+      .from('video_breakdown_runs')
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000'); // delete all
+
+    res.json({ success: true, deletedFrames: children?.length || 0 });
+  } catch (err) {
+    console.error('Video breakdown reset-all error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
