@@ -55,9 +55,17 @@ function MediaCard({ asset, onSelect }) {
         />
         {/* Overlays */}
         {asset.file_type === 'video' && (
-          <div className="absolute top-2 left-2 badge bg-black/70 text-white">
-            <Video className="w-3 h-3 mr-1" />
-            {asset.duration_seconds ? `${Math.round(asset.duration_seconds)}s` : 'Video'}
+          <div className="absolute top-2 left-2 flex gap-1">
+            <div className="badge bg-black/70 text-white">
+              <Video className="w-3 h-3 mr-1" />
+              {asset.duration_seconds ? `${Math.round(asset.duration_seconds)}s` : 'Video'}
+            </div>
+            {asset.scene_count > 0 && (
+              <div className="badge bg-purple-600/80 text-white">
+                <Scissors className="w-3 h-3 mr-0.5" />
+                {asset.scene_count}
+              </div>
+            )}
           </div>
         )}
         {asset.parent_asset_id && (
@@ -144,19 +152,42 @@ function MediaDetail({ asset, onClose }) {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-0">
-          {/* Image */}
-          <div className="bg-surface-100 flex items-center justify-center p-4 relative">
-            <img src={asset.file_url} alt={asset.title} className="max-w-full max-h-80 rounded-lg object-contain" />
-            {asset.source === 'google_photos' && (
-              <a
-                href={googlePhotosLink(asset)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="absolute bottom-6 right-6 bg-white/95 hover:bg-white text-surface-700 rounded-xl px-3 py-2 flex items-center gap-1.5 text-xs font-medium shadow-md hover:shadow-lg transition-all"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                View in Google Photos
-              </a>
+          {/* Image + Scene Strip */}
+          <div className="bg-surface-100 flex flex-col">
+            <div className="flex items-center justify-center p-4 relative flex-1">
+              <img src={asset.file_url} alt={asset.title} className="max-w-full max-h-80 rounded-lg object-contain" />
+              {asset.source === 'google_photos' && (
+                <a
+                  href={googlePhotosLink(asset)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="absolute bottom-6 right-6 bg-white/95 hover:bg-white text-surface-700 rounded-xl px-3 py-2 flex items-center gap-1.5 text-xs font-medium shadow-md hover:shadow-lg transition-all"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  View in Google Photos
+                </a>
+              )}
+            </div>
+            {/* Extracted scene thumbnails strip */}
+            {childFrames.length > 0 && (
+              <div className="border-t border-surface-200 bg-surface-50 p-3">
+                <p className="text-[10px] font-semibold text-surface-500 uppercase tracking-wider mb-2 flex items-center gap-1">
+                  <Scissors className="w-3 h-3" /> {childFrames.length} Scene{childFrames.length !== 1 ? 's' : ''} Extracted
+                </p>
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {childFrames.map(frame => (
+                    <div key={frame.id} className="relative shrink-0 w-20 h-20 rounded-lg overflow-hidden bg-surface-200 group cursor-pointer" title={frame.scene_description || frame.title}>
+                      <img src={frame.thumbnail_url} alt={frame.scene_description} className="w-full h-full object-cover" />
+                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <p className="text-[8px] text-white truncate">{frame.scene_description || frame.title}</p>
+                        {frame.frame_timestamp != null && (
+                          <p className="text-[7px] text-white/70">{Math.round(frame.frame_timestamp)}s</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
 

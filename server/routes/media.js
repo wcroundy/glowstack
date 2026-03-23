@@ -55,10 +55,26 @@ router.get('/', async (req, res) => {
     const { data, count, error } = await query;
     if (error) throw error;
 
+    // Get scene counts for any video assets in this batch
+    const videoIds = (data || []).filter(a => a.file_type === 'video').map(a => a.id);
+    let sceneCounts = {};
+    if (videoIds.length > 0) {
+      const { data: children } = await supabase
+        .from('media_assets')
+        .select('parent_asset_id')
+        .in('parent_asset_id', videoIds);
+      if (children) {
+        children.forEach(c => {
+          sceneCounts[c.parent_asset_id] = (sceneCounts[c.parent_asset_id] || 0) + 1;
+        });
+      }
+    }
+
     const enriched = (data || []).map(asset => ({
       ...asset,
       tag_objects: (asset.media_tags || []).map(mt => mt.tags).filter(Boolean),
       media_tags: undefined,
+      scene_count: sceneCounts[asset.id] || 0,
     }));
 
     let filtered = enriched;
