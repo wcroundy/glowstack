@@ -62,6 +62,7 @@ import dashboardRoutes from './routes/dashboard.js';
 import aiRoutes from './routes/ai.js';
 import reportsRoutes from './routes/reports.js';
 import tagsRoutes from './routes/tags.js';
+import videoBreakdownRoutes from './routes/videoBreakdown.js';
 
 app.use('/api/media', mediaRoutes);
 app.use('/api/analytics', analyticsRoutes);
@@ -73,6 +74,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/tags', tagsRoutes);
+app.use('/api/video-breakdown', videoBreakdownRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

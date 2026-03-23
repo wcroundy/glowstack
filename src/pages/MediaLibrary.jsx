@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import {
   Search, Filter, Grid3X3, List, Heart, Star, Tag, Upload,
   Image as ImageIcon, Video, Sparkles, X, ChevronDown, Eye, Camera, ExternalLink,
-  ChevronLeft, ChevronRight as ChevronRightIcon, ChevronsLeft, ChevronsRight
+  ChevronLeft, ChevronRight as ChevronRightIcon, ChevronsLeft, ChevronsRight, Scissors
 } from 'lucide-react';
 import { api } from '../services/api';
 import GooglePhotosBrowser from '../components/google-photos/GooglePhotosBrowser';
+import VideoBreakdown from '../components/VideoBreakdown';
 
 // Build a Google Photos link — combines date + filename for best match
 function googlePhotosLink(asset) {
@@ -59,6 +60,12 @@ function MediaCard({ asset, onSelect }) {
             {asset.duration_seconds ? `${Math.round(asset.duration_seconds)}s` : 'Video'}
           </div>
         )}
+        {asset.parent_asset_id && (
+          <div className="absolute top-2 left-2 badge bg-purple-600/80 text-white">
+            <Scissors className="w-3 h-3 mr-1" />
+            Scene
+          </div>
+        )}
         {asset.is_favorite && (
           <div className="absolute top-2 right-2">
             <Heart className="w-4 h-4 text-brand-500 fill-brand-500" />
@@ -110,6 +117,14 @@ function MediaCard({ asset, onSelect }) {
 function MediaDetail({ asset, onClose }) {
   const [captions, setCaptions] = useState(null);
   const [loadingCaptions, setLoadingCaptions] = useState(false);
+  const [showBreakdown, setShowBreakdown] = useState(false);
+  const [childFrames, setChildFrames] = useState([]);
+
+  useEffect(() => {
+    if (asset.file_type === 'video') {
+      api.videoBreakdownFrames(asset.id).then(r => setChildFrames(r.frames || [])).catch(() => {});
+    }
+  }, [asset.id, asset.file_type]);
 
   const generateCaptions = async () => {
     setLoadingCaptions(true);
@@ -199,6 +214,38 @@ function MediaDetail({ asset, onClose }) {
               )}
             </div>
 
+            {/* Video Breakdown */}
+            {asset.file_type === 'video' && (
+              <div>
+                <h4 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">Video Breakdown</h4>
+                {childFrames.length > 0 ? (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {childFrames.map(frame => (
+                        <div key={frame.id} className="relative aspect-square rounded-lg overflow-hidden bg-surface-100 group">
+                          <img src={frame.thumbnail_url} alt={frame.scene_description} className="w-full h-full object-cover" />
+                          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <p className="text-[9px] text-white truncate">{frame.scene_description || frame.title}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => setShowBreakdown(true)}
+                      className="text-xs text-brand-500 hover:text-brand-600 font-medium"
+                    >
+                      Re-analyze video
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={() => setShowBreakdown(true)} className="btn-secondary text-xs flex items-center gap-1.5 w-full justify-center">
+                    <Scissors className="w-3.5 h-3.5" />
+                    Extract Scenes & Outfits
+                  </button>
+                )}
+              </div>
+            )}
+
             {/* Meta */}
             <div className="text-[11px] text-surface-400 space-y-0.5 pt-2 border-t">
               <p>Source: {asset.source === 'google_photos' ? 'Google Photos' : asset.source} · Type: {asset.file_type}</p>
@@ -208,6 +255,22 @@ function MediaDetail({ asset, onClose }) {
             </div>
           </div>
         </div>
+
+        {/* Video Breakdown Modal */}
+        {showBreakdown && (
+          <VideoBreakdown
+            asset={asset}
+            onComplete={(result) => {
+              if (result.savedAssets) {
+                setChildFrames(prev => [...prev, ...result.savedAssets.map(a => ({
+                  id: a.id, title: a.title, thumbnail_url: a.thumbnailUrl,
+                  scene_description: a.title, frame_timestamp: a.frameTimestamp,
+                }))]);
+              }
+            }}
+            onClose={() => setShowBreakdown(false)}
+          />
+        )}
       </div>
     </div>
   );
