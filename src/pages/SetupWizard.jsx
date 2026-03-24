@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Check, ChevronRight, ExternalLink, Plug, AlertCircle,
-  RefreshCw, Unplug, Sparkles, Shield, Instagram, Facebook, Link2, Loader2, Music2,
+  RefreshCw, Unplug, Sparkles, Shield, Instagram, Facebook, Link2, Loader2, Music2, Camera,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
@@ -500,6 +500,170 @@ function TikTokCard() {
   );
 }
 
+function GooglePhotosCard() {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [error, setError] = useState(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    api.googlePhotosStatus().then(s => { setStatus(s); setLoading(false); }).catch(() => setLoading(false));
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('google_connected') === 'true') {
+      api.googlePhotosStatus().then(s => { setStatus(s); setLoading(false); });
+      setExpanded(true);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+    if (params.get('google_error')) {
+      setError(decodeURIComponent(params.get('google_error')));
+      setExpanded(true);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  const handleConnect = async () => {
+    setError(null);
+    try {
+      const { url } = await api.googlePhotosAuthUrl();
+      window.location.href = url;
+    } catch (err) {
+      console.error('Google Photos auth error:', err);
+      setError(err.message);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    setDisconnecting(true);
+    try {
+      await api.googlePhotosDisconnect();
+      setStatus(prev => ({ ...prev, connected: false, account: null }));
+    } catch (err) {
+      console.error('Google Photos disconnect error:', err);
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
+  if (loading) return null;
+  if (!status?.configured) return null;
+
+  return (
+    <div className={`card transition-all ${expanded ? 'ring-2 ring-brand-300' : ''}`}>
+      <div
+        className="flex items-center gap-4 p-4 cursor-pointer hover:bg-surface-50 rounded-t-2xl transition-colors"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-green-500 flex items-center justify-center flex-shrink-0">
+          <Camera className="w-5 h-5 text-white" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <h3 className="font-semibold text-surface-900">Google Photos</h3>
+            {status.connected ? (
+              <span className="badge bg-emerald-100 text-emerald-700 text-[10px]">
+                <Check className="w-3 h-3 mr-0.5" /> Connected
+              </span>
+            ) : (
+              <span className="badge bg-surface-100 text-surface-500 text-[10px]">Not Connected</span>
+            )}
+          </div>
+          <p className="text-xs text-surface-500 mt-0.5">
+            {status.connected
+              ? (status.account || 'Connected to Google Photos')
+              : 'Sync photos and videos from Google Photos into your asset library.'}
+          </p>
+        </div>
+        <ChevronRight className={`w-5 h-5 text-surface-300 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+      </div>
+
+      {expanded && (
+        <div className="border-t px-4 pb-4">
+          {status.connected ? (
+            <div className="pt-4 space-y-4">
+              <div className="flex items-center gap-3 p-3 rounded-xl bg-emerald-50 border border-emerald-200">
+                <Check className="w-5 h-5 text-emerald-600" />
+                <div>
+                  <p className="text-sm font-medium text-emerald-800">Connected successfully</p>
+                  {status.account && (
+                    <p className="text-xs text-emerald-600">{status.account}</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => navigate('/media')}
+                  className="btn-secondary text-xs flex items-center gap-1.5"
+                >
+                  <Camera className="w-3.5 h-3.5" /> Open Media Library
+                </button>
+                <button
+                  onClick={handleConnect}
+                  className="btn-secondary text-xs flex items-center gap-1.5"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" /> Reconnect
+                </button>
+                <button
+                  onClick={handleDisconnect}
+                  disabled={disconnecting}
+                  className="btn-ghost text-xs text-red-500 hover:bg-red-50 flex items-center gap-1.5"
+                >
+                  {disconnecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Unplug className="w-3.5 h-3.5" />}
+                  Disconnect
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="pt-4 space-y-4">
+              <p className="text-sm text-surface-600">
+                Connect Google Photos to import your photos and videos into GlowStack.
+                AI will help you organize, tag, and break down video content automatically.
+              </p>
+
+              <div className="space-y-3">
+                <div className="flex gap-3">
+                  <div className="w-6 h-6 rounded-full bg-brand-100 text-brand-600 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">1</div>
+                  <div>
+                    <p className="text-sm font-medium text-surface-800">Sign in with Google</p>
+                    <p className="text-xs text-surface-500 mt-0.5">Authorize GlowStack to access your Google Photos library.</p>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <div className="w-6 h-6 rounded-full bg-brand-100 text-brand-600 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">2</div>
+                  <div>
+                    <p className="text-sm font-medium text-surface-800">Select photos & videos</p>
+                    <p className="text-xs text-surface-500 mt-0.5">Use the Google Photos picker to choose which media to import.</p>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <div className="w-6 h-6 rounded-full bg-brand-100 text-brand-600 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">3</div>
+                  <div>
+                    <p className="text-sm font-medium text-surface-800">Auto-tag & organize</p>
+                    <p className="text-xs text-surface-500 mt-0.5">AI analyzes your media and applies tags for easy searching.</p>
+                  </div>
+                </div>
+              </div>
+
+              {error && (
+                <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">
+                  {error}
+                </div>
+              )}
+
+              <button onClick={handleConnect} className="btn-primary w-full flex items-center justify-center gap-2">
+                <Link2 className="w-4 h-4" /> Connect Google Photos
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SetupWizard() {
   const [platforms, setPlatforms] = useState([]);
   const [expanded, setExpanded] = useState(null);
@@ -555,9 +719,7 @@ export default function SetupWizard() {
 
         {/* Media */}
         <h2 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mt-6 mb-2">Media Sources</h2>
-        {platforms.filter(p => p.platform === 'google_photos').map(p => (
-          <PlatformCard key={p.id} platform={p} expanded={expanded === p.platform} onExpand={setExpanded} />
-        ))}
+        <GooglePhotosCard />
       </div>
     </div>
   );
