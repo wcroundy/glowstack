@@ -11,6 +11,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
   const [pickerDone, setPickerDone] = useState(false);
   const [mediaItems, setMediaItems] = useState([]);
   const [duplicateIds, setDuplicateIds] = useState(new Set());
+  const [upgradeableIds, setUpgradeableIds] = useState(new Set());
   const [selected, setSelected] = useState(new Set());
   const [loading, setLoading] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -51,6 +52,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
       setMediaItems([]);
       setSelected(new Set());
       setDuplicateIds(new Set());
+      setUpgradeableIds(new Set());
       setPickerDone(false);
     } catch (err) {
       setError('Failed to disconnect: ' + err.message);
@@ -65,6 +67,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
     setMediaItems([]);
     setSelected(new Set());
     setDuplicateIds(new Set());
+    setUpgradeableIds(new Set());
     setImportResult(null);
     try {
       const data = await api.googlePhotosCreateSession();
@@ -116,16 +119,20 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
 
       setMediaItems(allItems);
 
-      // Check which ones are already imported
+      // Check which ones are already imported vs upgradeable
       const googleIds = allItems.map(i => i.id);
       try {
-        const { duplicates } = await api.googlePhotosCheckDuplicates(googleIds);
+        const { duplicates, upgradeable } = await api.googlePhotosCheckDuplicates(googleIds);
         const dupSet = new Set(duplicates);
+        const upgradeSet = new Set(upgradeable || []);
         setDuplicateIds(dupSet);
+        setUpgradeableIds(upgradeSet);
 
-        // Auto-select only NEW items (not duplicates)
-        const newIds = allItems.filter(i => !dupSet.has(i.id)).map(i => i.id);
-        setSelected(new Set(newIds));
+        // Auto-select NEW items + upgradeable videos (need full video file)
+        const autoSelect = allItems
+          .filter(i => !dupSet.has(i.id))
+          .map(i => i.id);
+        setSelected(new Set(autoSelect));
       } catch {
         // If duplicate check fails, select all
         setSelected(new Set(googleIds));
@@ -169,6 +176,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
       const CHUNK_SIZE = 5;
       let totalImported = 0;
       let totalAlreadyExisted = 0;
+      let totalUpgraded = 0;
 
       for (let i = 0; i < itemsToImport.length; i += CHUNK_SIZE) {
         const chunk = itemsToImport.slice(i, i + CHUNK_SIZE);
@@ -176,6 +184,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
           const result = await api.googlePhotosImport(chunk);
           totalImported += result.imported || 0;
           totalAlreadyExisted += result.alreadyExisted || 0;
+          totalUpgraded += result.upgraded || 0;
         } catch (chunkErr) {
           console.error(`Chunk ${i / CHUNK_SIZE + 1} failed:`, chunkErr);
           // Continue with remaining chunks
@@ -183,7 +192,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
         setImportProgress({ done: Math.min(i + CHUNK_SIZE, itemsToImport.length), total: itemsToImport.length });
       }
 
-      const finalResult = { imported: totalImported, alreadyExisted: totalAlreadyExisted };
+      const finalResult = { imported: totalImported, alreadyExisted: totalAlreadyExisted, upgraded: totalUpgraded };
       setImportResult(finalResult);
       setSelected(new Set());
 
@@ -208,8 +217,9 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
     }
   };
 
-  const newCount = mediaItems.filter(i => !duplicateIds.has(i.id)).length;
-  const dupCount = mediaItems.length - newCount;
+  const newCount = mediaItems.filter(i => !duplicateIds.has(i.id) && !upgradeableIds.has(i.id)).length;
+  const upgradeCount = mediaItems.filter(i => upgradeableIds.has(i.id)).length;
+  const dupCount = mediaItems.filter(i => duplicateIds.has(i.id)).length;
 
   // Not configured
   if (status && !status.configured) {
@@ -277,7 +287,9 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
 
       {importResult && (
         <div className="text-sm text-green-700 bg-green-50 rounded-xl px-3 py-2">
-          Successfully imported {importResult.imported} item{importResult.imported !== 1 ? 's' : ''} into your media library.
+          {importResult.imported > 0 && `Imported ${importResult.imported} new item${importResult.imported !== 1 ? 's' : ''}. `}
+          {importResult.upgraded > 0 && `Upgraded ${importResult.upgraded} video${importResult.upgraded !== 1 ? 's' : ''} with full video files. `}
+          {importResult.imported === 0 && importResult.upgraded === 0 && 'All items are already in your library.'}
         </div>
       )}
 
@@ -330,9 +342,9 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
             <div className="flex items-center justify-between">
               <div className="text-sm text-surface-700">
                 <span className="font-medium">{mediaItems.length}</span> photo{mediaItems.length !== 1 ? 's' : ''} selected
-                {dupCount > 0 && (
+                {(dupCount > 0 || upgradeCount > 0) && (
                   <span className="text-surface-400 ml-2">
-                    ({newCount} new, {dupCount} already in library)
+                    ({newCount} new{upgradeCount > 0 ? `, ${upgradeCount} video upgrade${upgradeCount !== 1 ? 's' : ''}` : ''}{dupCount > 0 ? `, ${dupCount} already imported` : ''})
                   </span>
                 )}
               </div>
@@ -354,7 +366,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
                       <><Loader2 className="w-3.5 h-3.5 animate-spin" />
                         {importProgress ? `${importProgress.done}/${importProgress.total}` : 'Starting...'}</>
                     ) : (
-                      <><Download className="w-3.5 h-3.5" /> Import {selected.size} new</>
+                      <><Download className="w-3.5 h-3.5" /> Import {selected.size} selected</>
                     )}
                   </button>
                 )}
@@ -365,18 +377,22 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
             {mediaItems.map(item => {
               const isDuplicate = duplicateIds.has(item.id);
+              const isUpgradeable = upgradeableIds.has(item.id);
               const isSelected = selected.has(item.id);
               const thumbUrl = item.baseUrl ? `${item.baseUrl}=w300-h300-c` : '';
+              const isClickable = !isDuplicate; // upgradeable items ARE clickable
               return (
                 <button
                   key={item.id}
-                  onClick={() => !isDuplicate && toggleSelect(item.id)}
+                  onClick={() => isClickable && toggleSelect(item.id)}
                   className={`relative aspect-square rounded-lg overflow-hidden group border-2 transition-all ${
                     isDuplicate
                       ? 'border-green-300 opacity-60 cursor-default'
-                      : isSelected
-                        ? 'border-brand-500 ring-2 ring-brand-200'
-                        : 'border-transparent hover:border-surface-300'
+                      : isUpgradeable && isSelected
+                        ? 'border-amber-500 ring-2 ring-amber-200'
+                        : isSelected
+                          ? 'border-brand-500 ring-2 ring-brand-200'
+                          : 'border-transparent hover:border-surface-300'
                   }`}
                 >
                   {thumbUrl ? (
@@ -403,7 +419,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
                   ) : (
                     <div className={`absolute top-1.5 right-1.5 w-5 h-5 rounded-full flex items-center justify-center transition-all ${
                       isSelected
-                        ? 'bg-brand-500 text-white'
+                        ? isUpgradeable ? 'bg-amber-500 text-white' : 'bg-brand-500 text-white'
                         : 'bg-black/30 text-white opacity-0 group-hover:opacity-100'
                     }`}>
                       <Check className="w-3 h-3" />
@@ -412,6 +428,11 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
                   {isDuplicate && (
                     <div className="absolute bottom-1 right-1 bg-green-600/80 text-white text-[9px] px-1.5 py-0.5 rounded font-medium">
                       In library
+                    </div>
+                  )}
+                  {isUpgradeable && (
+                    <div className="absolute bottom-1 right-1 bg-amber-500/90 text-white text-[9px] px-1.5 py-0.5 rounded font-medium">
+                      Needs video file
                     </div>
                   )}
                 </button>
@@ -427,6 +448,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
                 setMediaItems([]);
                 setSelected(new Set());
                 setDuplicateIds(new Set());
+                setUpgradeableIds(new Set());
                 setImportResult(null);
               }}
               className="btn-secondary text-xs"
