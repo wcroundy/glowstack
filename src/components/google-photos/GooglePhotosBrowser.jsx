@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Image, Download, Loader2, AlertCircle, ExternalLink, Unplug,
-  Check, CheckSquare, Square, RefreshCw, CheckCircle2,
+  Check, CheckSquare, Square, RefreshCw, CheckCircle2, Film,
 } from 'lucide-react';
 import { api } from '../../services/api';
 
@@ -19,6 +19,8 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
   const [error, setError] = useState('');
   const [importResult, setImportResult] = useState(null);
   const [polling, setPolling] = useState(false);
+  const [upgrading, setUpgrading] = useState(false);
+  const [upgradeResult, setUpgradeResult] = useState(null);
   const pollRef = useRef(null);
 
   // Check connection status
@@ -56,6 +58,22 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
       setPickerDone(false);
     } catch (err) {
       setError('Failed to disconnect: ' + err.message);
+    }
+  };
+
+  // Bulk upgrade all existing videos with full video files
+  const handleUpgradeVideos = async () => {
+    setUpgrading(true);
+    setError('');
+    setUpgradeResult(null);
+    try {
+      const result = await api.googlePhotosUpgradeVideos();
+      setUpgradeResult(result);
+      if (onImportComplete) onImportComplete(result);
+    } catch (err) {
+      setError('Video upgrade failed: ' + err.message);
+    } finally {
+      setUpgrading(false);
     }
   };
 
@@ -293,22 +311,46 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
         </div>
       )}
 
+      {upgradeResult && (
+        <div className={`text-sm rounded-xl px-3 py-2 ${upgradeResult.upgraded > 0 ? 'text-green-700 bg-green-50' : 'text-surface-600 bg-surface-50'}`}>
+          {upgradeResult.message}
+          {upgradeResult.errors?.length > 0 && (
+            <span className="text-amber-600 ml-1">({upgradeResult.errors.length} failed)</span>
+          )}
+        </div>
+      )}
+
       {/* No active session — show button to start picker */}
       {!polling && !pickerDone && (
-        <div className="text-center py-6">
-          <button
-            onClick={startPicker}
-            disabled={loading}
-            className="btn-primary"
-          >
-            {loading ? (
-              <><Loader2 className="w-4 h-4 animate-spin" /> Starting...</>
-            ) : (
-              <><Image className="w-4 h-4" /> Select Photos from Google</>
-            )}
-          </button>
-          <p className="text-xs text-surface-400 mt-3">
-            Opens Google's photo picker in a new tab where you can select photos to import.
+        <div className="text-center py-6 space-y-3">
+          <div className="flex items-center justify-center gap-3">
+            <button
+              onClick={startPicker}
+              disabled={loading || upgrading}
+              className="btn-primary"
+            >
+              {loading ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> Starting...</>
+              ) : (
+                <><Image className="w-4 h-4" /> Select Photos from Google</>
+              )}
+            </button>
+            <button
+              onClick={handleUpgradeVideos}
+              disabled={loading || upgrading}
+              className="btn-secondary"
+            >
+              {upgrading ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> Upgrading videos...</>
+              ) : (
+                <><Film className="w-4 h-4" /> Upgrade Existing Videos</>
+              )}
+            </button>
+          </div>
+          <p className="text-xs text-surface-400">
+            <strong>Select Photos</strong> opens Google's photo picker to import new items.
+            <br />
+            <strong>Upgrade Existing Videos</strong> downloads full video files for videos that only have thumbnails.
           </p>
         </div>
       )}

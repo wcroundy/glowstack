@@ -3,7 +3,7 @@ import { supabase, isSupabaseConfigured, uploadFile, getPublicUrl } from '../ser
 import {
   getAuthUrl, exchangeCode, getValidToken,
   createSession, getSession, listSessionMediaItems, deleteSession,
-  isGoogleConfigured,
+  getMediaItem, isGoogleConfigured,
 } from '../services/googlePhotos.js';
 
 const router = Router();
@@ -500,6 +500,99 @@ router.delete('/session/:id', async (req, res) => {
     res.json({ message: 'Session deleted' });
   } catch (err) {
     res.json({ message: 'Session cleanup attempted' });
+  }
+});
+
+// POST /api/google-photos/upgrade-videos — bulk download full video files for existing video assets
+router.post('/upgrade-videos', async (req, res) => {
+  try {
+    if (!isSupabaseConfigured()) {
+      return res.json({ upgraded: 0, message: 'Supabase not configured' });
+    }
+
+    const accessToken = await getValidToken();
+    if (!accessToken) {
+      return res.status(401).json({ error: 'Google Photos not connected' });
+    }
+
+    // Find all video assets from google_photos where file_url === thumbnail_url (no real video stored)
+    const { data: videos, error: fetchErr } = await supabase
+      .from('media_assets')
+      .select('id, google_photos_id, file_url, thumbnail_url, file_name')
+      .eq('source', 'google_photos')
+      .eq('file_type', 'video')
+      .not('google_photos_id', 'is', null);
+
+    if (fetchErr) throw fetchErr;
+
+    // Filter to only those missing real video files
+    const needsUpgrade = (videos || []).filter(v => v.file_url && v.thumbnail_url && v.file_url === v.thumbnail_url);
+
+    if (needsUpgrade.length === 0) {
+      return res.json({ upgraded: 0, total: 0, message: 'All videos already have full video files' });
+    }
+
+    console.log(`Bulk upgrading ${needsUpgrade.length} videos with full video files...`);
+
+    let upgradedCount = 0;
+    const errors = [];
+
+    for (const asset of needsUpgrade) {
+      try {
+        // Use Library API to get fresh baseUrl for this media item
+        const mediaItem = await getMediaItem(accessToken, asset.google_photos_id);
+        if (!mediaItem.baseUrl) {
+          errors.push({ id: asset.id, name: asset.file_name, error: 'No baseUrl available' });
+          continue;
+        }
+
+        const videoSrc = `${mediaItem.baseUrl}=dv`;
+        console.log(`Downloading video for asset ${asset.id} (${asset.file_name})...`);
+        const videoRes = await fetch(videoSrc, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+
+        if (!videoRes.ok) {
+          errors.push({ id: asset.id, name: asset.file_name, error: `Download failed: ${videoRes.status}` });
+          continue;
+        }
+
+        const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
+        const sizeMB = (videoBuffer.length / (1024 * 1024)).toFixed(1);
+        console.log(`Video ${asset.id}: ${sizeMB}MB`);
+
+        if (videoBuffer.length > 50 * 1024 * 1024) {
+          errors.push({ id: asset.id, name: asset.file_name, error: `Too large (${sizeMB}MB)` });
+          continue;
+        }
+
+        const mimeType = mediaItem.mimeType || 'video/mp4';
+        const ext = mimeType.includes('quicktime') ? 'mov' : 'mp4';
+        const videoPath = `google-photos/${asset.google_photos_id}/video.${ext}`;
+        const uploaded = await uploadFile('media', videoPath, videoBuffer, mimeType);
+
+        await supabase
+          .from('media_assets')
+          .update({ file_url: uploaded.publicUrl })
+          .eq('id', asset.id);
+
+        upgradedCount++;
+        console.log(`Upgraded asset ${asset.id} with full video file`);
+      } catch (err) {
+        console.error(`Failed to upgrade asset ${asset.id}:`, err.message);
+        errors.push({ id: asset.id, name: asset.file_name, error: err.message });
+      }
+    }
+
+    res.json({
+      upgraded: upgradedCount,
+      total: needsUpgrade.length,
+      errors: errors.length > 0 ? errors : undefined,
+      message: `Upgraded ${upgradedCount} of ${needsUpgrade.length} videos`,
+    });
+  } catch (err) {
+    console.error('Bulk upgrade error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
