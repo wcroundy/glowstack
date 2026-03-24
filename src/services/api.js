@@ -134,7 +134,6 @@ export const api = {
   googlePhotosDeleteSession: (sessionId) => request(`/google-photos/session/${sessionId}`, { method: 'DELETE' }),
   googlePhotosCleanup: () => request('/google-photos/cleanup', { method: 'POST' }),
   googlePhotosDisconnect: () => request('/google-photos/disconnect', { method: 'POST' }),
-  googlePhotosUpgradeVideos: () => request('/google-photos/upgrade-videos', { method: 'POST' }),
 
   // Video Breakdown
   videoBreakdownEstimate: (assetId) => request('/video-breakdown/estimate', { method: 'POST', body: JSON.stringify({ assetId }) }),

@@ -4,10 +4,8 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/auth/google/callback';
 
-// Picker API scope + Library API scope (for fetching items by ID for video upgrades)
 const SCOPES = [
   'https://www.googleapis.com/auth/photospicker.mediaitems.readonly',
-  'https://www.googleapis.com/auth/photoslibrary.readonly',
 ];
 
 const PICKER_API = 'https://photospicker.googleapis.com/v1';
@@ -174,22 +172,6 @@ export async function deleteSession(accessToken, sessionId) {
   } catch (err) {
     console.error('deleteSession error (non-critical):', err.message);
   }
-}
-
-// --- Library API Methods ---
-
-const LIBRARY_API = 'https://photoslibrary.googleapis.com/v1';
-
-// Fetch a single media item by ID (requires photoslibrary.readonly scope)
-export async function getMediaItem(accessToken, mediaItemId) {
-  const res = await fetch(`${LIBRARY_API}/mediaItems/${mediaItemId}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) {
-    const errBody = await res.text();
-    throw new Error(`Library API error: ${res.status} - ${errBody}`);
-  }
-  return res.json();
 }
 
 export function isGoogleConfigured() {

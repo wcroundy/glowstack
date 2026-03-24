@@ -3,7 +3,7 @@ import { supabase, isSupabaseConfigured, uploadFile, getPublicUrl } from '../ser
 import {
   getAuthUrl, exchangeCode, getValidToken,
   createSession, getSession, listSessionMediaItems, deleteSession,
-  getMediaItem, isGoogleConfigured,
+  isGoogleConfigured,
 } from '../services/googlePhotos.js';
 
 const router = Router();
@@ -186,19 +186,11 @@ router.post('/check-duplicates', async (req, res) => {
 
     const { data: existing } = await supabase
       .from('media_assets')
-      .select('google_photos_id, file_type, file_url, thumbnail_url')
+      .select('google_photos_id')
       .in('google_photos_id', googleIds);
 
-    const duplicateIds = [];
-    const upgradeableIds = [];
-    for (const e of (existing || [])) {
-      if (e.file_type === 'video' && e.file_url && e.thumbnail_url && e.file_url === e.thumbnail_url) {
-        upgradeableIds.push(e.google_photos_id);
-      } else {
-        duplicateIds.push(e.google_photos_id);
-      }
-    }
-    res.json({ duplicates: duplicateIds, upgradeable: upgradeableIds });
+    const duplicateIds = new Set((existing || []).map(e => e.google_photos_id));
+    res.json({ duplicates: [...duplicateIds] });
   } catch (err) {
     console.error('Check duplicates error:', err.message);
     res.status(500).json({ error: err.message });
@@ -225,36 +217,18 @@ router.post('/import', async (req, res) => {
     const googleIds = items.map(i => i.id);
     const { data: existing } = await supabase
       .from('media_assets')
-      .select('id, google_photos_id, file_url, thumbnail_url')
+      .select('id, google_photos_id')
       .in('google_photos_id', googleIds);
 
-    const existingMap = new Map((existing || []).map(e => [e.google_photos_id, e]));
+    const existingIds = new Set((existing || []).map(e => e.google_photos_id));
 
-    // 2. Separate into new items vs existing videos that need video file upgrade
-    const newItems = [];
-    const upgradeItems = []; // existing videos where file_url === thumbnail_url (no real video stored)
-    let alreadyCount = 0;
+    // 2. Filter to only new items
+    const newItems = items.filter(i => !existingIds.has(i.id));
+    const alreadyCount = items.length - newItems.length;
 
-    for (const item of items) {
-      const ex = existingMap.get(item.id);
-      if (!ex) {
-        newItems.push(item);
-      } else if (
-        item.type === 'VIDEO' &&
-        ex.file_url && ex.thumbnail_url &&
-        ex.file_url === ex.thumbnail_url
-      ) {
-        // This video only has a thumbnail stored — it can be upgraded with the full video file
-        upgradeItems.push({ ...item, existingAssetId: ex.id });
-      } else {
-        alreadyCount++;
-      }
-    }
-
-    if (newItems.length === 0 && upgradeItems.length === 0) {
+    if (newItems.length === 0) {
       return res.json({
         imported: 0,
-        upgraded: 0,
         alreadyExisted: alreadyCount,
         message: 'All items are already in your library',
       });
@@ -356,63 +330,20 @@ router.post('/import', async (req, res) => {
       }
     }
 
-    // 5. Upgrade existing videos that only have thumbnails
-    let upgradedCount = 0;
-    if (upgradeItems.length > 0) {
-      console.log(`Upgrading ${upgradeItems.length} existing videos with full video files...`);
-      for (const item of upgradeItems) {
-        const baseUrl = item.baseUrl || '';
-        if (!baseUrl) continue;
-        try {
-          const videoSrc = `${baseUrl}=dv`;
-          console.log(`Upgrading video ${item.id} (asset ${item.existingAssetId})...`);
-          const videoRes = await fetch(videoSrc, {
-            headers: { Authorization: `Bearer ${accessToken}` },
-          });
-          if (videoRes.ok) {
-            const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
-            const sizeMB = (videoBuffer.length / (1024 * 1024)).toFixed(1);
-            console.log(`Upgrade video ${item.id}: ${sizeMB}MB`);
-            if (videoBuffer.length <= 50 * 1024 * 1024) {
-              const ext = (item.mimeType || 'video/mp4').includes('quicktime') ? 'mov' : 'mp4';
-              const videoPath = `google-photos/${item.id}/video.${ext}`;
-              const uploadedVideo = await uploadFile('media', videoPath, videoBuffer, item.mimeType || 'video/mp4');
-              // Update the existing asset's file_url to point to the real video
-              await supabase
-                .from('media_assets')
-                .update({ file_url: uploadedVideo.publicUrl })
-                .eq('id', item.existingAssetId);
-              upgradedCount++;
-              console.log(`Upgraded video asset ${item.existingAssetId} with full video file`);
-            } else {
-              console.warn(`Upgrade video ${item.id} too large (${sizeMB}MB), skipping`);
-            }
-          }
-        } catch (err) {
-          console.error(`Failed to upgrade video ${item.id}:`, err.message);
-        }
-      }
+    if (processedItems.length === 0) {
+      return res.json({ imported: 0, alreadyExisted: alreadyCount, error: 'Failed to process any items' });
     }
 
-    if (processedItems.length === 0 && upgradedCount === 0) {
-      return res.json({ imported: 0, upgraded: 0, alreadyExisted: alreadyCount, error: 'Failed to process any items' });
-    }
+    // 5. Batch insert all processed items
+    const { data: inserted, error } = await supabase
+      .from('media_assets')
+      .insert(processedItems)
+      .select('id, file_name');
 
-    // 6. Batch insert new items
-    let inserted = [];
-    if (processedItems.length > 0) {
-      const { data, error } = await supabase
-        .from('media_assets')
-        .insert(processedItems)
-        .select('id, file_name');
-
-      if (error) throw error;
-      inserted = data || [];
-    }
+    if (error) throw error;
 
     res.json({
       imported: inserted.length,
-      upgraded: upgradedCount,
       alreadyExisted: alreadyCount,
       items: inserted.map(a => ({ id: a.id, status: 'imported', filename: a.file_name })),
     });
@@ -500,99 +431,6 @@ router.delete('/session/:id', async (req, res) => {
     res.json({ message: 'Session deleted' });
   } catch (err) {
     res.json({ message: 'Session cleanup attempted' });
-  }
-});
-
-// POST /api/google-photos/upgrade-videos — bulk download full video files for existing video assets
-router.post('/upgrade-videos', async (req, res) => {
-  try {
-    if (!isSupabaseConfigured()) {
-      return res.json({ upgraded: 0, message: 'Supabase not configured' });
-    }
-
-    const accessToken = await getValidToken();
-    if (!accessToken) {
-      return res.status(401).json({ error: 'Google Photos not connected' });
-    }
-
-    // Find all video assets from google_photos where file_url === thumbnail_url (no real video stored)
-    const { data: videos, error: fetchErr } = await supabase
-      .from('media_assets')
-      .select('id, google_photos_id, file_url, thumbnail_url, file_name')
-      .eq('source', 'google_photos')
-      .eq('file_type', 'video')
-      .not('google_photos_id', 'is', null);
-
-    if (fetchErr) throw fetchErr;
-
-    // Filter to only those missing real video files
-    const needsUpgrade = (videos || []).filter(v => v.file_url && v.thumbnail_url && v.file_url === v.thumbnail_url);
-
-    if (needsUpgrade.length === 0) {
-      return res.json({ upgraded: 0, total: 0, message: 'All videos already have full video files' });
-    }
-
-    console.log(`Bulk upgrading ${needsUpgrade.length} videos with full video files...`);
-
-    let upgradedCount = 0;
-    const errors = [];
-
-    for (const asset of needsUpgrade) {
-      try {
-        // Use Library API to get fresh baseUrl for this media item
-        const mediaItem = await getMediaItem(accessToken, asset.google_photos_id);
-        if (!mediaItem.baseUrl) {
-          errors.push({ id: asset.id, name: asset.file_name, error: 'No baseUrl available' });
-          continue;
-        }
-
-        const videoSrc = `${mediaItem.baseUrl}=dv`;
-        console.log(`Downloading video for asset ${asset.id} (${asset.file_name})...`);
-        const videoRes = await fetch(videoSrc, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
-
-        if (!videoRes.ok) {
-          errors.push({ id: asset.id, name: asset.file_name, error: `Download failed: ${videoRes.status}` });
-          continue;
-        }
-
-        const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
-        const sizeMB = (videoBuffer.length / (1024 * 1024)).toFixed(1);
-        console.log(`Video ${asset.id}: ${sizeMB}MB`);
-
-        if (videoBuffer.length > 50 * 1024 * 1024) {
-          errors.push({ id: asset.id, name: asset.file_name, error: `Too large (${sizeMB}MB)` });
-          continue;
-        }
-
-        const mimeType = mediaItem.mimeType || 'video/mp4';
-        const ext = mimeType.includes('quicktime') ? 'mov' : 'mp4';
-        const videoPath = `google-photos/${asset.google_photos_id}/video.${ext}`;
-        const uploaded = await uploadFile('media', videoPath, videoBuffer, mimeType);
-
-        await supabase
-          .from('media_assets')
-          .update({ file_url: uploaded.publicUrl })
-          .eq('id', asset.id);
-
-        upgradedCount++;
-        console.log(`Upgraded asset ${asset.id} with full video file`);
-      } catch (err) {
-        console.error(`Failed to upgrade asset ${asset.id}:`, err.message);
-        errors.push({ id: asset.id, name: asset.file_name, error: err.message });
-      }
-    }
-
-    res.json({
-      upgraded: upgradedCount,
-      total: needsUpgrade.length,
-      errors: errors.length > 0 ? errors : undefined,
-      message: `Upgraded ${upgradedCount} of ${needsUpgrade.length} videos`,
-    });
-  } catch (err) {
-    console.error('Bulk upgrade error:', err.message);
-    res.status(500).json({ error: err.message });
   }
 });
 

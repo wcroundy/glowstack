@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Image, Download, Loader2, AlertCircle, ExternalLink, Unplug,
-  Check, CheckSquare, Square, RefreshCw, CheckCircle2, Film,
+  Check, CheckSquare, Square, RefreshCw, CheckCircle2,
 } from 'lucide-react';
 import { api } from '../../services/api';
 
@@ -11,7 +11,6 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
   const [pickerDone, setPickerDone] = useState(false);
   const [mediaItems, setMediaItems] = useState([]);
   const [duplicateIds, setDuplicateIds] = useState(new Set());
-  const [upgradeableIds, setUpgradeableIds] = useState(new Set());
   const [selected, setSelected] = useState(new Set());
   const [loading, setLoading] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -19,8 +18,6 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
   const [error, setError] = useState('');
   const [importResult, setImportResult] = useState(null);
   const [polling, setPolling] = useState(false);
-  const [upgrading, setUpgrading] = useState(false);
-  const [upgradeResult, setUpgradeResult] = useState(null);
   const pollRef = useRef(null);
 
   // Check connection status
@@ -54,26 +51,9 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
       setMediaItems([]);
       setSelected(new Set());
       setDuplicateIds(new Set());
-      setUpgradeableIds(new Set());
       setPickerDone(false);
     } catch (err) {
       setError('Failed to disconnect: ' + err.message);
-    }
-  };
-
-  // Bulk upgrade all existing videos with full video files
-  const handleUpgradeVideos = async () => {
-    setUpgrading(true);
-    setError('');
-    setUpgradeResult(null);
-    try {
-      const result = await api.googlePhotosUpgradeVideos();
-      setUpgradeResult(result);
-      if (onImportComplete) onImportComplete(result);
-    } catch (err) {
-      setError('Video upgrade failed: ' + err.message);
-    } finally {
-      setUpgrading(false);
     }
   };
 
@@ -85,7 +65,6 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
     setMediaItems([]);
     setSelected(new Set());
     setDuplicateIds(new Set());
-    setUpgradeableIds(new Set());
     setImportResult(null);
     try {
       const data = await api.googlePhotosCreateSession();
@@ -137,20 +116,16 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
 
       setMediaItems(allItems);
 
-      // Check which ones are already imported vs upgradeable
+      // Check which ones are already imported
       const googleIds = allItems.map(i => i.id);
       try {
-        const { duplicates, upgradeable } = await api.googlePhotosCheckDuplicates(googleIds);
+        const { duplicates } = await api.googlePhotosCheckDuplicates(googleIds);
         const dupSet = new Set(duplicates);
-        const upgradeSet = new Set(upgradeable || []);
         setDuplicateIds(dupSet);
-        setUpgradeableIds(upgradeSet);
 
-        // Auto-select NEW items + upgradeable videos (need full video file)
-        const autoSelect = allItems
-          .filter(i => !dupSet.has(i.id))
-          .map(i => i.id);
-        setSelected(new Set(autoSelect));
+        // Auto-select only NEW items (not duplicates)
+        const newIds = allItems.filter(i => !dupSet.has(i.id)).map(i => i.id);
+        setSelected(new Set(newIds));
       } catch {
         // If duplicate check fails, select all
         setSelected(new Set(googleIds));
@@ -194,7 +169,6 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
       const CHUNK_SIZE = 5;
       let totalImported = 0;
       let totalAlreadyExisted = 0;
-      let totalUpgraded = 0;
 
       for (let i = 0; i < itemsToImport.length; i += CHUNK_SIZE) {
         const chunk = itemsToImport.slice(i, i + CHUNK_SIZE);
@@ -202,7 +176,6 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
           const result = await api.googlePhotosImport(chunk);
           totalImported += result.imported || 0;
           totalAlreadyExisted += result.alreadyExisted || 0;
-          totalUpgraded += result.upgraded || 0;
         } catch (chunkErr) {
           console.error(`Chunk ${i / CHUNK_SIZE + 1} failed:`, chunkErr);
           // Continue with remaining chunks
@@ -210,7 +183,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
         setImportProgress({ done: Math.min(i + CHUNK_SIZE, itemsToImport.length), total: itemsToImport.length });
       }
 
-      const finalResult = { imported: totalImported, alreadyExisted: totalAlreadyExisted, upgraded: totalUpgraded };
+      const finalResult = { imported: totalImported, alreadyExisted: totalAlreadyExisted };
       setImportResult(finalResult);
       setSelected(new Set());
 
@@ -235,9 +208,8 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
     }
   };
 
-  const newCount = mediaItems.filter(i => !duplicateIds.has(i.id) && !upgradeableIds.has(i.id)).length;
-  const upgradeCount = mediaItems.filter(i => upgradeableIds.has(i.id)).length;
-  const dupCount = mediaItems.filter(i => duplicateIds.has(i.id)).length;
+  const newCount = mediaItems.filter(i => !duplicateIds.has(i.id)).length;
+  const dupCount = mediaItems.length - newCount;
 
   // Not configured
   if (status && !status.configured) {
@@ -305,52 +277,26 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
 
       {importResult && (
         <div className="text-sm text-green-700 bg-green-50 rounded-xl px-3 py-2">
-          {importResult.imported > 0 && `Imported ${importResult.imported} new item${importResult.imported !== 1 ? 's' : ''}. `}
-          {importResult.upgraded > 0 && `Upgraded ${importResult.upgraded} video${importResult.upgraded !== 1 ? 's' : ''} with full video files. `}
-          {importResult.imported === 0 && importResult.upgraded === 0 && 'All items are already in your library.'}
-        </div>
-      )}
-
-      {upgradeResult && (
-        <div className={`text-sm rounded-xl px-3 py-2 ${upgradeResult.upgraded > 0 ? 'text-green-700 bg-green-50' : 'text-surface-600 bg-surface-50'}`}>
-          {upgradeResult.message}
-          {upgradeResult.errors?.length > 0 && (
-            <span className="text-amber-600 ml-1">({upgradeResult.errors.length} failed)</span>
-          )}
+          Successfully imported {importResult.imported} item{importResult.imported !== 1 ? 's' : ''} into your media library.
         </div>
       )}
 
       {/* No active session — show button to start picker */}
       {!polling && !pickerDone && (
-        <div className="text-center py-6 space-y-3">
-          <div className="flex items-center justify-center gap-3">
-            <button
-              onClick={startPicker}
-              disabled={loading || upgrading}
-              className="btn-primary"
-            >
-              {loading ? (
-                <><Loader2 className="w-4 h-4 animate-spin" /> Starting...</>
-              ) : (
-                <><Image className="w-4 h-4" /> Select Photos from Google</>
-              )}
-            </button>
-            <button
-              onClick={handleUpgradeVideos}
-              disabled={loading || upgrading}
-              className="btn-secondary"
-            >
-              {upgrading ? (
-                <><Loader2 className="w-4 h-4 animate-spin" /> Upgrading videos...</>
-              ) : (
-                <><Film className="w-4 h-4" /> Upgrade Existing Videos</>
-              )}
-            </button>
-          </div>
-          <p className="text-xs text-surface-400">
-            <strong>Select Photos</strong> opens Google's photo picker to import new items.
-            <br />
-            <strong>Upgrade Existing Videos</strong> downloads full video files for videos that only have thumbnails.
+        <div className="text-center py-6">
+          <button
+            onClick={startPicker}
+            disabled={loading}
+            className="btn-primary"
+          >
+            {loading ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /> Starting...</>
+            ) : (
+              <><Image className="w-4 h-4" /> Select Photos from Google</>
+            )}
+          </button>
+          <p className="text-xs text-surface-400 mt-3">
+            Opens Google's photo picker in a new tab where you can select photos to import.
           </p>
         </div>
       )}
@@ -384,9 +330,9 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
             <div className="flex items-center justify-between">
               <div className="text-sm text-surface-700">
                 <span className="font-medium">{mediaItems.length}</span> photo{mediaItems.length !== 1 ? 's' : ''} selected
-                {(dupCount > 0 || upgradeCount > 0) && (
+                {dupCount > 0 && (
                   <span className="text-surface-400 ml-2">
-                    ({newCount} new{upgradeCount > 0 ? `, ${upgradeCount} video upgrade${upgradeCount !== 1 ? 's' : ''}` : ''}{dupCount > 0 ? `, ${dupCount} already imported` : ''})
+                    ({newCount} new, {dupCount} already in library)
                   </span>
                 )}
               </div>
@@ -408,7 +354,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
                       <><Loader2 className="w-3.5 h-3.5 animate-spin" />
                         {importProgress ? `${importProgress.done}/${importProgress.total}` : 'Starting...'}</>
                     ) : (
-                      <><Download className="w-3.5 h-3.5" /> Import {selected.size} selected</>
+                      <><Download className="w-3.5 h-3.5" /> Import {selected.size} new</>
                     )}
                   </button>
                 )}
@@ -419,22 +365,18 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
             {mediaItems.map(item => {
               const isDuplicate = duplicateIds.has(item.id);
-              const isUpgradeable = upgradeableIds.has(item.id);
               const isSelected = selected.has(item.id);
               const thumbUrl = item.baseUrl ? `${item.baseUrl}=w300-h300-c` : '';
-              const isClickable = !isDuplicate; // upgradeable items ARE clickable
               return (
                 <button
                   key={item.id}
-                  onClick={() => isClickable && toggleSelect(item.id)}
+                  onClick={() => !isDuplicate && toggleSelect(item.id)}
                   className={`relative aspect-square rounded-lg overflow-hidden group border-2 transition-all ${
                     isDuplicate
                       ? 'border-green-300 opacity-60 cursor-default'
-                      : isUpgradeable && isSelected
-                        ? 'border-amber-500 ring-2 ring-amber-200'
-                        : isSelected
-                          ? 'border-brand-500 ring-2 ring-brand-200'
-                          : 'border-transparent hover:border-surface-300'
+                      : isSelected
+                        ? 'border-brand-500 ring-2 ring-brand-200'
+                        : 'border-transparent hover:border-surface-300'
                   }`}
                 >
                   {thumbUrl ? (
@@ -461,7 +403,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
                   ) : (
                     <div className={`absolute top-1.5 right-1.5 w-5 h-5 rounded-full flex items-center justify-center transition-all ${
                       isSelected
-                        ? isUpgradeable ? 'bg-amber-500 text-white' : 'bg-brand-500 text-white'
+                        ? 'bg-brand-500 text-white'
                         : 'bg-black/30 text-white opacity-0 group-hover:opacity-100'
                     }`}>
                       <Check className="w-3 h-3" />
@@ -470,11 +412,6 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
                   {isDuplicate && (
                     <div className="absolute bottom-1 right-1 bg-green-600/80 text-white text-[9px] px-1.5 py-0.5 rounded font-medium">
                       In library
-                    </div>
-                  )}
-                  {isUpgradeable && (
-                    <div className="absolute bottom-1 right-1 bg-amber-500/90 text-white text-[9px] px-1.5 py-0.5 rounded font-medium">
-                      Needs video file
                     </div>
                   )}
                 </button>
