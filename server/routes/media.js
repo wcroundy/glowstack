@@ -40,6 +40,7 @@ router.get('/', async (req, res) => {
       .from('media_assets')
       .select('*, media_tags(tag_id, tags(*))', { count: 'exact' })
       .eq('is_archived', false)
+      .is('parent_asset_id', null)
       .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
 
     if (search) query = query.or(`title.ilike.%${search}%,ai_description.ilike.%${search}%`);

@@ -68,12 +68,6 @@ function MediaCard({ asset, onSelect }) {
             )}
           </div>
         )}
-        {asset.parent_asset_id && (
-          <div className="absolute top-2 left-2 badge bg-purple-600/80 text-white">
-            <Scissors className="w-3 h-3 mr-1" />
-            Scene
-          </div>
-        )}
         {asset.is_favorite && (
           <div className="absolute top-2 right-2">
             <Heart className="w-4 h-4 text-brand-500 fill-brand-500" />
