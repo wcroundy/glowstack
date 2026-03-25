@@ -281,7 +281,7 @@ router.post('/import', async (req, res) => {
               console.log(`Downloading video for ${item.id}...`);
               const videoRes = await fetch(videoSrc, {
                 headers: { Authorization: `Bearer ${accessToken}` },
-                signal: AbortSignal.timeout(45000), // 45s timeout for video downloads
+                signal: AbortSignal.timeout(55000), // 55s — leaves ~5s for upload + DB within 60s function limit
               });
               if (videoRes.ok) {
                 const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
