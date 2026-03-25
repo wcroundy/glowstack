@@ -92,7 +92,7 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
 
       await new Promise((resolve, reject) => {
         video.onloadedmetadata = resolve;
-        video.onerror = () => reject(new Error('Could not load video file'));
+        video.onerror = (e) => reject(new Error(`Could not load video file: ${e?.target?.error?.message || 'unknown format'}`));
         setTimeout(() => reject(new Error('Video load timeout — file may be too large')), 30000);
       });
 
@@ -100,23 +100,29 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
       const ctx = canvas.getContext('2d');
       canvas.width = Math.min(video.videoWidth || 800, 800);
       canvas.height = Math.min(video.videoHeight || 600, 600);
+      console.log(`VideoBreakdown: video loaded — ${Math.round(duration)}s, ${video.videoWidth}x${video.videoHeight}, readyState=${video.readyState}`);
 
       const frames = [];
       const totalFrames = Math.max(1, Math.floor(duration / FRAME_INTERVAL));
+      let seekTimeouts = 0;
 
       for (let i = 0; i < totalFrames; i++) {
         const timestamp = i * FRAME_INTERVAL;
         video.currentTime = timestamp;
 
         await new Promise((resolve) => {
+          const timer = setTimeout(() => {
+            seekTimeouts++;
+            resolve(); // seek timed out — skip this frame
+          }, 3000);
           video.onseeked = () => {
+            clearTimeout(timer);
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
             frames.push({ timestamp, dataUrl });
             setExtractionProgress(Math.round(((i + 1) / totalFrames) * 100));
             resolve();
           };
-          setTimeout(resolve, 3000); // timeout per frame seek
         });
       }
 
@@ -125,10 +131,18 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
 
       // Filter out any frames that failed (empty canvas produces tiny data URLs)
       const validFrames = frames.filter(f => f.dataUrl.length > 1000);
+      console.log(`VideoBreakdown: ${frames.length} frames captured, ${validFrames.length} valid, ${seekTimeouts} seek timeouts`);
 
       if (validFrames.length === 0) {
-        setError('Could not extract frames from the video. The video format may not be supported by your browser.');
+        const msg = seekTimeouts > 0
+          ? `Could not extract frames — ${seekTimeouts} of ${totalFrames} seeks timed out. The video codec may not be supported by your browser (common with iPhone HEVC/MOV).`
+          : 'Could not extract frames from the video. The video format may not be supported by your browser.';
+        setError(msg);
         setStep('error');
+        // In auto mode, skip and advance to next video
+        if (autoStart && onComplete) {
+          setTimeout(() => onComplete(null), 2000);
+        }
         return;
       }
 
