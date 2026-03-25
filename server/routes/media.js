@@ -292,6 +292,47 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// POST /api/media/bulk/delete — delete specific assets by ID (and their children)
+router.post('/bulk/delete', async (req, res) => {
+  try {
+    if (!isSupabaseConfigured()) return res.json({ deleted: 0 });
+
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids array is required' });
+    }
+
+    // Delete child assets first (scene frames from video breakdown)
+    const { data: children } = await supabase
+      .from('media_assets')
+      .select('id')
+      .in('parent_asset_id', ids);
+
+    let childrenDeleted = 0;
+    if (children && children.length > 0) {
+      const { error: childErr } = await supabase
+        .from('media_assets')
+        .delete()
+        .in('parent_asset_id', ids);
+      if (childErr) console.error('Child delete error:', childErr.message);
+      else childrenDeleted = children.length;
+    }
+
+    // Delete the assets themselves
+    const { error } = await supabase
+      .from('media_assets')
+      .delete()
+      .in('id', ids);
+
+    if (error) throw error;
+
+    res.json({ deleted: ids.length, childrenDeleted });
+  } catch (err) {
+    console.error('Bulk delete error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // DELETE /api/media/bulk/videos — delete all video assets (and their children)
 router.delete('/bulk/videos', async (req, res) => {
   try {

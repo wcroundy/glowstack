@@ -39,6 +39,7 @@ export const api = {
   getMedia: (params) => request(`/media?${new URLSearchParams(params)}`),
   getMediaCounts: () => request('/media/counts'),
   getMediaById: (id) => request(`/media/${id}`),
+  deleteMediaBulk: (ids) => request('/media/bulk/delete', { method: 'POST', body: JSON.stringify({ ids }) }),
   uploadMedia: (data) => request('/media/upload', { method: 'POST', body: JSON.stringify(data) }),
   tagMedia: (id, tagId) => request(`/media/${id}/tag`, { method: 'POST', body: JSON.stringify({ tag_id: tagId }) }),
   toggleFavorite: (id) => request(`/media/${id}/favorite`, { method: 'POST' }),

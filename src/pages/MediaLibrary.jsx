@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import {
   Search, Filter, Grid3X3, List, Heart, Star, Tag, Upload,
   Image as ImageIcon, Video, Sparkles, X, ChevronDown, Eye, Camera, ExternalLink,
-  ChevronLeft, ChevronRight as ChevronRightIcon, ChevronsLeft, ChevronsRight, Scissors
+  ChevronLeft, ChevronRight as ChevronRightIcon, ChevronsLeft, ChevronsRight, Scissors,
+  Trash2, CheckSquare, Square, Check, Loader2
 } from 'lucide-react';
 import { api } from '../services/api';
 import GooglePhotosBrowser from '../components/google-photos/GooglePhotosBrowser';
@@ -36,15 +37,23 @@ function TagPill({ tag }) {
   );
 }
 
-function MediaCard({ asset, onSelect }) {
+function MediaCard({ asset, onSelect, selectMode, isSelected, onToggleSelect }) {
   const [hovered, setHovered] = useState(false);
+
+  const handleClick = () => {
+    if (selectMode) {
+      onToggleSelect(asset.id);
+    } else {
+      onSelect(asset);
+    }
+  };
 
   return (
     <div
-      className="card-hover group cursor-pointer overflow-hidden"
+      className={`card-hover group cursor-pointer overflow-hidden ${selectMode && isSelected ? 'ring-2 ring-brand-500 ring-offset-1' : ''}`}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      onClick={() => onSelect(asset)}
+      onClick={handleClick}
     >
       {/* Thumbnail */}
       <div className="relative aspect-square bg-surface-100 overflow-hidden">
@@ -53,6 +62,14 @@ function MediaCard({ asset, onSelect }) {
           alt={asset.title}
           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
         />
+        {/* Selection checkbox */}
+        {selectMode && (
+          <div className={`absolute top-2 right-2 w-5 h-5 rounded flex items-center justify-center z-10 transition-all ${
+            isSelected ? 'bg-brand-500 text-white' : 'bg-black/30 text-white'
+          }`}>
+            <Check className="w-3 h-3" />
+          </div>
+        )}
         {/* Overlays */}
         {asset.file_type === 'video' && (
           <div className="absolute top-2 left-2 flex gap-1">
@@ -68,7 +85,7 @@ function MediaCard({ asset, onSelect }) {
             )}
           </div>
         )}
-        {asset.is_favorite && (
+        {!selectMode && asset.is_favorite && (
           <div className="absolute top-2 right-2">
             <Heart className="w-4 h-4 text-brand-500 fill-brand-500" />
           </div>
@@ -80,11 +97,13 @@ function MediaCard({ asset, onSelect }) {
           </div>
         )}
         {/* Hover overlay */}
-        <div className={`absolute inset-0 bg-black/40 flex items-center justify-center transition-opacity ${hovered ? 'opacity-100' : 'opacity-0'}`}>
-          <Eye className="w-6 h-6 text-white" />
-        </div>
+        {!selectMode && (
+          <div className={`absolute inset-0 bg-black/40 flex items-center justify-center transition-opacity ${hovered ? 'opacity-100' : 'opacity-0'}`}>
+            <Eye className="w-6 h-6 text-white" />
+          </div>
+        )}
         {/* Google Photos link overlay */}
-        {asset.source === 'google_photos' && (
+        {!selectMode && asset.source === 'google_photos' && (
           <a
             href={googlePhotosLink(asset)}
             target="_blank"
@@ -316,6 +335,9 @@ export default function MediaLibrary() {
   const [totalAssets, setTotalAssets] = useState(0);
   const [sceneExtractionQueue, setSceneExtractionQueue] = useState([]); // asset ids to extract
   const [extractionStatus, setExtractionStatus] = useState(null); // { current, total, currentAsset }
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [deleting, setDeleting] = useState(false);
 
   const totalPages = Math.max(1, Math.ceil(totalAssets / PAGE_SIZE));
 
@@ -356,6 +378,45 @@ export default function MediaLibrary() {
     }
   };
 
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    if (selectedIds.size === media.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(media.map(a => a.id)));
+    }
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`Delete ${selectedIds.size} asset${selectedIds.size !== 1 ? 's' : ''}? This cannot be undone.`)) return;
+
+    setDeleting(true);
+    try {
+      await api.deleteMediaBulk([...selectedIds]);
+      setSelectedIds(new Set());
+      setSelectMode(false);
+      refreshMedia();
+    } catch (err) {
+      console.error('Delete failed:', err);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  };
+
   const tagCategories = [...new Set(tags.map(t => t.category))];
 
   return (
@@ -367,6 +428,12 @@ export default function MediaLibrary() {
           <p className="text-sm text-surface-500 mt-0.5">{totalAssets} assets · AI-tagged and searchable</p>
         </div>
         <div className="flex gap-2">
+          <button
+            className={`btn-secondary text-xs ${selectMode ? 'bg-red-50 border-red-200 text-red-600' : ''}`}
+            onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
+          >
+            {selectMode ? <><X className="w-4 h-4" /> Cancel</> : <><CheckSquare className="w-4 h-4" /> Select</>}
+          </button>
           <button
             className={`btn-secondary text-xs ${showGooglePhotos ? 'bg-brand-50 border-brand-200 text-brand-600' : ''}`}
             onClick={() => setShowGooglePhotos(!showGooglePhotos)}
@@ -539,6 +606,37 @@ export default function MediaLibrary() {
         </div>
       )}
 
+      {/* Selection action bar */}
+      {selectMode && (
+        <div className="flex items-center justify-between bg-surface-50 rounded-xl px-4 py-3 mb-4">
+          <div className="flex items-center gap-3">
+            <button onClick={selectAll} className="btn-ghost text-xs">
+              {selectedIds.size === media.length ? (
+                <><CheckSquare className="w-3.5 h-3.5" /> Deselect all</>
+              ) : (
+                <><Square className="w-3.5 h-3.5" /> Select all on page</>
+              )}
+            </button>
+            <span className="text-sm text-surface-600">
+              {selectedIds.size > 0
+                ? <><span className="font-medium">{selectedIds.size}</span> selected</>
+                : 'Click assets to select'
+              }
+            </span>
+          </div>
+          {selectedIds.size > 0 && (
+            <button
+              onClick={handleDeleteSelected}
+              disabled={deleting}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 transition-colors disabled:opacity-50"
+            >
+              {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+              Delete {selectedIds.size}
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Grid */}
       <div className={
         viewMode === 'grid'
@@ -547,9 +645,27 @@ export default function MediaLibrary() {
       }>
         {media.map(asset => (
           viewMode === 'grid' ? (
-            <MediaCard key={asset.id} asset={asset} onSelect={setSelectedAsset} />
+            <MediaCard
+              key={asset.id}
+              asset={asset}
+              onSelect={setSelectedAsset}
+              selectMode={selectMode}
+              isSelected={selectedIds.has(asset.id)}
+              onToggleSelect={toggleSelect}
+            />
           ) : (
-            <div key={asset.id} className="card-hover p-3 flex items-center gap-4 cursor-pointer" onClick={() => setSelectedAsset(asset)}>
+            <div
+              key={asset.id}
+              className={`card-hover p-3 flex items-center gap-4 cursor-pointer ${selectMode && selectedIds.has(asset.id) ? 'ring-2 ring-brand-500' : ''}`}
+              onClick={() => selectMode ? toggleSelect(asset.id) : setSelectedAsset(asset)}
+            >
+              {selectMode && (
+                <div className={`w-5 h-5 rounded flex items-center justify-center shrink-0 ${
+                  selectedIds.has(asset.id) ? 'bg-brand-500 text-white' : 'bg-surface-200 text-surface-400'
+                }`}>
+                  <Check className="w-3 h-3" />
+                </div>
+              )}
               <img src={asset.thumbnail_url} alt="" className="w-16 h-16 rounded-lg object-cover" />
               <div className="flex-1 min-w-0">
                 <h4 className="text-sm font-medium truncate">{asset.title}</h4>
