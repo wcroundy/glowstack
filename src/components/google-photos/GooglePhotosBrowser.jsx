@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Image, Download, Loader2, AlertCircle, ExternalLink, Unplug,
   Check, CheckSquare, Square, RefreshCw, CheckCircle2, Scissors,
-  DollarSign, X, Film,
+  DollarSign, X, Film, RotateCcw, Video,
 } from 'lucide-react';
 import { api } from '../../services/api';
 
@@ -26,6 +26,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
   const [importResult, setImportResult] = useState(null);
   const [polling, setPolling] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [failedVideos, setFailedVideos] = useState([]); // [{ assetId, googleId, baseUrl, filename, retrying, retryDone }]
   const pollRef = useRef(null);
 
   // Check connection status
@@ -210,6 +211,10 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
       let totalImported = 0;
       let totalAlreadyExisted = 0;
       let importedItemIds = [];
+      let videoFailures = [];
+
+      // Build a lookup from google ID to picker item (for baseUrl on retry)
+      const googleIdToItem = new Map(itemsToImport.map(i => [i.id, i]));
 
       for (let i = 0; i < itemsToImport.length; i += CHUNK_SIZE) {
         const chunk = itemsToImport.slice(i, i + CHUNK_SIZE);
@@ -217,9 +222,22 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
           const result = await api.googlePhotosImport(chunk);
           totalImported += result.imported || 0;
           totalAlreadyExisted += result.alreadyExisted || 0;
-          // Collect the actual imported asset IDs
+          // Collect the actual imported asset IDs and check for video failures
           if (result.items) {
-            importedItemIds = [...importedItemIds, ...result.items.map(it => it.id)];
+            for (const item of result.items) {
+              importedItemIds.push(item.id);
+              if (item.videoDownloadFailed) {
+                // Find the original picker item by google_photos_id to get its baseUrl
+                const pickerItem = googleIdToItem.get(item.googlePhotosId);
+                videoFailures.push({
+                  assetId: item.id,
+                  filename: item.filename,
+                  baseUrl: pickerItem?.baseUrl || '',
+                  retrying: false,
+                  retryDone: false,
+                });
+              }
+            }
           }
         } catch (chunkErr) {
           console.error(`Chunk ${i / CHUNK_SIZE + 1} failed:`, chunkErr);
@@ -228,11 +246,14 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
         setImportProgress({ done: Math.min(i + CHUNK_SIZE, itemsToImport.length), total: itemsToImport.length });
       }
 
+      setFailedVideos(videoFailures);
+
       const finalResult = {
         imported: totalImported,
         alreadyExisted: totalAlreadyExisted,
         extractScenes,
         importedItemIds,
+        failedVideoCount: videoFailures.length,
       };
       setImportResult(finalResult);
       setSelected(new Set());
@@ -244,8 +265,8 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
         return next;
       });
 
-      // Clean up the session
-      if (session?.sessionId) {
+      // Only clean up the session if there are no failed videos (we need baseUrls for retry)
+      if (videoFailures.length === 0 && session?.sessionId) {
         try { await api.googlePhotosDeleteSession(session.sessionId); } catch {}
       }
 
@@ -255,6 +276,31 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
     } finally {
       setImporting(false);
       setImportProgress(null);
+    }
+  };
+
+  // Retry a single failed video download
+  const retryVideoDownload = async (index) => {
+    const failed = failedVideos[index];
+    if (!failed || !failed.baseUrl) return;
+
+    setFailedVideos(prev => prev.map((f, i) => i === index ? { ...f, retrying: true } : f));
+
+    try {
+      await api.googlePhotosRetryVideo(failed.assetId, failed.baseUrl);
+      setFailedVideos(prev => prev.map((f, i) => i === index ? { ...f, retrying: false, retryDone: true } : f));
+    } catch (err) {
+      console.error('Retry failed:', err.message);
+      setFailedVideos(prev => prev.map((f, i) => i === index ? { ...f, retrying: false, retryError: err.message } : f));
+    }
+  };
+
+  // Retry all failed videos
+  const retryAllVideos = async () => {
+    for (let i = 0; i < failedVideos.length; i++) {
+      if (!failedVideos[i].retryDone) {
+        await retryVideoDownload(i);
+      }
     }
   };
 
@@ -327,26 +373,82 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
 
       {/* Import complete — show success with OK button to reset */}
       {importResult && (
-        <div className="text-center py-8">
-          <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto mb-3" />
-          <h4 className="font-medium text-surface-800 mb-1">Import Complete</h4>
-          <p className="text-sm text-surface-500 mb-4">
-            Successfully imported {importResult.imported} item{importResult.imported !== 1 ? 's' : ''} into your media library.
-            {importResult.alreadyExisted > 0 && ` (${importResult.alreadyExisted} already existed)`}
-          </p>
-          <button
-            onClick={() => {
-              setImportResult(null);
-              setPickerDone(false);
-              setMediaItems([]);
-              setSelected(new Set());
-              setDuplicateIds(new Set());
-              setSession(null);
-            }}
-            className="btn-primary"
-          >
-            OK
-          </button>
+        <div className="py-6 space-y-4">
+          <div className="text-center">
+            <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto mb-3" />
+            <h4 className="font-medium text-surface-800 mb-1">Import Complete</h4>
+            <p className="text-sm text-surface-500">
+              Successfully imported {importResult.imported} item{importResult.imported !== 1 ? 's' : ''} into your media library.
+              {importResult.alreadyExisted > 0 && ` (${importResult.alreadyExisted} already existed)`}
+            </p>
+          </div>
+
+          {/* Failed video downloads — retry UI */}
+          {failedVideos.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-amber-800">
+                    {failedVideos.filter(f => !f.retryDone).length} video{failedVideos.filter(f => !f.retryDone).length !== 1 ? 's' : ''} imported without full video file
+                  </p>
+                  <p className="text-xs text-amber-600 mt-0.5">
+                    The video download timed out. You can retry the download — scene extraction requires the full video file.
+                  </p>
+                </div>
+              </div>
+
+              {failedVideos.map((failed, idx) => (
+                <div key={failed.assetId} className="flex items-center gap-3 bg-white/60 rounded-lg px-3 py-2">
+                  <Video className="w-4 h-4 text-surface-400 shrink-0" />
+                  <span className="text-xs text-surface-700 truncate flex-1">{failed.filename}</span>
+                  {failed.retryDone ? (
+                    <span className="flex items-center gap-1 text-xs text-green-600 font-medium shrink-0">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Fixed
+                    </span>
+                  ) : failed.retrying ? (
+                    <span className="flex items-center gap-1 text-xs text-brand-500 shrink-0">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" /> Downloading...
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => retryVideoDownload(idx)}
+                      className="flex items-center gap-1 text-xs text-brand-600 hover:text-brand-700 font-medium shrink-0"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" /> Retry
+                    </button>
+                  )}
+                  {failed.retryError && !failed.retrying && !failed.retryDone && (
+                    <span className="text-[10px] text-red-500 shrink-0">Failed</span>
+                  )}
+                </div>
+              ))}
+
+              {failedVideos.filter(f => !f.retryDone && !f.retrying).length > 1 && (
+                <button onClick={retryAllVideos} className="btn-secondary text-xs w-full">
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Retry All
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="text-center">
+            <button
+              onClick={() => {
+                setImportResult(null);
+                setFailedVideos([]);
+                setPickerDone(false);
+                setMediaItems([]);
+                setSelected(new Set());
+                setDuplicateIds(new Set());
+                setSession(null);
+              }}
+              className="btn-primary"
+            >
+              OK
+            </button>
+          </div>
         </div>
       )}
 

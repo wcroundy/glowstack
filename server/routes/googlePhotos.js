@@ -306,7 +306,10 @@ router.post('/import', async (req, res) => {
           }
         }
 
+        const videoDownloadFailed = isVideo && !videoUrl;
         processedItems.push({
+          _googleId: item.id,
+          _videoDownloadFailed: videoDownloadFailed,
           file_name: filename,
           file_url: videoUrl || thumbnailUrl,
           thumbnail_url: thumbnailUrl,
@@ -329,21 +332,102 @@ router.post('/import', async (req, res) => {
       return res.json({ imported: 0, alreadyExisted: alreadyCount, error: 'Failed to process any items' });
     }
 
-    // 5. Batch insert all processed items
+    // Track which google IDs had video download failures (before stripping internal fields)
+    const failedVideoGoogleIds = new Set(
+      processedItems.filter(p => p._videoDownloadFailed).map(p => p._googleId)
+    );
+
+    // 5. Batch insert all processed items (strip internal tracking fields)
+    const insertItems = processedItems.map(({ _googleId, _videoDownloadFailed, ...rest }) => rest);
     const { data: inserted, error } = await supabase
       .from('media_assets')
-      .insert(processedItems)
-      .select('id, file_name');
+      .insert(insertItems)
+      .select('id, file_name, google_photos_id, file_type');
 
     if (error) throw error;
 
     res.json({
       imported: inserted.length,
       alreadyExisted: alreadyCount,
-      items: inserted.map(a => ({ id: a.id, status: 'imported', filename: a.file_name })),
+      items: inserted.map(a => ({
+        id: a.id,
+        status: 'imported',
+        filename: a.file_name,
+        googlePhotosId: a.google_photos_id,
+        videoDownloadFailed: a.file_type === 'video' && failedVideoGoogleIds.has(a.google_photos_id),
+      })),
     });
   } catch (err) {
     console.error('Google Photos import error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/google-photos/retry-video — re-download full video file for an asset that failed
+// Requires an active picker session (baseUrl from the picker) or a new session
+router.post('/retry-video', async (req, res) => {
+  try {
+    const { assetId, baseUrl } = req.body;
+    if (!assetId || !baseUrl) {
+      return res.status(400).json({ error: 'assetId and baseUrl are required' });
+    }
+
+    // Verify asset exists and is a video without full file
+    const { data: asset, error: assetErr } = await supabase
+      .from('media_assets')
+      .select('id, file_url, thumbnail_url, file_type, google_photos_id, mime_type')
+      .eq('id', assetId)
+      .single();
+
+    if (assetErr || !asset) {
+      return res.status(404).json({ error: 'Asset not found' });
+    }
+    if (asset.file_type !== 'video') {
+      return res.status(400).json({ error: 'Asset is not a video' });
+    }
+
+    const accessToken = await getValidToken();
+    if (!accessToken) {
+      return res.status(401).json({ error: 'Google Photos not connected' });
+    }
+
+    // Download the full video
+    const videoSrc = `${baseUrl}=dv`;
+    console.log(`Retry video download for asset ${assetId}...`);
+    const videoRes = await fetch(videoSrc, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(60000), // 60s timeout for retry
+    });
+
+    if (!videoRes.ok) {
+      console.error(`Retry video download FAILED for ${assetId}: HTTP ${videoRes.status}`);
+      return res.status(502).json({ error: `Video download failed: HTTP ${videoRes.status}` });
+    }
+
+    const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
+    const sizeMB = (videoBuffer.length / (1024 * 1024)).toFixed(1);
+    console.log(`Retry video ${assetId}: ${sizeMB}MB`);
+
+    if (videoBuffer.length > 50 * 1024 * 1024) {
+      return res.status(413).json({ error: `Video too large (${sizeMB}MB). Maximum is 50MB.` });
+    }
+
+    const ext = (asset.mime_type || 'video/mp4').includes('quicktime') ? 'mov' : 'mp4';
+    const videoPath = `google-photos/${asset.google_photos_id}/video.${ext}`;
+    const uploadedVideo = await uploadFile('media', videoPath, videoBuffer, asset.mime_type || 'video/mp4');
+
+    // Update the asset record with the real video URL
+    const { error: updateErr } = await supabase
+      .from('media_assets')
+      .update({ file_url: uploadedVideo.publicUrl })
+      .eq('id', assetId);
+
+    if (updateErr) throw updateErr;
+
+    console.log(`Retry video ${assetId}: uploaded OK — ${uploadedVideo.publicUrl.slice(-40)}`);
+    res.json({ success: true, assetId, fileUrl: uploadedVideo.publicUrl });
+  } catch (err) {
+    console.error('Retry video download error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
