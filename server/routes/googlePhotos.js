@@ -281,7 +281,7 @@ router.post('/import', async (req, res) => {
               console.log(`Downloading video for ${item.id}...`);
               const videoRes = await fetch(videoSrc, {
                 headers: { Authorization: `Bearer ${accessToken}` },
-                signal: AbortSignal.timeout(55000), // 55s — leaves ~5s for upload + DB within 60s function limit
+                signal: AbortSignal.timeout(240000), // 4 min — leaves time for upload + DB within 5 min function limit
               });
               if (videoRes.ok) {
                 const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
@@ -449,7 +449,7 @@ router.post('/retry-video', async (req, res) => {
     console.log(`Retry video download for asset ${assetId}...`);
     const videoRes = await fetch(videoSrc, {
       headers: { Authorization: `Bearer ${accessToken}` },
-      signal: AbortSignal.timeout(60000), // 60s timeout for retry
+      signal: AbortSignal.timeout(240000), // 4 min timeout for retry
     });
 
     if (!videoRes.ok) {
