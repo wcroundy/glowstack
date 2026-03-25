@@ -157,7 +157,56 @@ export const api = {
   googlePhotosDisconnect: () => request('/google-photos/disconnect', { method: 'POST' }),
 
   // Video Breakdown
-  videoBreakdownExtractAndProcess: (assetId, { baseUrl, videoUrl } = {}) => request('/video-breakdown/extract-and-process', { method: 'POST', body: JSON.stringify({ assetId, baseUrl, videoUrl }) }),
+  // SSE-based: streams progress events, resolves with final result
+  videoBreakdownExtractAndProcess: (assetId, { baseUrl, videoUrl } = {}, onProgress) => {
+    return new Promise((resolve, reject) => {
+      const headers = { 'Content-Type': 'application/json' };
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+      fetch(`${API_BASE}/video-breakdown/extract-and-process`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ assetId, baseUrl, videoUrl }),
+      }).then(async (res) => {
+        // If not SSE (error response), handle as JSON
+        const ct = res.headers.get('content-type') || '';
+        if (!ct.includes('text/event-stream')) {
+          let errorData;
+          try { errorData = await res.json(); } catch (_) {}
+          return reject(new Error(errorData?.error || `API error: ${res.status}`));
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          // Parse SSE events from buffer
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const event = JSON.parse(line.slice(6));
+                if (event.type === 'progress' && onProgress) {
+                  onProgress(event.percent, event.stage);
+                } else if (event.type === 'done') {
+                  resolve(event);
+                } else if (event.type === 'error') {
+                  reject(new Error(event.error));
+                }
+              } catch (_) {}
+            }
+          }
+        }
+      }).catch(reject);
+    });
+  },
   videoBreakdownEstimate: (assetId) => request('/video-breakdown/estimate', { method: 'POST', body: JSON.stringify({ assetId }) }),
   videoBreakdownProcess: (assetId, frames) => request('/video-breakdown/process', { method: 'POST', body: JSON.stringify({ assetId, frames }) }),
   videoBreakdownFrames: (assetId) => request(`/video-breakdown/frames/${assetId}`),

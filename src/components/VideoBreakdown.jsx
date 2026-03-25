@@ -8,6 +8,7 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
   const [step, setStep] = useState(autoStart ? 'waiting' : 'estimate'); // estimate, waiting, extracting, analyzing, complete, error
   const [estimate, setEstimate] = useState(null);
   const [extractionProgress, setExtractionProgress] = useState(0);
+  const [progressStage, setProgressStage] = useState('');
   const [extractedFrames, setExtractedFrames] = useState([]);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -67,16 +68,25 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
         // No giant base64 payloads cross the wire — everything stays on the server
         const source = googlePhotosBaseUrl ? 'Google Photos' : 'uploaded video';
         console.log(`VideoBreakdown: using server-side extract-and-process (${source})...`);
-        setExtractionProgress(20);
+        setExtractionProgress(5);
+        setProgressStage('Starting...');
         setStep('extracting');
 
-        const serverResult = await api.videoBreakdownExtractAndProcess(asset.id, {
-          baseUrl: googlePhotosBaseUrl || undefined,
-          videoUrl: uploadedVideoUrl || undefined,
-        });
+        const serverResult = await api.videoBreakdownExtractAndProcess(
+          asset.id,
+          {
+            baseUrl: googlePhotosBaseUrl || undefined,
+            videoUrl: uploadedVideoUrl || undefined,
+          },
+          (percent, stage) => {
+            setExtractionProgress(percent);
+            setProgressStage(stage);
+          }
+        );
 
         console.log(`VideoBreakdown: server processed ${serverResult.totalFramesAnalyzed} frames, found ${serverResult.uniqueScenesFound} scenes`);
         setExtractionProgress(100);
+        setProgressStage('Done!');
         setResult(serverResult);
         setStep('complete');
         if (onComplete) onComplete(serverResult);
@@ -273,7 +283,7 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
             <div className="space-y-4 py-4">
               <div className="flex items-center gap-3">
                 <Loader2 className="w-5 h-5 text-brand-500 animate-spin" />
-                <span className="text-sm font-medium text-surface-700">Extracting frames...</span>
+                <span className="text-sm font-medium text-surface-700">{progressStage || 'Processing...'}</span>
               </div>
               <div className="w-full bg-surface-200 rounded-full h-2">
                 <div

@@ -57,9 +57,8 @@ async function cleanupTempFiles(videoPath, framesDir) {
   } catch {}
 }
 
-// POST /api/video-breakdown/extract-and-process — full server-side pipeline
-// Downloads video from Google Photos, extracts frames with ffmpeg, analyzes with OpenAI, saves results
-// Client only sends { assetId, baseUrl } — no giant base64 payloads cross the wire
+// POST /api/video-breakdown/extract-and-process — full server-side pipeline with SSE progress
+// Streams progress events to the client, then sends a final 'done' event with the result JSON
 router.post('/extract-and-process', async (req, res) => {
   if (!ffmpegBinPath) {
     return res.status(501).json({ error: 'Server-side frame extraction is not available (ffmpeg not found)' });
@@ -75,6 +74,28 @@ router.post('/extract-and-process', async (req, res) => {
   if (!assetId) return res.status(400).json({ error: 'assetId is required' });
   if (!baseUrl && !videoUrl) return res.status(400).json({ error: 'baseUrl or videoUrl is required' });
 
+  // Set up SSE
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no', // disable Vercel/nginx buffering
+  });
+
+  const sendProgress = (percent, stage) => {
+    res.write(`data: ${JSON.stringify({ type: 'progress', percent, stage })}\n\n`);
+  };
+
+  const sendDone = (result) => {
+    res.write(`data: ${JSON.stringify({ type: 'done', ...result })}\n\n`);
+    res.end();
+  };
+
+  const sendError = (message) => {
+    res.write(`data: ${JSON.stringify({ type: 'error', error: message })}\n\n`);
+    res.end();
+  };
+
   const tmpId = randomUUID();
   const videoPath = join(tmpdir(), `glowstack-video-${tmpId}.mp4`);
   const framesDir = join(tmpdir(), `glowstack-frames-${tmpId}`);
@@ -88,38 +109,52 @@ router.post('/extract-and-process', async (req, res) => {
       .single();
 
     if (assetErr || !asset) {
-      return res.status(404).json({ error: 'Video asset not found' });
+      return sendError('Video asset not found');
     }
 
-    // ---- STEP 1: Download video ----
+    // ---- STEP 1: Download video (0–30%) ----
+    sendProgress(5, 'Downloading video...');
+
     let videoRes;
     if (baseUrl) {
-      // Google Photos: needs auth token and =dv suffix
       const accessToken = await getValidToken();
-      if (!accessToken) return res.status(401).json({ error: 'Google Photos not connected' });
-
-      console.log('extract-and-process: downloading from Google Photos...');
+      if (!accessToken) return sendError('Google Photos not connected');
       videoRes = await fetch(`${baseUrl}=dv`, {
         headers: { Authorization: `Bearer ${accessToken}` },
         signal: AbortSignal.timeout(240000),
       });
     } else {
-      // Direct URL (e.g. Supabase storage) — no auth needed
-      console.log('extract-and-process: downloading from direct URL...');
       videoRes = await fetch(videoUrl, {
         signal: AbortSignal.timeout(240000),
       });
     }
 
     if (!videoRes.ok) {
-      return res.status(502).json({ error: `Video download failed: HTTP ${videoRes.status}` });
+      return sendError(`Video download failed: HTTP ${videoRes.status}`);
     }
 
+    // Stream download with progress tracking
+    const contentLength = parseInt(videoRes.headers.get('content-length') || '0', 10);
     const fileStream = createWriteStream(videoPath);
-    await pipeline(Readable.fromWeb(videoRes.body), fileStream);
-    console.log('extract-and-process: video downloaded');
+    let downloaded = 0;
 
-    // ---- STEP 2: Extract frames with ffmpeg ----
+    const reader = videoRes.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      fileStream.write(Buffer.from(value));
+      downloaded += value.length;
+      if (contentLength > 0) {
+        const dlPercent = Math.round((downloaded / contentLength) * 25); // 0–25%
+        sendProgress(5 + dlPercent, 'Downloading video...');
+      }
+    }
+    fileStream.end();
+    await new Promise(resolve => fileStream.on('finish', resolve));
+
+    sendProgress(30, 'Extracting frames...');
+
+    // ---- STEP 2: Extract frames with ffmpeg (30–50%) ----
     await mkdir(framesDir, { recursive: true });
     const outputPattern = join(framesDir, 'frame_%04d.jpg');
     await execFileAsync(ffmpegBinPath, [
@@ -129,6 +164,8 @@ router.post('/extract-and-process', async (req, res) => {
       '-vframes', '60',
       outputPattern,
     ], { timeout: 120000 });
+
+    sendProgress(45, 'Reading extracted frames...');
 
     // Read frame files as base64
     const frameFiles = (await readdir(framesDir)).filter(f => f.endsWith('.jpg')).sort();
@@ -140,13 +177,14 @@ router.post('/extract-and-process', async (req, res) => {
         dataUrl: `data:image/jpeg;base64,${buffer.toString('base64')}`,
       });
     }
-    console.log(`extract-and-process: extracted ${frames.length} frames`);
 
     if (frames.length === 0) {
-      return res.status(422).json({ error: 'ffmpeg extracted zero frames from video' });
+      return sendError('ffmpeg extracted zero frames from video');
     }
 
-    // Done with temp files — clean up now to free disk space before AI call
+    sendProgress(50, `Analyzing ${frames.length} frames with AI...`);
+
+    // Clean up temp files to free disk
     await cleanupTempFiles(videoPath, framesDir);
 
     // ---- STEP 3: Create breakdown run record ----
@@ -167,7 +205,7 @@ router.post('/extract-and-process', async (req, res) => {
 
     if (runErr) console.error('Failed to create breakdown run:', runErr);
 
-    // ---- STEP 4: Send frames to OpenAI for scene detection ----
+    // ---- STEP 4: Send frames to OpenAI for scene detection (50–80%) ----
     const imageContents = frames.map((frame) => ({
       type: 'image_url',
       image_url: { url: frame.dataUrl, detail: 'low' },
@@ -203,6 +241,8 @@ Return a JSON array where each element corresponds to a frame (in order):
 ]
 
 Mark the FIRST frame as always unique. For duplicate frames showing the same thing, mark isUnique: false. When in doubt about whether something is new, lean toward marking it as unique — it's better to capture an extra scene than miss one.`;
+
+    sendProgress(55, `AI analyzing ${frames.length} frames...`);
 
     const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -242,11 +282,13 @@ Mark the FIRST frame as always unique. For duplicate frames showing the same thi
             .update({ status: 'failed', error_message: detail, completed_at: new Date().toISOString() })
             .eq('id', run.id);
         }
-        return res.status(402).json({ error: 'openai_insufficient_quota', message: detail });
+        return sendError(detail);
       }
 
       throw new Error(`OpenAI API error: ${aiResponse.status}`);
     }
+
+    sendProgress(78, 'Identifying unique scenes...');
 
     const aiResult = await aiResponse.json();
     const content = aiResult.choices?.[0]?.message?.content || '[]';
@@ -261,8 +303,6 @@ Mark the FIRST frame as always unique. For duplicate frames showing the same thi
         scenes = JSON.parse(jsonMatch[0]);
       } catch (parseErr) {
         console.error('Failed to parse scene detection JSON:', parseErr.message);
-        console.error('Raw content (first 500 chars):', content.substring(0, 500));
-        // Fallback: treat all frames as unique
         scenes = frames.map((f, i) => ({
           frameIndex: i, timestamp: f.timestamp, isUnique: true,
           description: 'Scene ' + (i + 1), outfitOrProduct: 'Unknown',
@@ -270,26 +310,22 @@ Mark the FIRST frame as always unique. For duplicate frames showing the same thi
       }
     } else {
       console.warn('extract-and-process: no JSON array found in OpenAI response');
-      console.warn('Raw content (first 500 chars):', content.substring(0, 500));
-      // Fallback: treat all frames as unique
       scenes = frames.map((f, i) => ({
         frameIndex: i, timestamp: f.timestamp, isUnique: true,
         description: 'Scene ' + (i + 1), outfitOrProduct: 'Unknown',
       }));
     }
 
-    // Ensure the first frame is always unique (AI sometimes misses this)
+    // Ensure the first frame is always unique
     if (scenes.length > 0 && !scenes[0].isUnique) {
       scenes[0].isUnique = true;
     }
 
-    // ---- STEP 5: Save unique frames as child assets ----
+    // ---- STEP 5: Save unique frames as child assets (80–95%) ----
     let uniqueScenes = scenes.filter(s => s.isUnique);
 
-    // Safety net: if AI marked everything as not unique, pick evenly spaced frames
     if (uniqueScenes.length === 0 && frames.length > 0) {
-      console.warn('extract-and-process: AI found 0 unique scenes, falling back to evenly spaced frames');
-      const step = Math.max(1, Math.floor(frames.length / 5)); // pick ~5 frames
+      const step = Math.max(1, Math.floor(frames.length / 5));
       uniqueScenes = frames
         .filter((_, i) => i % step === 0)
         .map((f, idx) => ({
@@ -297,9 +333,12 @@ Mark the FIRST frame as always unique. For duplicate frames showing the same thi
           description: `Scene ${idx + 1}`, outfitOrProduct: 'Unknown',
         }));
     }
+
+    sendProgress(82, `Saving ${uniqueScenes.length} scene thumbnails...`);
     const savedAssets = [];
 
-    for (const scene of uniqueScenes) {
+    for (let si = 0; si < uniqueScenes.length; si++) {
+      const scene = uniqueScenes[si];
       const frameData = frames[scene.frameIndex];
       if (!frameData) continue;
 
@@ -332,15 +371,19 @@ Mark the FIRST frame as always unique. For duplicate frames showing the same thi
 
         if (!insertErr && childAsset) {
           savedAssets.push(childAsset);
-        } else if (insertErr) {
-          console.error('Failed to save child asset:', insertErr);
         }
       } catch (uploadErr) {
         console.error('Failed to upload frame:', uploadErr.message);
       }
+
+      // Progress within save step: 82–95%
+      const saveProgress = 82 + Math.round(((si + 1) / uniqueScenes.length) * 13);
+      sendProgress(saveProgress, `Saving scene ${si + 1}/${uniqueScenes.length}...`);
     }
 
-    // ---- STEP 6: Update run record and respond ----
+    // ---- STEP 6: Update run record and respond (95–100%) ----
+    sendProgress(96, 'Finalizing...');
+
     const actualCostCents = Math.ceil(
       aiResult.usage?.total_tokens
         ? (aiResult.usage.total_tokens / 1000) * 0.015 * 100
@@ -361,7 +404,7 @@ Mark the FIRST frame as always unique. For duplicate frames showing the same thi
 
     console.log(`extract-and-process: done — ${uniqueScenes.length} scenes, ${savedAssets.length} saved`);
 
-    res.json({
+    sendDone({
       success: true,
       totalFramesAnalyzed: frames.length,
       uniqueScenesFound: uniqueScenes.length,
@@ -382,7 +425,7 @@ Mark the FIRST frame as always unique. For duplicate frames showing the same thi
 
   } catch (err) {
     console.error('extract-and-process error:', err.message);
-    res.status(500).json({ error: err.message });
+    sendError(err.message);
   } finally {
     await cleanupTempFiles(videoPath, framesDir);
   }
