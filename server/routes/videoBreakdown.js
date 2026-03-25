@@ -1,5 +1,17 @@
 import { Router } from 'express';
 import { supabase, isSupabaseConfigured, uploadFile } from '../services/supabase.js';
+import { getValidToken } from '../services/googlePhotos.js';
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegPath from 'ffmpeg-static';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { writeFile, readFile, unlink, readdir, mkdir } from 'fs/promises';
+import { createWriteStream } from 'fs';
+import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
+import { randomUUID } from 'crypto';
+
+if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
 
 const router = Router();
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -8,6 +20,85 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const COST_PER_FRAME_ANALYSIS_CENTS = 0.2; // ~$0.002 per gpt-4o-mini vision call (low detail)
 const COST_PER_SCENE_DETECTION_CENTS = 0.5; // slightly more for the comparison prompt
 const FRAME_INTERVAL_SECONDS = 2; // extract a frame every 2 seconds
+
+// POST /api/video-breakdown/extract-frames-server — extract frames using ffmpeg (handles all codecs)
+// Downloads video from Google Photos, runs ffmpeg to capture frames, returns base64 JPEGs
+router.post('/extract-frames-server', async (req, res) => {
+  const tmpId = randomUUID();
+  const videoPath = join(tmpdir(), `glowstack-video-${tmpId}.mp4`);
+  const framesDir = join(tmpdir(), `glowstack-frames-${tmpId}`);
+
+  try {
+    const { baseUrl } = req.body;
+    if (!baseUrl) return res.status(400).json({ error: 'baseUrl is required' });
+
+    const accessToken = await getValidToken();
+    if (!accessToken) return res.status(401).json({ error: 'Google Photos not connected' });
+
+    // 1. Download video from Google Photos to temp file
+    console.log('extract-frames-server: downloading video...');
+    const videoSrc = `${baseUrl}=dv`;
+    const videoRes = await fetch(videoSrc, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(240000), // 4 min
+    });
+
+    if (!videoRes.ok) {
+      return res.status(502).json({ error: `Video download failed: HTTP ${videoRes.status}` });
+    }
+
+    // Stream to temp file (more memory-efficient than buffering)
+    const fileStream = createWriteStream(videoPath);
+    await pipeline(Readable.fromWeb(videoRes.body), fileStream);
+    console.log('extract-frames-server: video saved to temp file');
+
+    // 2. Extract frames with ffmpeg (every 2 seconds)
+    await mkdir(framesDir, { recursive: true });
+
+    await new Promise((resolve, reject) => {
+      ffmpeg(videoPath)
+        .outputOptions([
+          '-vf', `fps=1/${FRAME_INTERVAL_SECONDS}`, // 1 frame every N seconds
+          '-q:v', '3',                                // JPEG quality (2-5 is good, lower = better)
+          '-vframes', '60',                            // max 60 frames (2min video at 2s intervals)
+        ])
+        .output(join(framesDir, 'frame_%04d.jpg'))
+        .on('end', resolve)
+        .on('error', (err) => {
+          console.error('ffmpeg error:', err.message);
+          reject(new Error(`ffmpeg failed: ${err.message}`));
+        })
+        .run();
+    });
+
+    console.log('extract-frames-server: ffmpeg extraction complete');
+
+    // 3. Read frame files and convert to base64 data URLs
+    const files = (await readdir(framesDir)).filter(f => f.endsWith('.jpg')).sort();
+    const frames = [];
+    for (let i = 0; i < files.length; i++) {
+      const buffer = await readFile(join(framesDir, files[i]));
+      frames.push({
+        timestamp: i * FRAME_INTERVAL_SECONDS,
+        dataUrl: `data:image/jpeg;base64,${buffer.toString('base64')}`,
+      });
+    }
+
+    console.log(`extract-frames-server: extracted ${frames.length} frames`);
+    res.json({ frames, frameInterval: FRAME_INTERVAL_SECONDS });
+  } catch (err) {
+    console.error('extract-frames-server error:', err.message);
+    res.status(500).json({ error: err.message });
+  } finally {
+    // Cleanup temp files
+    try { await unlink(videoPath); } catch {}
+    try {
+      const files = await readdir(framesDir).catch(() => []);
+      for (const f of files) await unlink(join(framesDir, f)).catch(() => {});
+      await unlink(framesDir).catch(() => {}); // rmdir
+    } catch {}
+  }
+});
 
 // POST /api/video-breakdown/estimate — calculate cost before running
 router.post('/estimate', async (req, res) => {

@@ -62,93 +62,65 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
     }
 
     try {
-      // Load the video — either via Google Photos proxy or from Supabase storage
-      let blobUrl = null;
+      let validFrames = [];
+
       if (googlePhotosBaseUrl) {
-        // Download video through server proxy (streams from Google Photos, avoids CORS)
-        setStep('extracting');
-        setExtractionProgress(0);
-        console.log('VideoBreakdown: downloading video via proxy...');
-        const token = localStorage.getItem('glowstack_token');
-        const proxyRes = await fetch('/api/google-photos/video-proxy', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({ baseUrl: googlePhotosBaseUrl }),
-        });
-        if (!proxyRes.ok) {
-          throw new Error(`Video proxy failed: HTTP ${proxyRes.status}`);
-        }
-        // Read as ArrayBuffer so we can force MIME type to video/mp4
-        // (helps Chrome decode MOV/HEVC files from iPhones)
-        const arrayBuffer = await proxyRes.arrayBuffer();
-        const blob = new Blob([arrayBuffer], { type: 'video/mp4' });
-        console.log(`VideoBreakdown: proxy delivered ${(blob.size / (1024 * 1024)).toFixed(1)}MB`);
-        blobUrl = URL.createObjectURL(blob);
-        video.src = blobUrl;
+        // SERVER-SIDE extraction using ffmpeg (handles all codecs including HEVC/MOV)
+        console.log('VideoBreakdown: using server-side ffmpeg extraction...');
+        setExtractionProgress(10); // show some progress while server works
+        const result = await api.videoBreakdownExtractFramesServer(googlePhotosBaseUrl);
+        validFrames = result.frames || [];
+        console.log(`VideoBreakdown: server extracted ${validFrames.length} frames`);
+        setExtractionProgress(100);
       } else {
+        // CLIENT-SIDE extraction using canvas (for videos already in Supabase storage)
         video.crossOrigin = 'anonymous';
         video.src = asset.file_url;
-      }
 
-      await new Promise((resolve, reject) => {
-        let settled = false;
-        const settle = (fn) => { if (!settled) { settled = true; fn(); } };
-        video.onloadedmetadata = () => settle(resolve);
-        video.oncanplay = () => settle(resolve); // fallback — some codecs fire canplay but not loadedmetadata
-        video.onerror = (e) => settle(() => reject(new Error(`Could not load video: ${e?.target?.error?.message || 'unsupported format'}`)));
-        setTimeout(() => settle(() => reject(new Error('Video load timeout — format may not be supported'))), 30000);
-      });
-
-      const duration = video.duration || (asset.duration_seconds || 30);
-      const ctx = canvas.getContext('2d');
-      canvas.width = Math.min(video.videoWidth || 800, 800);
-      canvas.height = Math.min(video.videoHeight || 600, 600);
-      console.log(`VideoBreakdown: video loaded — ${Math.round(duration)}s, ${video.videoWidth}x${video.videoHeight}, readyState=${video.readyState}`);
-
-      const frames = [];
-      const totalFrames = Math.max(1, Math.floor(duration / FRAME_INTERVAL));
-      let seekTimeouts = 0;
-
-      for (let i = 0; i < totalFrames; i++) {
-        const timestamp = i * FRAME_INTERVAL;
-        video.currentTime = timestamp;
-
-        await new Promise((resolve) => {
-          const timer = setTimeout(() => {
-            seekTimeouts++;
-            resolve(); // seek timed out — skip this frame
-          }, 3000);
-          video.onseeked = () => {
-            clearTimeout(timer);
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-            frames.push({ timestamp, dataUrl });
-            setExtractionProgress(Math.round(((i + 1) / totalFrames) * 100));
-            resolve();
-          };
+        await new Promise((resolve, reject) => {
+          let settled = false;
+          const settle = (fn) => { if (!settled) { settled = true; fn(); } };
+          video.onloadedmetadata = () => settle(resolve);
+          video.oncanplay = () => settle(resolve);
+          video.onerror = (e) => settle(() => reject(new Error(`Could not load video: ${e?.target?.error?.message || 'unsupported format'}`)));
+          setTimeout(() => settle(() => reject(new Error('Video load timeout — format may not be supported'))), 30000);
         });
-      }
 
-      // Clean up blob URL if we created one
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
+        const duration = video.duration || (asset.duration_seconds || 30);
+        const ctx = canvas.getContext('2d');
+        canvas.width = Math.min(video.videoWidth || 800, 800);
+        canvas.height = Math.min(video.videoHeight || 600, 600);
+        console.log(`VideoBreakdown: video loaded — ${Math.round(duration)}s, ${video.videoWidth}x${video.videoHeight}`);
 
-      // Filter out any frames that failed (empty canvas produces tiny data URLs)
-      const validFrames = frames.filter(f => f.dataUrl.length > 1000);
-      console.log(`VideoBreakdown: ${frames.length} frames captured, ${validFrames.length} valid, ${seekTimeouts} seek timeouts`);
+        const frames = [];
+        const totalFrames = Math.max(1, Math.floor(duration / FRAME_INTERVAL));
 
-      if (validFrames.length === 0) {
-        // Stop the video element to prevent further errors
+        for (let i = 0; i < totalFrames; i++) {
+          const timestamp = i * FRAME_INTERVAL;
+          video.currentTime = timestamp;
+
+          await new Promise((resolve) => {
+            const timer = setTimeout(resolve, 3000);
+            video.onseeked = () => {
+              clearTimeout(timer);
+              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+              const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+              frames.push({ timestamp, dataUrl });
+              setExtractionProgress(Math.round(((i + 1) / totalFrames) * 100));
+              resolve();
+            };
+          });
+        }
+
         video.removeAttribute('src');
         video.load();
-        const msg = seekTimeouts > 0
-          ? `Could not extract frames — ${seekTimeouts} of ${totalFrames} seeks timed out. The video codec may not be supported by your browser (common with iPhone HEVC/MOV).`
-          : 'Could not extract frames from the video. The video format may not be supported by your browser.';
-        setError(msg);
+        validFrames = frames.filter(f => f.dataUrl.length > 1000);
+        console.log(`VideoBreakdown: client extracted ${validFrames.length} valid frames`);
+      }
+
+      if (validFrames.length === 0) {
+        setError('Could not extract any frames from this video.');
         setStep('error');
-        // In auto mode, skip and advance to next video
         if (autoStart && onComplete) {
           setTimeout(() => onComplete(null), 2000);
         }
@@ -160,10 +132,6 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
       await analyzeFrames(validFrames);
     } catch (videoErr) {
       console.error('Video extraction failed:', videoErr.message);
-      // Stop the video element from retrying (prevents console error flood)
-      video.removeAttribute('src');
-      video.load();
-      if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
       setError(`Video extraction failed: ${videoErr.message}`);
       setStep('error');
       // In auto mode, skip errors and advance to next video
