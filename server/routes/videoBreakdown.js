@@ -3,26 +3,40 @@ import { supabase, isSupabaseConfigured, uploadFile } from '../services/supabase
 import { getValidToken } from '../services/googlePhotos.js';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { readFile, unlink, readdir, mkdir } from 'fs/promises';
-import { createWriteStream } from 'fs';
+import { readFile, unlink, readdir, mkdir, access, chmod } from 'fs/promises';
+import { createWriteStream, existsSync } from 'fs';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { randomUUID } from 'crypto';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 
-// Dynamic import of ffmpeg — these packages are large and may not be available in all environments
-let ffmpeg = null;
+const execFileAsync = promisify(execFile);
+
+// Resolve ffmpeg binary path — use ffmpeg-static if available, fall back to system ffmpeg
+let ffmpegBinPath = null;
 try {
-  const ffmpegModule = await import('fluent-ffmpeg');
-  ffmpeg = ffmpegModule.default;
-  try {
-    const ffmpegStaticModule = await import('ffmpeg-static');
-    const ffmpegPath = ffmpegStaticModule.default;
-    if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
-  } catch {
-    console.warn('ffmpeg-static not available, using system ffmpeg if present');
+  const mod = await import('ffmpeg-static');
+  const candidatePath = mod.default;
+  if (candidatePath && existsSync(candidatePath)) {
+    // Ensure the binary is executable (Vercel sometimes strips permissions)
+    try { await chmod(candidatePath, 0o755); } catch {}
+    ffmpegBinPath = candidatePath;
+    console.log('ffmpeg-static binary found at:', ffmpegBinPath);
   }
 } catch {
-  console.warn('fluent-ffmpeg not available — server-side frame extraction will be disabled');
+  console.warn('ffmpeg-static not available, checking for system ffmpeg...');
+}
+
+// Fallback: check if ffmpeg is on PATH
+if (!ffmpegBinPath) {
+  try {
+    await execFileAsync('ffmpeg', ['-version']);
+    ffmpegBinPath = 'ffmpeg';
+    console.log('Using system ffmpeg from PATH');
+  } catch {
+    console.warn('No ffmpeg available — server-side frame extraction will be disabled');
+  }
 }
 
 const router = Router();
@@ -36,8 +50,8 @@ const FRAME_INTERVAL_SECONDS = 2; // extract a frame every 2 seconds
 // POST /api/video-breakdown/extract-frames-server — extract frames using ffmpeg (handles all codecs)
 // Downloads video from Google Photos, runs ffmpeg to capture frames, returns base64 JPEGs
 router.post('/extract-frames-server', async (req, res) => {
-  if (!ffmpeg) {
-    return res.status(501).json({ error: 'Server-side frame extraction is not available (ffmpeg not installed)' });
+  if (!ffmpegBinPath) {
+    return res.status(501).json({ error: 'Server-side frame extraction is not available (ffmpeg not found)' });
   }
 
   const tmpId = randomUUID();
@@ -68,24 +82,17 @@ router.post('/extract-frames-server', async (req, res) => {
     await pipeline(Readable.fromWeb(videoRes.body), fileStream);
     console.log('extract-frames-server: video saved to temp file');
 
-    // 2. Extract frames with ffmpeg (every 2 seconds)
+    // 2. Extract frames with ffmpeg (every 2 seconds) using execFile
     await mkdir(framesDir, { recursive: true });
 
-    await new Promise((resolve, reject) => {
-      ffmpeg(videoPath)
-        .outputOptions([
-          '-vf', `fps=1/${FRAME_INTERVAL_SECONDS}`, // 1 frame every N seconds
-          '-q:v', '3',                                // JPEG quality (2-5 is good, lower = better)
-          '-vframes', '60',                            // max 60 frames (2min video at 2s intervals)
-        ])
-        .output(join(framesDir, 'frame_%04d.jpg'))
-        .on('end', resolve)
-        .on('error', (err) => {
-          console.error('ffmpeg error:', err.message);
-          reject(new Error(`ffmpeg failed: ${err.message}`));
-        })
-        .run();
-    });
+    const outputPattern = join(framesDir, 'frame_%04d.jpg');
+    await execFileAsync(ffmpegBinPath, [
+      '-i', videoPath,
+      '-vf', `fps=1/${FRAME_INTERVAL_SECONDS}`,
+      '-q:v', '3',
+      '-vframes', '60',
+      outputPattern,
+    ], { timeout: 120000 }); // 2 min timeout for ffmpeg
 
     console.log('extract-frames-server: ffmpeg extraction complete');
 
