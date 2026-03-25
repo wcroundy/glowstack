@@ -139,7 +139,7 @@ export const api = {
   googlePhotosDisconnect: () => request('/google-photos/disconnect', { method: 'POST' }),
 
   // Video Breakdown
-  videoBreakdownExtractFramesServer: (baseUrl) => request('/video-breakdown/extract-frames-server', { method: 'POST', body: JSON.stringify({ baseUrl }) }),
+  videoBreakdownExtractAndProcess: (assetId, baseUrl) => request('/video-breakdown/extract-and-process', { method: 'POST', body: JSON.stringify({ assetId, baseUrl }) }),
   videoBreakdownEstimate: (assetId) => request('/video-breakdown/estimate', { method: 'POST', body: JSON.stringify({ assetId }) }),
   videoBreakdownProcess: (assetId, frames) => request('/video-breakdown/process', { method: 'POST', body: JSON.stringify({ assetId, frames }) }),
   videoBreakdownFrames: (assetId) => request(`/video-breakdown/frames/${assetId}`),

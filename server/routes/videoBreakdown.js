@@ -47,44 +47,70 @@ const COST_PER_FRAME_ANALYSIS_CENTS = 0.2; // ~$0.002 per gpt-4o-mini vision cal
 const COST_PER_SCENE_DETECTION_CENTS = 0.5; // slightly more for the comparison prompt
 const FRAME_INTERVAL_SECONDS = 2; // extract a frame every 2 seconds
 
-// POST /api/video-breakdown/extract-frames-server — extract frames using ffmpeg (handles all codecs)
-// Downloads video from Google Photos, runs ffmpeg to capture frames, returns base64 JPEGs
-router.post('/extract-frames-server', async (req, res) => {
+// Helper: clean up temp files
+async function cleanupTempFiles(videoPath, framesDir) {
+  try { await unlink(videoPath); } catch {}
+  try {
+    const files = await readdir(framesDir).catch(() => []);
+    for (const f of files) await unlink(join(framesDir, f)).catch(() => {});
+    await unlink(framesDir).catch(() => {}); // rmdir
+  } catch {}
+}
+
+// POST /api/video-breakdown/extract-and-process — full server-side pipeline
+// Downloads video from Google Photos, extracts frames with ffmpeg, analyzes with OpenAI, saves results
+// Client only sends { assetId, baseUrl } — no giant base64 payloads cross the wire
+router.post('/extract-and-process', async (req, res) => {
   if (!ffmpegBinPath) {
     return res.status(501).json({ error: 'Server-side frame extraction is not available (ffmpeg not found)' });
   }
+  if (!OPENAI_API_KEY) {
+    return res.status(400).json({ error: 'OpenAI API key required for video breakdown' });
+  }
+  if (!isSupabaseConfigured()) {
+    return res.status(400).json({ error: 'Supabase not configured' });
+  }
+
+  const { assetId, baseUrl } = req.body;
+  if (!assetId) return res.status(400).json({ error: 'assetId is required' });
+  if (!baseUrl) return res.status(400).json({ error: 'baseUrl is required' });
 
   const tmpId = randomUUID();
   const videoPath = join(tmpdir(), `glowstack-video-${tmpId}.mp4`);
   const framesDir = join(tmpdir(), `glowstack-frames-${tmpId}`);
 
   try {
-    const { baseUrl } = req.body;
-    if (!baseUrl) return res.status(400).json({ error: 'baseUrl is required' });
+    // Verify asset exists
+    const { data: asset, error: assetErr } = await supabase
+      .from('media_assets')
+      .select('id, file_type, title, file_name, duration_seconds, source, google_photos_id, captured_at')
+      .eq('id', assetId)
+      .single();
 
+    if (assetErr || !asset) {
+      return res.status(404).json({ error: 'Video asset not found' });
+    }
+
+    // ---- STEP 1: Download video ----
     const accessToken = await getValidToken();
     if (!accessToken) return res.status(401).json({ error: 'Google Photos not connected' });
 
-    // 1. Download video from Google Photos to temp file
-    console.log('extract-frames-server: downloading video...');
-    const videoSrc = `${baseUrl}=dv`;
-    const videoRes = await fetch(videoSrc, {
+    console.log('extract-and-process: downloading video...');
+    const videoRes = await fetch(`${baseUrl}=dv`, {
       headers: { Authorization: `Bearer ${accessToken}` },
-      signal: AbortSignal.timeout(240000), // 4 min
+      signal: AbortSignal.timeout(240000),
     });
 
     if (!videoRes.ok) {
       return res.status(502).json({ error: `Video download failed: HTTP ${videoRes.status}` });
     }
 
-    // Stream to temp file (more memory-efficient than buffering)
     const fileStream = createWriteStream(videoPath);
     await pipeline(Readable.fromWeb(videoRes.body), fileStream);
-    console.log('extract-frames-server: video saved to temp file');
+    console.log('extract-and-process: video downloaded');
 
-    // 2. Extract frames with ffmpeg (every 2 seconds) using execFile
+    // ---- STEP 2: Extract frames with ffmpeg ----
     await mkdir(framesDir, { recursive: true });
-
     const outputPattern = join(framesDir, 'frame_%04d.jpg');
     await execFileAsync(ffmpegBinPath, [
       '-i', videoPath,
@@ -92,34 +118,234 @@ router.post('/extract-frames-server', async (req, res) => {
       '-q:v', '3',
       '-vframes', '60',
       outputPattern,
-    ], { timeout: 120000 }); // 2 min timeout for ffmpeg
+    ], { timeout: 120000 });
 
-    console.log('extract-frames-server: ffmpeg extraction complete');
-
-    // 3. Read frame files and convert to base64 data URLs
-    const files = (await readdir(framesDir)).filter(f => f.endsWith('.jpg')).sort();
+    // Read frame files as base64
+    const frameFiles = (await readdir(framesDir)).filter(f => f.endsWith('.jpg')).sort();
     const frames = [];
-    for (let i = 0; i < files.length; i++) {
-      const buffer = await readFile(join(framesDir, files[i]));
+    for (let i = 0; i < frameFiles.length; i++) {
+      const buffer = await readFile(join(framesDir, frameFiles[i]));
       frames.push({
         timestamp: i * FRAME_INTERVAL_SECONDS,
         dataUrl: `data:image/jpeg;base64,${buffer.toString('base64')}`,
       });
     }
+    console.log(`extract-and-process: extracted ${frames.length} frames`);
 
-    console.log(`extract-frames-server: extracted ${frames.length} frames`);
-    res.json({ frames, frameInterval: FRAME_INTERVAL_SECONDS });
+    if (frames.length === 0) {
+      return res.status(422).json({ error: 'ffmpeg extracted zero frames from video' });
+    }
+
+    // Done with temp files — clean up now to free disk space before AI call
+    await cleanupTempFiles(videoPath, framesDir);
+
+    // ---- STEP 3: Create breakdown run record ----
+    const estimatedCostCents = Math.ceil(
+      frames.length * COST_PER_FRAME_ANALYSIS_CENTS + COST_PER_SCENE_DETECTION_CENTS
+    );
+
+    const { data: run, error: runErr } = await supabase
+      .from('video_breakdown_runs')
+      .insert({
+        video_asset_id: assetId,
+        status: 'processing',
+        total_frames_extracted: frames.length,
+        estimated_cost_cents: estimatedCostCents,
+      })
+      .select()
+      .single();
+
+    if (runErr) console.error('Failed to create breakdown run:', runErr);
+
+    // ---- STEP 4: Send frames to OpenAI for scene detection ----
+    const imageContents = frames.map((frame) => ({
+      type: 'image_url',
+      image_url: { url: frame.dataUrl, detail: 'low' },
+    }));
+
+    const scenePrompt = `You are analyzing frames extracted from a beauty/fashion influencer video at ${FRAME_INTERVAL_SECONDS}-second intervals.
+
+Your goal is to identify EVERY distinct item, outfit, or product showcased in the video. This is for a media asset management system — the influencer needs a thumbnail for each unique thing shown.
+
+For each frame, determine:
+1. What is the PRIMARY FOCUS — what outfit is being worn, OR what product/item is being held up, displayed, or showcased
+2. Whether this represents something NEW that hasn't been captured yet
+
+A frame is UNIQUE if ANY of these are true:
+- A different outfit or clothing item is being WORN vs previous frames
+- A product, garment, or item is being HELD UP or DISPLAYED to camera (even if the person's own outfit hasn't changed)
+- A different beauty product, accessory, or item is the visual focus
+- A clearly different hairstyle or makeup look is shown
+
+IMPORTANT: In fashion/beauty videos, creators often hold up or showcase items while wearing the same outfit. A person holding up a pair of shorts, a bag, a product, etc. IS a unique scene even though their own clothing hasn't changed. The held-up item is the focus.
+
+Return a JSON array where each element corresponds to a frame (in order):
+[
+  {
+    "frameIndex": 0,
+    "timestamp": ${frames[0]?.timestamp || 0},
+    "isUnique": true,
+    "description": "Wearing pink floral dress with gold jewelry, outdoor setting",
+    "outfitOrProduct": "Pink floral dress",
+    "setting": "Outdoor garden"
+  },
+  ...
+]
+
+Mark the FIRST frame as always unique. For duplicate frames showing the same thing, mark isUnique: false. When in doubt about whether something is new, lean toward marking it as unique — it's better to capture an extra scene than miss one.`;
+
+    const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: scenePrompt },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: `Analyze these ${frames.length} frames from a video (timestamps: ${frames.map(f => f.timestamp + 's').join(', ')}). Identify which frames show unique outfits, products, or looks. Return JSON array.`,
+              },
+              ...imageContents,
+            ],
+          },
+        ],
+        max_tokens: 2000,
+        temperature: 0.3,
+      }),
+    });
+
+    if (!aiResponse.ok) {
+      const errBody = await aiResponse.text();
+      console.error('OpenAI scene detection error:', aiResponse.status, errBody);
+
+      if (aiResponse.status === 429 || errBody.includes('insufficient_quota')) {
+        let detail = 'OpenAI quota exceeded';
+        try { detail = JSON.parse(errBody).error?.message || detail; } catch (_) {}
+        if (run) {
+          await supabase.from('video_breakdown_runs')
+            .update({ status: 'failed', error_message: detail, completed_at: new Date().toISOString() })
+            .eq('id', run.id);
+        }
+        return res.status(402).json({ error: 'openai_insufficient_quota', message: detail });
+      }
+
+      throw new Error(`OpenAI API error: ${aiResponse.status}`);
+    }
+
+    const aiResult = await aiResponse.json();
+    const content = aiResult.choices?.[0]?.message?.content || '[]';
+
+    // Parse scene analysis
+    const jsonMatch = content.match(/\[[\s\S]*\]/);
+    let scenes = [];
+    if (jsonMatch) {
+      try {
+        scenes = JSON.parse(jsonMatch[0]);
+      } catch (parseErr) {
+        console.error('Failed to parse scene detection:', parseErr);
+        scenes = frames.map((f, i) => ({
+          frameIndex: i, timestamp: f.timestamp, isUnique: true,
+          description: 'Scene ' + (i + 1), outfitOrProduct: 'Unknown',
+        }));
+      }
+    }
+
+    // ---- STEP 5: Save unique frames as child assets ----
+    const uniqueScenes = scenes.filter(s => s.isUnique);
+    const savedAssets = [];
+
+    for (const scene of uniqueScenes) {
+      const frameData = frames[scene.frameIndex];
+      if (!frameData) continue;
+
+      const base64Data = frameData.dataUrl.replace(/^data:image\/\w+;base64,/, '');
+      const buffer = Buffer.from(base64Data, 'base64');
+
+      const framePath = `video-frames/${assetId}/${scene.frameIndex}_${Math.round(scene.timestamp)}s.jpg`;
+      try {
+        const uploaded = await uploadFile('thumbnails', framePath, buffer, 'image/jpeg');
+
+        const { data: childAsset, error: insertErr } = await supabase
+          .from('media_assets')
+          .insert({
+            file_name: `${asset.file_name || 'video'}_frame_${Math.round(scene.timestamp)}s.jpg`,
+            file_url: uploaded.publicUrl,
+            thumbnail_url: uploaded.publicUrl,
+            file_type: 'image',
+            mime_type: 'image/jpeg',
+            source: asset.source || 'video_breakdown',
+            parent_asset_id: assetId,
+            frame_timestamp: scene.timestamp,
+            scene_description: scene.description,
+            title: scene.outfitOrProduct || scene.description || `Scene at ${Math.round(scene.timestamp)}s`,
+            ai_description: scene.description,
+            ai_detected_products: scene.outfitOrProduct ? [scene.outfitOrProduct] : [],
+            captured_at: asset.captured_at,
+          })
+          .select()
+          .single();
+
+        if (!insertErr && childAsset) {
+          savedAssets.push(childAsset);
+        } else if (insertErr) {
+          console.error('Failed to save child asset:', insertErr);
+        }
+      } catch (uploadErr) {
+        console.error('Failed to upload frame:', uploadErr.message);
+      }
+    }
+
+    // ---- STEP 6: Update run record and respond ----
+    const actualCostCents = Math.ceil(
+      aiResult.usage?.total_tokens
+        ? (aiResult.usage.total_tokens / 1000) * 0.015 * 100
+        : estimatedCostCents
+    );
+
+    if (run) {
+      await supabase.from('video_breakdown_runs')
+        .update({
+          status: 'completed',
+          unique_scenes_found: uniqueScenes.length,
+          frames_stored: savedAssets.length,
+          actual_cost_cents: actualCostCents,
+          completed_at: new Date().toISOString(),
+        })
+        .eq('id', run.id);
+    }
+
+    console.log(`extract-and-process: done — ${uniqueScenes.length} scenes, ${savedAssets.length} saved`);
+
+    res.json({
+      success: true,
+      totalFramesAnalyzed: frames.length,
+      uniqueScenesFound: uniqueScenes.length,
+      framesStored: savedAssets.length,
+      scenes: uniqueScenes.map(s => ({
+        timestamp: s.timestamp,
+        description: s.description,
+        outfitOrProduct: s.outfitOrProduct,
+      })),
+      savedAssets: savedAssets.map(a => ({
+        id: a.id,
+        title: a.title,
+        thumbnailUrl: a.thumbnail_url,
+        frameTimestamp: a.frame_timestamp,
+      })),
+      estimatedCostDisplay: `$${(actualCostCents / 100).toFixed(2)}`,
+    });
+
   } catch (err) {
-    console.error('extract-frames-server error:', err.message);
+    console.error('extract-and-process error:', err.message);
     res.status(500).json({ error: err.message });
   } finally {
-    // Cleanup temp files
-    try { await unlink(videoPath); } catch {}
-    try {
-      const files = await readdir(framesDir).catch(() => []);
-      for (const f of files) await unlink(join(framesDir, f)).catch(() => {});
-      await unlink(framesDir).catch(() => {}); // rmdir
-    } catch {}
+    await cleanupTempFiles(videoPath, framesDir);
   }
 });
 
