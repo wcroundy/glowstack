@@ -40,6 +40,9 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
         'Re-import this video from Google Photos to download the full file, then try again.'
       );
       setStep('error');
+      if (autoStart && onComplete) {
+        setTimeout(() => onComplete(null), 2000);
+      }
       return;
     }
 
@@ -52,6 +55,9 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
     if (!video || !canvas) {
       setError('Browser does not support video frame extraction.');
       setStep('error');
+      if (autoStart && onComplete) {
+        setTimeout(() => onComplete(null), 2000);
+      }
       return;
     }
 
@@ -106,6 +112,10 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
       console.error('Video extraction failed:', videoErr.message);
       setError(`Video extraction failed: ${videoErr.message}`);
       setStep('error');
+      // In auto mode, skip errors and advance to next video
+      if (autoStart && onComplete) {
+        setTimeout(() => onComplete(null), 2000);
+      }
     }
   }, [asset, hasVideoFile]);
 
