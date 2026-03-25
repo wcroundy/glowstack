@@ -4,8 +4,8 @@ import { api } from '../services/api';
 
 const FRAME_INTERVAL = 3; // seconds between frame captures
 
-export default function VideoBreakdown({ asset, onComplete, onClose }) {
-  const [step, setStep] = useState('estimate'); // estimate, extracting, analyzing, complete, error
+export default function VideoBreakdown({ asset, onComplete, onClose, autoStart = false }) {
+  const [step, setStep] = useState(autoStart ? 'waiting' : 'estimate'); // estimate, waiting, extracting, analyzing, complete, error
   const [estimate, setEstimate] = useState(null);
   const [extractionProgress, setExtractionProgress] = useState(0);
   const [extractedFrames, setExtractedFrames] = useState([]);
@@ -29,10 +29,20 @@ export default function VideoBreakdown({ asset, onComplete, onClose }) {
     }
   }, [asset.id]);
 
-  // Auto-fetch estimate on mount
+  // Auto-fetch estimate on mount (only if not auto-starting)
   React.useEffect(() => {
-    fetchEstimate();
-  }, [fetchEstimate]);
+    if (!autoStart) fetchEstimate();
+  }, [fetchEstimate, autoStart]);
+
+  // Auto-start extraction after mount (needs a tick for refs to be ready)
+  const autoStarted = useRef(false);
+  React.useEffect(() => {
+    if (autoStart && !autoStarted.current && step === 'waiting') {
+      autoStarted.current = true;
+      // Small delay to ensure video/canvas refs are ready
+      setTimeout(() => extractFrames(), 100);
+    }
+  }, [autoStart, step, extractFrames]);
 
   // Check if asset has a real video file (not just a thumbnail)
   const hasVideoFile = asset.file_url && asset.thumbnail_url && asset.file_url !== asset.thumbnail_url;
@@ -124,6 +134,10 @@ export default function VideoBreakdown({ asset, onComplete, onClose }) {
     } catch (err) {
       setError(err.message);
       setStep('error');
+      // In auto mode, skip errors and advance to next video
+      if (autoStart && onComplete) {
+        setTimeout(() => onComplete(null), 2000);
+      }
     }
   };
 

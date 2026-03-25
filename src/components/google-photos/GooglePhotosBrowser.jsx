@@ -1,9 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Image, Download, Loader2, AlertCircle, ExternalLink, Unplug,
-  Check, CheckSquare, Square, RefreshCw, CheckCircle2,
+  Check, CheckSquare, Square, RefreshCw, CheckCircle2, Scissors,
+  DollarSign, X, Film,
 } from 'lucide-react';
 import { api } from '../../services/api';
+
+// Cost constants (must match server/routes/videoBreakdown.js)
+const COST_PER_FRAME_CENTS = 0.2;
+const COST_PER_SCENE_DETECTION_CENTS = 0.5;
+const FRAME_INTERVAL_SECONDS = 3;
+const DEFAULT_VIDEO_DURATION = 30;
 
 export default function GooglePhotosBrowser({ onImportComplete }) {
   const [status, setStatus] = useState(null);
@@ -18,6 +25,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
   const [error, setError] = useState('');
   const [importResult, setImportResult] = useState(null);
   const [polling, setPolling] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
   const pollRef = useRef(null);
 
   // Check connection status
@@ -155,7 +163,38 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
     }
   };
 
-  const handleImport = async () => {
+  // Calculate video count and estimated scene extraction cost from selected items
+  const getVideoStats = () => {
+    const selectedItems = mediaItems.filter(i => selected.has(i.id));
+    const videos = selectedItems.filter(i => i.type === 'VIDEO');
+    const totalFrames = videos.reduce((sum, v) => {
+      const duration = DEFAULT_VIDEO_DURATION; // we don't have duration from picker, use default
+      return sum + Math.max(1, Math.floor(duration / FRAME_INTERVAL_SECONDS));
+    }, 0);
+    const costCents = Math.ceil(
+      totalFrames * COST_PER_FRAME_CENTS + videos.length * COST_PER_SCENE_DETECTION_CENTS
+    );
+    return {
+      videoCount: videos.length,
+      totalItems: selectedItems.length,
+      imageCount: selectedItems.length - videos.length,
+      estimatedCostCents: costCents,
+      estimatedCostDisplay: `$${(costCents / 100).toFixed(2)}`,
+    };
+  };
+
+  const handleImportClick = () => {
+    if (selected.size === 0) return;
+    const stats = getVideoStats();
+    if (stats.videoCount > 0) {
+      setShowConfirmModal(true);
+    } else {
+      runImport(false);
+    }
+  };
+
+  const runImport = async (extractScenes) => {
+    setShowConfirmModal(false);
     if (selected.size === 0) return;
     setImporting(true);
     setError('');
@@ -183,7 +222,11 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
         setImportProgress({ done: Math.min(i + CHUNK_SIZE, itemsToImport.length), total: itemsToImport.length });
       }
 
-      const finalResult = { imported: totalImported, alreadyExisted: totalAlreadyExisted };
+      const finalResult = {
+        imported: totalImported,
+        alreadyExisted: totalAlreadyExisted,
+        extractScenes,
+      };
       setImportResult(finalResult);
       setSelected(new Set());
 
@@ -346,7 +389,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
                 </button>
                 {selected.size > 0 && (
                   <button
-                    onClick={handleImport}
+                    onClick={handleImportClick}
                     disabled={importing}
                     className="btn-primary text-xs"
                   >
@@ -427,7 +470,6 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
                 setMediaItems([]);
                 setSelected(new Set());
                 setDuplicateIds(new Set());
-                setUpgradeableIds(new Set());
                 setImportResult(null);
               }}
               className="btn-secondary text-xs"
@@ -460,6 +502,79 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
           <span className="ml-2 text-sm text-surface-500">Loading selected photos...</span>
         </div>
       )}
+
+      {/* Confirmation Modal — shown when importing videos */}
+      {showConfirmModal && (() => {
+        const stats = getVideoStats();
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="bg-white rounded-2xl shadow-xl max-w-md w-full">
+              <div className="flex items-center justify-between p-4 border-b border-surface-200">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-brand-100 flex items-center justify-center">
+                    <Scissors className="w-5 h-5 text-brand-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-surface-900">Import & Scene Extraction</h3>
+                    <p className="text-xs text-surface-500">{stats.totalItems} item{stats.totalItems !== 1 ? 's' : ''} selected</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowConfirmModal(false)} className="p-1.5 rounded-lg hover:bg-surface-100">
+                  <X className="w-5 h-5 text-surface-400" />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-4">
+                <p className="text-sm text-surface-600">
+                  Your selection includes <strong>{stats.videoCount} video{stats.videoCount !== 1 ? 's' : ''}</strong>
+                  {stats.imageCount > 0 && ` and ${stats.imageCount} image${stats.imageCount !== 1 ? 's' : ''}`}.
+                  Would you like to automatically extract scene thumbnails from the videos after import?
+                </p>
+
+                <div className="bg-surface-50 rounded-xl p-4 space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-surface-500">Videos to analyze</span>
+                    <span className="font-medium text-surface-800">{stats.videoCount}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-surface-500">Frame interval</span>
+                    <span className="font-medium text-surface-800">Every {FRAME_INTERVAL_SECONDS}s</span>
+                  </div>
+                  <div className="border-t border-surface-200 pt-2 mt-2">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-surface-600 font-medium flex items-center gap-1">
+                        <DollarSign className="w-3.5 h-3.5" /> Estimated cost
+                      </span>
+                      <span className="font-semibold text-brand-600">{stats.estimatedCostDisplay}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <p className="text-xs text-surface-400">
+                  Scene extraction identifies unique outfits, products, and looks in each video. Each scene becomes a taggable thumbnail on the video tile.
+                </p>
+
+                <div className="space-y-2">
+                  <button
+                    onClick={() => runImport(true)}
+                    className="btn-primary w-full flex items-center justify-center gap-2"
+                  >
+                    <Film className="w-4 h-4" />
+                    Import & Extract Scenes ({stats.estimatedCostDisplay})
+                  </button>
+                  <button
+                    onClick={() => runImport(false)}
+                    className="btn-secondary w-full flex items-center justify-center gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    Import Only — Extract Later
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -314,6 +314,8 @@ export default function MediaLibrary() {
   const [showGooglePhotos, setShowGooglePhotos] = useState(false);
   const [page, setPage] = useState(1);
   const [totalAssets, setTotalAssets] = useState(0);
+  const [sceneExtractionQueue, setSceneExtractionQueue] = useState([]); // asset ids to extract
+  const [extractionStatus, setExtractionStatus] = useState(null); // { current, total, currentAsset }
 
   const totalPages = Math.max(1, Math.ceil(totalAssets / PAGE_SIZE));
 
@@ -380,8 +382,56 @@ export default function MediaLibrary() {
       {/* Google Photos Browser */}
       {showGooglePhotos && (
         <div className="card p-4 mb-4">
-          <GooglePhotosBrowser onImportComplete={() => refreshMedia()} />
+          <GooglePhotosBrowser onImportComplete={async (result) => {
+            refreshMedia();
+            if (result?.extractScenes && result.imported > 0) {
+              // Fetch newly imported videos to queue for scene extraction
+              try {
+                const mediaData = await api.getMedia({ type: 'video', sort: 'created_at', limit: result.imported });
+                const videos = (mediaData.data || []).filter(a =>
+                  a.file_type === 'video' &&
+                  a.file_url && a.thumbnail_url &&
+                  a.file_url !== a.thumbnail_url &&
+                  !a.scene_count
+                );
+                if (videos.length > 0) {
+                  setSceneExtractionQueue(videos);
+                  setExtractionStatus({ current: 0, total: videos.length, currentAsset: videos[0] });
+                }
+              } catch (err) {
+                console.error('Failed to queue scene extraction:', err);
+              }
+            }
+          }} />
         </div>
+      )}
+
+      {/* Scene Extraction Queue — auto-processing videos */}
+      {extractionStatus && extractionStatus.currentAsset && (
+        <VideoBreakdown
+          key={extractionStatus.currentAsset.id}
+          asset={extractionStatus.currentAsset}
+          autoStart
+          onComplete={() => {
+            const nextIndex = extractionStatus.current + 1;
+            if (nextIndex < sceneExtractionQueue.length) {
+              setExtractionStatus({
+                current: nextIndex,
+                total: sceneExtractionQueue.length,
+                currentAsset: sceneExtractionQueue[nextIndex],
+              });
+            } else {
+              setSceneExtractionQueue([]);
+              setExtractionStatus(null);
+              refreshMedia();
+            }
+          }}
+          onClose={() => {
+            setSceneExtractionQueue([]);
+            setExtractionStatus(null);
+            refreshMedia();
+          }}
+        />
       )}
 
       {/* Search & Filters */}
