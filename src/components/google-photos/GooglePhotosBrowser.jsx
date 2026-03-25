@@ -318,14 +318,33 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
         <div className="text-sm text-red-500 bg-red-50 rounded-xl px-3 py-2">{error}</div>
       )}
 
+      {/* Import complete — show success with OK button to reset */}
       {importResult && (
-        <div className="text-sm text-green-700 bg-green-50 rounded-xl px-3 py-2">
-          Successfully imported {importResult.imported} item{importResult.imported !== 1 ? 's' : ''} into your media library.
+        <div className="text-center py-8">
+          <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto mb-3" />
+          <h4 className="font-medium text-surface-800 mb-1">Import Complete</h4>
+          <p className="text-sm text-surface-500 mb-4">
+            Successfully imported {importResult.imported} item{importResult.imported !== 1 ? 's' : ''} into your media library.
+            {importResult.alreadyExisted > 0 && ` (${importResult.alreadyExisted} already existed)`}
+          </p>
+          <button
+            onClick={() => {
+              setImportResult(null);
+              setPickerDone(false);
+              setMediaItems([]);
+              setSelected(new Set());
+              setDuplicateIds(new Set());
+              setSession(null);
+            }}
+            className="btn-primary"
+          >
+            OK
+          </button>
         </div>
       )}
 
       {/* No active session — show button to start picker */}
-      {!polling && !pickerDone && (
+      {!polling && !pickerDone && !importResult && (
         <div className="text-center py-6">
           <button
             onClick={startPicker}
@@ -366,7 +385,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
       )}
 
       {/* Picker done — show selected items for import */}
-      {pickerDone && mediaItems.length > 0 && (
+      {pickerDone && mediaItems.length > 0 && !importResult && (
         <>
           {/* Summary bar */}
           <div className="bg-surface-50 rounded-xl px-4 py-3">
@@ -481,7 +500,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
         </>
       )}
 
-      {pickerDone && mediaItems.length === 0 && !loading && (
+      {pickerDone && mediaItems.length === 0 && !loading && !importResult && (
         <div className="text-center py-8">
           <p className="text-sm text-surface-400 mb-3">No photos were selected.</p>
           <button
