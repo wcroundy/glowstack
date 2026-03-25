@@ -453,18 +453,21 @@ export default function MediaLibrary() {
             console.log('[SceneQueue] Import complete result:', JSON.stringify(result));
             refreshMedia();
             if (result?.extractScenes && result.imported > 0 && result.importedItemIds?.length > 0) {
-              // Fetch each imported asset by ID, filter for videos with full files
+              // Fetch each imported asset by ID, filter for videos that have a baseUrl for proxy
               try {
                 const fetched = await Promise.all(
                   result.importedItemIds.map(id => api.getMediaById(id).catch(() => null))
                 );
-                console.log('[SceneQueue] Fetched assets:', fetched.map(a => a && { id: a.id, type: a.file_type, file_url: a.file_url?.slice(-30), thumb: a.thumbnail_url?.slice(-30) }));
+                console.log('[SceneQueue] Fetched assets:', fetched.map(a => a && { id: a.id, type: a.file_type }));
+                // Filter for videos that have a Google Photos baseUrl (for proxy download)
                 const videos = fetched.filter(a =>
                   a &&
                   a.file_type === 'video' &&
-                  a.file_url && a.thumbnail_url &&
-                  a.file_url !== a.thumbnail_url
-                );
+                  result.assetBaseUrls?.[a.id]
+                ).map(a => ({
+                  ...a,
+                  googlePhotosBaseUrl: result.assetBaseUrls[a.id],
+                }));
                 console.log('[SceneQueue] Videos to extract:', videos.length);
                 if (videos.length > 0) {
                   setSceneExtractionQueue(videos);
@@ -485,6 +488,7 @@ export default function MediaLibrary() {
         <VideoBreakdown
           key={extractionStatus.currentAsset.id}
           asset={extractionStatus.currentAsset}
+          googlePhotosBaseUrl={extractionStatus.currentAsset.googlePhotosBaseUrl}
           autoStart
           onComplete={() => {
             const nextIndex = extractionStatus.current + 1;

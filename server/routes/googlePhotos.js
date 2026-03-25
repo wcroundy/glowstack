@@ -240,9 +240,8 @@ router.post('/import', async (req, res) => {
       return res.status(401).json({ error: 'Google Photos not connected — cannot download images' });
     }
 
-    // 4. Download media to Supabase Storage (with auth headers)
-    // Process items ONE AT A TIME to avoid overwhelming the serverless function
-    // with parallel video downloads that can timeout
+    // 4. Download thumbnails to Supabase Storage (with auth headers)
+    // Videos are imported as thumbnail-only; full video is streamed via proxy during scene extraction
     const processedItems = [];
 
     for (const item of newItems) {
@@ -252,7 +251,6 @@ router.post('/import', async (req, res) => {
         const thumbPath = `google-photos/${item.id}/thumb.jpg`;
 
         let thumbnailUrl = '';
-        let videoUrl = '';
         const baseUrl = item.baseUrl || '';
 
         if (baseUrl) {
@@ -274,78 +272,38 @@ router.post('/import', async (req, res) => {
             console.error(`Thumb error for ${item.id}:`, err.message);
           }
 
-          // For videos, download the full video file SEQUENTIALLY (not in parallel)
+          // Videos: skip full file download — scene extraction uses video-proxy endpoint instead
+          // This eliminates Vercel timeout issues that plagued server-side video downloads
           if (isVideo) {
-            try {
-              const videoSrc = `${baseUrl}=dv`;
-              console.log(`Downloading video for ${item.id}...`);
-              const videoRes = await fetch(videoSrc, {
-                headers: { Authorization: `Bearer ${accessToken}` },
-                signal: AbortSignal.timeout(240000), // 4 min — leaves time for upload + DB within 5 min function limit
-              });
-              if (videoRes.ok) {
-                const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
-                const sizeMB = (videoBuffer.length / (1024 * 1024)).toFixed(1);
-                console.log(`Video ${item.id}: ${sizeMB}MB — download OK`);
-                // Only store if under 50MB (Supabase media bucket limit)
-                if (videoBuffer.length <= 50 * 1024 * 1024) {
-                  const ext = (item.mimeType || 'video/mp4').includes('quicktime') ? 'mov' : 'mp4';
-                  const videoPath = `google-photos/${item.id}/video.${ext}`;
-                  const uploadedVideo = await uploadFile('media', videoPath, videoBuffer, item.mimeType || 'video/mp4');
-                  videoUrl = uploadedVideo.publicUrl;
-                  console.log(`Video ${item.id}: uploaded to storage OK`);
-                } else {
-                  console.warn(`Video ${item.id} too large (${sizeMB}MB), skipping full download`);
-                }
-              } else {
-                console.error(`Video download FAILED for ${item.id}: HTTP ${videoRes.status}`);
-              }
-            } catch (videoErr) {
-              console.error(`Video download ERROR for ${item.id}:`, videoErr.message);
-            }
+            console.log(`Video ${item.id}: importing thumbnail only (scene extraction uses client-side proxy)`);
           }
         }
 
-        // If video download failed, DON'T insert — report separately
-        if (isVideo && !videoUrl) {
-          console.warn(`Video ${item.id}: skipping DB insert — full video file not downloaded`);
-          processedItems.push({
-            _skipped: true,
-            _googleId: item.id,
-            _filename: filename,
-            _thumbnailUrl: thumbnailUrl,
-          });
-        } else {
-          processedItems.push({
-            _skipped: false,
-            _googleId: item.id,
-            file_name: filename,
-            file_url: videoUrl || thumbnailUrl,
-            thumbnail_url: thumbnailUrl,
-            file_type: isVideo ? 'video' : 'image',
-            mime_type: item.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
-            source: 'google_photos',
-            source_url: item.productUrl || null,
-            google_photos_id: item.id,
-            title: filename.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '),
-            width: item.width || null,
-            height: item.height || null,
-            captured_at: item.createTime || null,
-          });
-        }
+        processedItems.push({
+          _skipped: false,
+          _googleId: item.id,
+          file_name: filename,
+          file_url: thumbnailUrl, // videos get thumbnail only; full video streamed via proxy for scene extraction
+          thumbnail_url: thumbnailUrl,
+          file_type: isVideo ? 'video' : 'image',
+          mime_type: item.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
+          source: 'google_photos',
+          source_url: item.productUrl || null,
+          google_photos_id: item.id,
+          title: filename.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '),
+          width: item.width || null,
+          height: item.height || null,
+          captured_at: item.createTime || null,
+        });
       } catch (itemErr) {
         console.error(`Failed to process item ${item.id}:`, itemErr.message);
       }
     }
 
-    // Separate successful items from failed video downloads
-    const successItems = processedItems.filter(p => !p._skipped);
-    const failedVideoItems = processedItems.filter(p => p._skipped);
-
-    // 5. Insert only successful items
+    // 5. Insert all items (videos are thumbnail-only, no more failures)
     let inserted = [];
-    if (successItems.length > 0) {
-      const insertItems = successItems.map(({ _skipped, _googleId, ...rest }) => rest);
+    if (processedItems.length > 0) {
+      const insertItems = processedItems.map(({ _skipped, _googleId, ...rest }) => rest);
       const { data, error } = await supabase
         .from('media_assets')
         .insert(insertItems)
@@ -363,12 +321,9 @@ router.post('/import', async (req, res) => {
         status: 'imported',
         filename: a.file_name,
         googlePhotosId: a.google_photos_id,
+        fileType: a.file_type,
       })),
-      failedVideos: failedVideoItems.map(f => ({
-        googlePhotosId: f._googleId,
-        filename: f._filename,
-        thumbnailUrl: f._thumbnailUrl,
-      })),
+      failedVideos: [], // kept for client compatibility
     });
   } catch (err) {
     console.error('Google Photos import error:', err.message);
@@ -550,6 +505,59 @@ router.post('/refresh-urls', async (req, res) => {
   } catch (err) {
     console.error('Refresh URLs error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/google-photos/video-proxy — stream video from Google Photos to browser
+// This avoids Vercel timeout issues by streaming instead of buffering the whole file
+router.post('/video-proxy', async (req, res) => {
+  try {
+    const { baseUrl } = req.body;
+    if (!baseUrl) return res.status(400).json({ error: 'baseUrl is required' });
+
+    const accessToken = await getValidToken();
+    if (!accessToken) return res.status(401).json({ error: 'Google Photos not connected' });
+
+    const videoSrc = `${baseUrl}=dv`;
+    console.log('Video proxy: starting stream from Google Photos...');
+    const videoRes = await fetch(videoSrc, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(240000),
+    });
+
+    if (!videoRes.ok) {
+      console.error(`Video proxy: Google returned HTTP ${videoRes.status}`);
+      return res.status(502).json({ error: `Video fetch failed: HTTP ${videoRes.status}` });
+    }
+
+    // Set response headers for streaming
+    const contentType = videoRes.headers.get('content-type') || 'video/mp4';
+    const contentLength = videoRes.headers.get('content-length');
+    res.setHeader('Content-Type', contentType);
+    if (contentLength) res.setHeader('Content-Length', contentLength);
+
+    // Stream the video to the client
+    const reader = videoRes.body.getReader();
+    let totalBytes = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        totalBytes += value.length;
+        res.write(Buffer.from(value));
+      }
+    } catch (streamErr) {
+      console.error('Video proxy stream error:', streamErr.message);
+    }
+    console.log(`Video proxy: streamed ${(totalBytes / (1024 * 1024)).toFixed(1)}MB`);
+    res.end();
+  } catch (err) {
+    console.error('Video proxy error:', err.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    } else {
+      res.end();
+    }
   }
 });
 

@@ -206,11 +206,12 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
     try {
       const itemsToImport = mediaItems.filter(i => selected.has(i.id));
 
-      // Send ONE item at a time — video downloads need most of the 60s serverless limit
-      const CHUNK_SIZE = 1;
+      // Videos now import as thumbnail-only (fast), so we can batch more items
+      const CHUNK_SIZE = 5;
       let totalImported = 0;
       let totalAlreadyExisted = 0;
       let importedItemIds = [];
+      let allImportResults = []; // {id, googlePhotosId, fileType} for baseUrl mapping
       let videoFailures = [];
 
       // Build a lookup from google ID to picker item (for baseUrl on retry)
@@ -222,9 +223,10 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
           const result = await api.googlePhotosImport(chunk);
           totalImported += result.imported || 0;
           totalAlreadyExisted += result.alreadyExisted || 0;
-          // Collect the actual imported asset IDs
+          // Collect the actual imported asset IDs and metadata for baseUrl mapping
           if (result.items) {
             importedItemIds = [...importedItemIds, ...result.items.map(it => it.id)];
+            allImportResults = [...allImportResults, ...result.items];
           }
           // Collect failed video downloads (NOT inserted into DB)
           if (result.failedVideos) {
@@ -257,6 +259,16 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
         extractScenes,
         importedItemIds,
         failedVideoCount: videoFailures.length,
+        // Map asset IDs to Google Photos baseUrls for video proxy during scene extraction
+        assetBaseUrls: Object.fromEntries(
+          allImportResults
+            .filter(item => item.fileType === 'video' && item.googlePhotosId)
+            .map(item => {
+              const pickerItem = googleIdToItem.get(item.googlePhotosId);
+              return [item.id, pickerItem?.baseUrl || ''];
+            })
+            .filter(([, url]) => url)
+        ),
       };
       setImportResult(finalResult);
       setSelected(new Set());

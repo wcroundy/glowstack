@@ -4,7 +4,7 @@ import { api } from '../services/api';
 
 const FRAME_INTERVAL = 2; // seconds between frame captures
 
-export default function VideoBreakdown({ asset, onComplete, onClose, autoStart = false }) {
+export default function VideoBreakdown({ asset, onComplete, onClose, autoStart = false, googlePhotosBaseUrl = null }) {
   const [step, setStep] = useState(autoStart ? 'waiting' : 'estimate'); // estimate, waiting, extracting, analyzing, complete, error
   const [estimate, setEstimate] = useState(null);
   const [extractionProgress, setExtractionProgress] = useState(0);
@@ -29,8 +29,8 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
     }
   }, [asset.id]);
 
-  // Check if asset has a real video file (not just a thumbnail)
-  const hasVideoFile = asset.file_url && asset.thumbnail_url && asset.file_url !== asset.thumbnail_url;
+  // Check if we can extract frames: either has a real video file OR has a Google Photos baseUrl for proxy
+  const hasVideoFile = (asset.file_url && asset.thumbnail_url && asset.file_url !== asset.thumbnail_url) || !!googlePhotosBaseUrl;
 
   // Step 2: Extract frames from video using canvas
   const extractFrames = useCallback(async () => {
@@ -62,9 +62,33 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
     }
 
     try {
-      // Load the actual video file from Supabase storage
-      video.crossOrigin = 'anonymous';
-      video.src = asset.file_url;
+      // Load the video — either via Google Photos proxy or from Supabase storage
+      let blobUrl = null;
+      if (googlePhotosBaseUrl) {
+        // Download video through server proxy (streams from Google Photos, avoids CORS)
+        setStep('extracting');
+        setExtractionProgress(0);
+        console.log('VideoBreakdown: downloading video via proxy...');
+        const token = localStorage.getItem('glowstack_token');
+        const proxyRes = await fetch('/api/google-photos/video-proxy', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ baseUrl: googlePhotosBaseUrl }),
+        });
+        if (!proxyRes.ok) {
+          throw new Error(`Video proxy failed: HTTP ${proxyRes.status}`);
+        }
+        const blob = await proxyRes.blob();
+        console.log(`VideoBreakdown: proxy delivered ${(blob.size / (1024 * 1024)).toFixed(1)}MB`);
+        blobUrl = URL.createObjectURL(blob);
+        video.src = blobUrl;
+      } else {
+        video.crossOrigin = 'anonymous';
+        video.src = asset.file_url;
+      }
 
       await new Promise((resolve, reject) => {
         video.onloadedmetadata = resolve;
@@ -96,6 +120,9 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
         });
       }
 
+      // Clean up blob URL if we created one
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+
       // Filter out any frames that failed (empty canvas produces tiny data URLs)
       const validFrames = frames.filter(f => f.dataUrl.length > 1000);
 
@@ -117,7 +144,7 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
         setTimeout(() => onComplete(null), 2000);
       }
     }
-  }, [asset, hasVideoFile]);
+  }, [asset, hasVideoFile, googlePhotosBaseUrl]);
 
   // Step 3: Send frames to backend for AI analysis
   const analyzeFrames = async (frames) => {
