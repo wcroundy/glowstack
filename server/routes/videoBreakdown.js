@@ -1,17 +1,29 @@
 import { Router } from 'express';
 import { supabase, isSupabaseConfigured, uploadFile } from '../services/supabase.js';
 import { getValidToken } from '../services/googlePhotos.js';
-import ffmpeg from 'fluent-ffmpeg';
-import ffmpegPath from 'ffmpeg-static';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { writeFile, readFile, unlink, readdir, mkdir } from 'fs/promises';
+import { readFile, unlink, readdir, mkdir } from 'fs/promises';
 import { createWriteStream } from 'fs';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { randomUUID } from 'crypto';
 
-if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
+// Dynamic import of ffmpeg — these packages are large and may not be available in all environments
+let ffmpeg = null;
+try {
+  const ffmpegModule = await import('fluent-ffmpeg');
+  ffmpeg = ffmpegModule.default;
+  try {
+    const ffmpegStaticModule = await import('ffmpeg-static');
+    const ffmpegPath = ffmpegStaticModule.default;
+    if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
+  } catch {
+    console.warn('ffmpeg-static not available, using system ffmpeg if present');
+  }
+} catch {
+  console.warn('fluent-ffmpeg not available — server-side frame extraction will be disabled');
+}
 
 const router = Router();
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -24,6 +36,10 @@ const FRAME_INTERVAL_SECONDS = 2; // extract a frame every 2 seconds
 // POST /api/video-breakdown/extract-frames-server — extract frames using ffmpeg (handles all codecs)
 // Downloads video from Google Photos, runs ffmpeg to capture frames, returns base64 JPEGs
 router.post('/extract-frames-server', async (req, res) => {
+  if (!ffmpeg) {
+    return res.status(501).json({ error: 'Server-side frame extraction is not available (ffmpeg not installed)' });
+  }
+
   const tmpId = randomUUID();
   const videoPath = join(tmpdir(), `glowstack-video-${tmpId}.mp4`);
   const framesDir = join(tmpdir(), `glowstack-frames-${tmpId}`);
