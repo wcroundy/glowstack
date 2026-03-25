@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback } from 'react';
 import { Film, Scissors, Loader2, CheckCircle, AlertCircle, X, DollarSign, Image } from 'lucide-react';
 import { api } from '../services/api';
 
-const FRAME_INTERVAL = 3; // seconds between frame captures
+const FRAME_INTERVAL = 2; // seconds between frame captures
 
 export default function VideoBreakdown({ asset, onComplete, onClose, autoStart = false }) {
   const [step, setStep] = useState(autoStart ? 'waiting' : 'estimate'); // estimate, waiting, extracting, analyzing, complete, error

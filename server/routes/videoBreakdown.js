@@ -7,7 +7,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 // Cost constants
 const COST_PER_FRAME_ANALYSIS_CENTS = 0.2; // ~$0.002 per gpt-4o-mini vision call (low detail)
 const COST_PER_SCENE_DETECTION_CENTS = 0.5; // slightly more for the comparison prompt
-const FRAME_INTERVAL_SECONDS = 3; // extract a frame every 3 seconds
+const FRAME_INTERVAL_SECONDS = 2; // extract a frame every 2 seconds
 
 // POST /api/video-breakdown/estimate — calculate cost before running
 router.post('/estimate', async (req, res) => {
@@ -112,11 +112,21 @@ router.post('/process', async (req, res) => {
     }));
 
     // Build a single prompt with all frames for scene detection
-    const scenePrompt = `You are analyzing frames extracted from a beauty/fashion video at ${FRAME_INTERVAL_SECONDS}-second intervals.
+    const scenePrompt = `You are analyzing frames extracted from a beauty/fashion influencer video at ${FRAME_INTERVAL_SECONDS}-second intervals.
+
+Your goal is to identify EVERY distinct item, outfit, or product showcased in the video. This is for a media asset management system — the influencer needs a thumbnail for each unique thing shown.
 
 For each frame, determine:
-1. What outfit, product, or look is shown
-2. Whether it's a UNIQUE scene (different outfit, product, or setting from previous frames)
+1. What is the PRIMARY FOCUS — what outfit is being worn, OR what product/item is being held up, displayed, or showcased
+2. Whether this represents something NEW that hasn't been captured yet
+
+A frame is UNIQUE if ANY of these are true:
+- A different outfit or clothing item is being WORN vs previous frames
+- A product, garment, or item is being HELD UP or DISPLAYED to camera (even if the person's own outfit hasn't changed)
+- A different beauty product, accessory, or item is the visual focus
+- A clearly different hairstyle or makeup look is shown
+
+IMPORTANT: In fashion/beauty videos, creators often hold up or showcase items while wearing the same outfit. A person holding up a pair of shorts, a bag, a product, etc. IS a unique scene even though their own clothing hasn't changed. The held-up item is the focus.
 
 Return a JSON array where each element corresponds to a frame (in order):
 [
@@ -124,16 +134,14 @@ Return a JSON array where each element corresponds to a frame (in order):
     "frameIndex": 0,
     "timestamp": ${frames[0]?.timestamp || 0},
     "isUnique": true,
-    "description": "Pink floral dress with gold jewelry, outdoor setting",
+    "description": "Wearing pink floral dress with gold jewelry, outdoor setting",
     "outfitOrProduct": "Pink floral dress",
     "setting": "Outdoor garden"
   },
   ...
 ]
 
-Mark the FIRST frame as always unique. Mark subsequent frames as unique ONLY if they show a clearly different outfit, product, hairstyle, or major setting change. Minor pose or angle changes are NOT unique.
-
-Be selective — a typical 60-second video might have 2-5 truly unique scenes.`;
+Mark the FIRST frame as always unique. For duplicate frames showing the same thing, mark isUnique: false. When in doubt about whether something is new, lean toward marking it as unique — it's better to capture an extra scene than miss one.`;
 
     try {
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
