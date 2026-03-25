@@ -208,6 +208,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
       const CHUNK_SIZE = 5;
       let totalImported = 0;
       let totalAlreadyExisted = 0;
+      let importedItemIds = [];
 
       for (let i = 0; i < itemsToImport.length; i += CHUNK_SIZE) {
         const chunk = itemsToImport.slice(i, i + CHUNK_SIZE);
@@ -215,6 +216,10 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
           const result = await api.googlePhotosImport(chunk);
           totalImported += result.imported || 0;
           totalAlreadyExisted += result.alreadyExisted || 0;
+          // Collect the actual imported asset IDs
+          if (result.items) {
+            importedItemIds = [...importedItemIds, ...result.items.map(it => it.id)];
+          }
         } catch (chunkErr) {
           console.error(`Chunk ${i / CHUNK_SIZE + 1} failed:`, chunkErr);
           // Continue with remaining chunks
@@ -226,6 +231,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
         imported: totalImported,
         alreadyExisted: totalAlreadyExisted,
         extractScenes,
+        importedItemIds,
       };
       setImportResult(finalResult);
       setSelected(new Set());

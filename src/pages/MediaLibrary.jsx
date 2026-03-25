@@ -384,15 +384,17 @@ export default function MediaLibrary() {
         <div className="card p-4 mb-4">
           <GooglePhotosBrowser onImportComplete={async (result) => {
             refreshMedia();
-            if (result?.extractScenes && result.imported > 0) {
-              // Fetch newly imported videos to queue for scene extraction
+            if (result?.extractScenes && result.imported > 0 && result.importedItemIds?.length > 0) {
+              // Fetch each imported asset by ID, filter for videos with full files
               try {
-                const mediaData = await api.getMedia({ type: 'video', sort: 'created_at', limit: result.imported });
-                const videos = (mediaData.data || []).filter(a =>
+                const fetched = await Promise.all(
+                  result.importedItemIds.map(id => api.getMediaById(id).catch(() => null))
+                );
+                const videos = fetched.filter(a =>
+                  a &&
                   a.file_type === 'video' &&
                   a.file_url && a.thumbnail_url &&
-                  a.file_url !== a.thumbnail_url &&
-                  !a.scene_count
+                  a.file_url !== a.thumbnail_url
                 );
                 if (videos.length > 0) {
                   setSceneExtractionQueue(videos);
