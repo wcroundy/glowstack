@@ -81,7 +81,10 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
         if (!proxyRes.ok) {
           throw new Error(`Video proxy failed: HTTP ${proxyRes.status}`);
         }
-        const blob = await proxyRes.blob();
+        // Read as ArrayBuffer so we can force MIME type to video/mp4
+        // (helps Chrome decode MOV/HEVC files from iPhones)
+        const arrayBuffer = await proxyRes.arrayBuffer();
+        const blob = new Blob([arrayBuffer], { type: 'video/mp4' });
         console.log(`VideoBreakdown: proxy delivered ${(blob.size / (1024 * 1024)).toFixed(1)}MB`);
         blobUrl = URL.createObjectURL(blob);
         video.src = blobUrl;
@@ -91,9 +94,12 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
       }
 
       await new Promise((resolve, reject) => {
-        video.onloadedmetadata = resolve;
-        video.onerror = (e) => reject(new Error(`Could not load video file: ${e?.target?.error?.message || 'unknown format'}`));
-        setTimeout(() => reject(new Error('Video load timeout — file may be too large')), 30000);
+        let settled = false;
+        const settle = (fn) => { if (!settled) { settled = true; fn(); } };
+        video.onloadedmetadata = () => settle(resolve);
+        video.oncanplay = () => settle(resolve); // fallback — some codecs fire canplay but not loadedmetadata
+        video.onerror = (e) => settle(() => reject(new Error(`Could not load video: ${e?.target?.error?.message || 'unsupported format'}`)));
+        setTimeout(() => settle(() => reject(new Error('Video load timeout — format may not be supported'))), 30000);
       });
 
       const duration = video.duration || (asset.duration_seconds || 30);
@@ -134,6 +140,9 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
       console.log(`VideoBreakdown: ${frames.length} frames captured, ${validFrames.length} valid, ${seekTimeouts} seek timeouts`);
 
       if (validFrames.length === 0) {
+        // Stop the video element to prevent further errors
+        video.removeAttribute('src');
+        video.load();
         const msg = seekTimeouts > 0
           ? `Could not extract frames — ${seekTimeouts} of ${totalFrames} seeks timed out. The video codec may not be supported by your browser (common with iPhone HEVC/MOV).`
           : 'Could not extract frames from the video. The video format may not be supported by your browser.';
@@ -151,6 +160,10 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
       await analyzeFrames(validFrames);
     } catch (videoErr) {
       console.error('Video extraction failed:', videoErr.message);
+      // Stop the video element from retrying (prevents console error flood)
+      video.removeAttribute('src');
+      video.load();
+      if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
       setError(`Video extraction failed: ${videoErr.message}`);
       setStep('error');
       // In auto mode, skip errors and advance to next video
