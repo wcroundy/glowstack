@@ -96,34 +96,65 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /api/media/counts — get total and untagged asset counts
+// GET /api/media/counts — get total and untagged asset counts (for auto-tagging)
 // NOTE: Must be defined before /:id to avoid matching "counts" as an ID
 router.get('/counts', async (req, res) => {
   try {
     if (!isSupabaseConfigured()) {
-      return res.json({ total: demoMedia.length, untagged: demoMedia.filter(m => !m.tags || m.tags.length === 0).length });
+      return res.json({ total: demoMedia.length, untagged: demoMedia.filter(m => !m.tags || m.tags.length === 0).length, videos: 0, totalSceneThumbnails: 0, images: demoMedia.length });
     }
 
-    // Total image count (head:true bypasses row limits, returns exact count)
-    const { count: total, error: totalErr } = await supabase
+    // Total taggable asset count (images + videos, excluding child scene assets)
+    const { count: totalAssets, error: totalErr } = await supabase
       .from('media_assets')
       .select('*', { count: 'exact', head: true })
       .eq('is_archived', false)
-      .eq('file_type', 'image');
+      .is('parent_asset_id', null);
     if (totalErr) throw totalErr;
 
-    // Tagged image count: query images that have at least one tag via inner join
-    // inner join means only rows with matching media_tags are returned
-    const { count: taggedImageCount, error: taggedErr } = await supabase
+    // Image count
+    const { count: imageCount, error: imgErr } = await supabase
+      .from('media_assets')
+      .select('*', { count: 'exact', head: true })
+      .eq('is_archived', false)
+      .eq('file_type', 'image')
+      .is('parent_asset_id', null);
+    if (imgErr) throw imgErr;
+
+    // Video count
+    const { count: videoCount, error: vidErr } = await supabase
+      .from('media_assets')
+      .select('*', { count: 'exact', head: true })
+      .eq('is_archived', false)
+      .eq('file_type', 'video')
+      .is('parent_asset_id', null);
+    if (vidErr) throw vidErr;
+
+    // Total scene thumbnails (child assets from video breakdowns)
+    const { count: sceneThumbnailCount, error: sceneErr } = await supabase
+      .from('media_assets')
+      .select('*', { count: 'exact', head: true })
+      .eq('is_archived', false)
+      .not('parent_asset_id', 'is', null);
+    if (sceneErr) throw sceneErr;
+
+    // Tagged asset count (images + videos that have at least one tag)
+    const { count: taggedCount, error: taggedErr } = await supabase
       .from('media_assets')
       .select('id, media_tags!inner(tag_id)', { count: 'exact', head: true })
       .eq('is_archived', false)
-      .eq('file_type', 'image');
+      .is('parent_asset_id', null);
     if (taggedErr) throw taggedErr;
 
-    const untagged = (total || 0) - (taggedImageCount || 0);
+    const untagged = (totalAssets || 0) - (taggedCount || 0);
 
-    res.json({ total: total || 0, untagged: Math.max(0, untagged) });
+    res.json({
+      total: totalAssets || 0,
+      images: imageCount || 0,
+      videos: videoCount || 0,
+      totalSceneThumbnails: sceneThumbnailCount || 0,
+      untagged: Math.max(0, untagged),
+    });
   } catch (err) {
     console.error('Media counts error:', err.message);
     res.status(500).json({ error: err.message });

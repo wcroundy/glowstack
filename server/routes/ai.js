@@ -138,8 +138,9 @@ router.post('/auto-tag', async (req, res) => {
       return res.json({ tagged: 0, message: 'No tags defined. Create tags in the Tag Manager first.' });
     }
 
-    // 2. Get assets to tag (images only — video thumbnails aren't reliable for tagging)
+    // 2. Get assets to tag (images AND videos — videos use their child scene thumbnails)
     // Uses limit/offset for batch processing to stay within Vercel timeout limits
+    // Exclude child scene assets (parent_asset_id IS NOT NULL) — they get tagged via their parent video
     let assetQuery;
 
     if (untaggedOnly) {
@@ -147,14 +148,14 @@ router.post('/auto-tag', async (req, res) => {
         .from('media_assets')
         .select('id, file_name, title, file_url, thumbnail_url, ai_description, ai_tags, file_type, mime_type, media_tags(tag_id)')
         .eq('is_archived', false)
-        .eq('file_type', 'image')
+        .is('parent_asset_id', null)
         .is('media_tags', null);
     } else {
       assetQuery = supabase
         .from('media_assets')
         .select('id, file_name, title, file_url, thumbnail_url, ai_description, ai_tags, file_type, mime_type')
         .eq('is_archived', false)
-        .eq('file_type', 'image');
+        .is('parent_asset_id', null);
     }
 
     if (assetIds && assetIds.length > 0) {
@@ -174,7 +175,26 @@ router.post('/auto-tag', async (req, res) => {
     }
     if (assetErr) throw assetErr;
     if (!assets || assets.length === 0) {
-      return res.json({ tagged: 0, totalAssetsProcessed: 0, batchComplete: true, message: 'No image assets found to tag (videos are excluded)' });
+      return res.json({ tagged: 0, totalAssetsProcessed: 0, totalImagesAnalyzed: 0, batchComplete: true, message: 'No assets found to tag' });
+    }
+
+    // For video assets, fetch their child scene thumbnails
+    const videoAssetIds = assets.filter(a => a.file_type === 'video').map(a => a.id);
+    let sceneThumbnails = {}; // { parentId: [{ thumbnail_url, ... }] }
+    if (videoAssetIds.length > 0) {
+      const { data: scenes, error: sceneErr } = await supabase
+        .from('media_assets')
+        .select('id, parent_asset_id, thumbnail_url, file_url')
+        .in('parent_asset_id', videoAssetIds)
+        .eq('is_archived', false);
+      if (!sceneErr && scenes) {
+        for (const scene of scenes) {
+          if (!sceneThumbnails[scene.parent_asset_id]) {
+            sceneThumbnails[scene.parent_asset_id] = [];
+          }
+          sceneThumbnails[scene.parent_asset_id].push(scene);
+        }
+      }
     }
 
     const tagMap = {};
@@ -182,6 +202,7 @@ router.post('/auto-tag', async (req, res) => {
 
     let totalTagged = 0;
     let totalNewTags = 0;
+    let totalImagesAnalyzed = 0;
 
     // Track suggested new tags: { name: { assetIds: Set, count: number } }
     const suggestedNewTags = {};
@@ -191,10 +212,35 @@ router.post('/auto-tag', async (req, res) => {
       let matchedTagIds = [];
       let assetSuggestedNew = [];
 
-      if (OPENAI_API_KEY && asset.thumbnail_url) {
-        // Use OpenAI Vision to analyze the image and match tags + suggest new ones
+      // Determine which images to send to OpenAI
+      // For videos: use child scene thumbnails; for images: use the asset's own thumbnail
+      let imageUrls = [];
+      if (asset.file_type === 'video') {
+        const scenes = sceneThumbnails[asset.id] || [];
+        imageUrls = scenes
+          .map(s => s.thumbnail_url || s.file_url)
+          .filter(Boolean);
+        if (imageUrls.length === 0 && asset.thumbnail_url) {
+          // Fallback: use the video's own thumbnail if no scenes exist
+          imageUrls = [asset.thumbnail_url];
+        }
+      } else if (asset.thumbnail_url) {
+        imageUrls = [asset.thumbnail_url];
+      }
+
+      const imageCount = imageUrls.length;
+      totalImagesAnalyzed += imageCount;
+
+      if (OPENAI_API_KEY && imageUrls.length > 0) {
+        // Use OpenAI Vision to analyze the image(s) and match tags + suggest new ones
         try {
           const tagList = allTags.map(t => t.name).join(', ');
+          const isVideo = asset.file_type === 'video';
+          const imageContent = imageUrls.map(url => ({
+            type: 'image_url',
+            image_url: { url, detail: 'low' },
+          }));
+
           const response = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -206,7 +252,16 @@ router.post('/auto-tag', async (req, res) => {
               messages: [
                 {
                   role: 'system',
-                  content: `You are a media tagging assistant for a beauty/fashion influencer. Given an image, do two things:
+                  content: isVideo
+                    ? `You are a media tagging assistant for a beauty/fashion influencer. You are given ${imageCount} scene thumbnails extracted from a video. Analyze ALL scenes together and do two things:
+1. Determine which of the provided existing tags apply to this video (considering all scenes).
+2. Suggest up to 3 NEW tags that are NOT in the existing list but would be useful for categorizing this video (think: specific products, techniques, aesthetics, settings, content formats).
+
+Return a JSON object with two arrays:
+{"existing": ["Tag Name 1", "Tag Name 2"], "suggested": ["New Tag Idea 1"]}
+
+Be generous with existing tag matching — if ANY scene matches a tag, include it. For suggested tags, focus on specific, reusable beauty/fashion categories that would help organize a media library. Don't suggest tags that are too similar to existing ones.`
+                    : `You are a media tagging assistant for a beauty/fashion influencer. Given an image, do two things:
 1. Determine which of the provided existing tags apply to the image.
 2. Suggest up to 3 NEW tags that are NOT in the existing list but would be useful for categorizing this image (think: specific products, techniques, aesthetics, settings, content formats).
 
@@ -220,16 +275,13 @@ Be generous with existing tag matching. For suggested tags, focus on specific, r
                   content: [
                     {
                       type: 'text',
-                      text: `Existing tags: ${tagList}\n\nFilename: ${asset.file_name}\nTitle: ${asset.title || ''}\n\nReturn JSON with "existing" matches and "suggested" new tags.`,
+                      text: `Existing tags: ${tagList}\n\nFilename: ${asset.file_name}\nTitle: ${asset.title || ''}${isVideo ? `\nThis is a video with ${imageCount} scene thumbnail${imageCount !== 1 ? 's' : ''}.` : ''}\n\nReturn JSON with "existing" matches and "suggested" new tags.`,
                     },
-                    {
-                      type: 'image_url',
-                      image_url: { url: asset.thumbnail_url, detail: 'low' },
-                    },
+                    ...imageContent,
                   ],
                 },
               ],
-              max_tokens: 300,
+              max_tokens: 500,
               temperature: 0.3,
             }),
           });
@@ -359,13 +411,14 @@ Be generous with existing tag matching. For suggested tags, focus on specific, r
     res.json({
       tagged: totalTagged,
       totalAssetsProcessed: assets.length,
+      totalImagesAnalyzed,
       totalNewTags,
       aiPowered: !!OPENAI_API_KEY,
       suggestedTags: suggestions,
       batchComplete,
       nextOffset: batchOffset + assets.length,
       message: OPENAI_API_KEY
-        ? `AI analyzed ${assets.length} assets and applied ${totalNewTags} tags to ${totalTagged} assets`
+        ? `AI analyzed ${assets.length} assets (${totalImagesAnalyzed} images) and applied ${totalNewTags} tags to ${totalTagged} assets`
         : `Keyword matching applied ${totalNewTags} tags to ${totalTagged} assets. Add an OpenAI API key for AI-powered visual tagging.`,
     });
   } catch (err) {

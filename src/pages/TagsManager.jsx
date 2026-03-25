@@ -218,19 +218,24 @@ export default function TagsManager() {
     }
   };
 
-  // Cost estimation: ~1,500 tokens per thumbnail image + ~200 tokens prompt/response
+  // Cost estimation: ~1,700 tokens per image + ~80 tokens output
   // gpt-4o-mini: $0.15 per 1M input, $0.60 per 1M output
-  const estimateCost = (count) => {
-    const inputTokensPerAsset = 1700;
+  // For videos: cost is per scene thumbnail (multiple images per asset)
+  const estimateCost = (assetCount, totalImages) => {
+    const imageCount = totalImages || assetCount; // totalImages accounts for video scenes
+    const inputTokensPerImage = 1700;
     const outputTokensPerAsset = 80;
-    const totalInput = count * inputTokensPerAsset;
-    const totalOutput = count * outputTokensPerAsset;
+    const totalInput = imageCount * inputTokensPerImage;
+    const totalOutput = assetCount * outputTokensPerAsset; // one response per asset
     const inputCost = (totalInput / 1_000_000) * 0.15;
     const outputCost = (totalOutput / 1_000_000) * 0.60;
     return inputCost + outputCost;
   };
 
   const [totalAllAssets, setTotalAllAssets] = useState(null); // includes videos
+  const [videoCount, setVideoCount] = useState(0);
+  const [sceneThumbnailCount, setSceneThumbnailCount] = useState(0);
+  const [imageOnlyCount, setImageOnlyCount] = useState(0);
 
   const [countsLoading, setCountsLoading] = useState(false);
 
@@ -239,17 +244,20 @@ export default function TagsManager() {
     setAssetCount(null);
     setUntaggedCount(null);
     setTotalAllAssets(null);
+    setVideoCount(0);
+    setSceneThumbnailCount(0);
+    setImageOnlyCount(0);
     setCountsLoading(true);
     setShowAutoTagConfirm(true);
 
     try {
-      const [counts, mediaRes] = await Promise.all([
-        api.getMediaCounts(),
-        api.getMedia({ limit: 1, offset: 0 }),
-      ]);
-      setAssetCount(counts.total || 0);       // images only
-      setUntaggedCount(counts.untagged || 0);  // untagged images only
-      setTotalAllAssets(mediaRes.total || 0);  // all assets including videos
+      const counts = await api.getMediaCounts();
+      setAssetCount(counts.total || 0);             // images + videos (excluding child scenes)
+      setUntaggedCount(counts.untagged || 0);        // untagged assets
+      setTotalAllAssets(counts.total || 0);
+      setVideoCount(counts.videos || 0);
+      setSceneThumbnailCount(counts.totalSceneThumbnails || 0);
+      setImageOnlyCount(counts.images || 0);
       setAutoTagScope(counts.untagged > 0 ? 'untagged' : 'all');
     } catch (err) {
       setError('Failed to get asset count');
@@ -330,7 +338,7 @@ export default function TagsManager() {
         totalNewTags,
         aiPowered: true,
         suggestedTags: finalSuggestions,
-        message: `AI analyzed ${totalProcessed.toLocaleString()} images and applied ${totalNewTags.toLocaleString()} tags to ${totalTagged.toLocaleString()} images`,
+        message: `AI analyzed ${totalProcessed.toLocaleString()} assets and applied ${totalNewTags.toLocaleString()} tags to ${totalTagged.toLocaleString()} assets`,
       };
 
       setAutoTagResult(finalResult);
@@ -380,7 +388,7 @@ export default function TagsManager() {
           totalAssetsProcessed: totalProcessed,
           totalNewTags,
           aiPowered: true,
-          message: `Processed ${totalProcessed.toLocaleString()} images before error. Applied ${totalNewTags.toLocaleString()} tags to ${totalTagged.toLocaleString()} images.`,
+          message: `Processed ${totalProcessed.toLocaleString()} assets before error. Applied ${totalNewTags.toLocaleString()} tags to ${totalTagged.toLocaleString()} assets.`,
         });
         loadTags();
       }
@@ -1166,22 +1174,22 @@ export default function TagsManager() {
                 </div>
               ) : (
               <>
-              {/* Images-only notice */}
-              <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5">
-                <ImageIcon className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
-                <div className="text-xs text-amber-700">
-                  <span className="font-medium">Images only.</span> Auto-tagging analyzes image content using AI vision. Videos are excluded because a single thumbnail isn't reliable for accurate tagging.
-                  {totalAllAssets > assetCount && (
-                    <span className="block mt-1 text-amber-600">
-                      Your library has {totalAllAssets.toLocaleString()} total assets — {assetCount.toLocaleString()} images and {(totalAllAssets - assetCount).toLocaleString()} videos.
+              {/* Asset breakdown info */}
+              {videoCount > 0 && (
+                <div className="flex items-start gap-2.5 bg-brand-50 border border-brand-200 rounded-xl px-3.5 py-2.5">
+                  <ImageIcon className="w-4 h-4 text-brand-600 mt-0.5 flex-shrink-0" />
+                  <div className="text-xs text-brand-700">
+                    <span className="font-medium">Images + Videos.</span> Auto-tagging analyzes images directly and videos via their extracted scene thumbnails.
+                    <span className="block mt-1 text-brand-600">
+                      {imageOnlyCount.toLocaleString()} image{imageOnlyCount !== 1 ? 's' : ''} + {videoCount.toLocaleString()} video{videoCount !== 1 ? 's' : ''} ({sceneThumbnailCount.toLocaleString()} scene thumbnail{sceneThumbnailCount !== 1 ? 's' : ''})
                     </span>
-                  )}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Scope toggle */}
               <div className="space-y-2">
-                <p className="text-xs font-medium text-surface-500">Tag which images?</p>
+                <p className="text-xs font-medium text-surface-500">Tag which assets?</p>
                 <div className="flex gap-2">
                   <button
                     onClick={() => setAutoTagScope('untagged')}
@@ -1192,7 +1200,7 @@ export default function TagsManager() {
                     }`}
                   >
                     Untagged only
-                    <span className="block text-xs font-normal mt-0.5 opacity-70">{(untaggedCount || 0).toLocaleString()} images</span>
+                    <span className="block text-xs font-normal mt-0.5 opacity-70">{(untaggedCount || 0).toLocaleString()} assets</span>
                   </button>
                   <button
                     onClick={() => setAutoTagScope('all')}
@@ -1202,29 +1210,44 @@ export default function TagsManager() {
                         : 'border-surface-200 bg-white text-surface-600 hover:bg-surface-50'
                     }`}
                   >
-                    All images
-                    <span className="block text-xs font-normal mt-0.5 opacity-70">{(assetCount || 0).toLocaleString()} images</span>
+                    All assets
+                    <span className="block text-xs font-normal mt-0.5 opacity-70">{(assetCount || 0).toLocaleString()} assets</span>
                   </button>
                 </div>
               </div>
 
               <p className="text-sm text-surface-700">
-                This will analyze <span className="font-semibold">{scopeCount.toLocaleString()}</span> image{scopeCount !== 1 ? 's' : ''} using
+                This will analyze <span className="font-semibold">{scopeCount.toLocaleString()}</span> asset{scopeCount !== 1 ? 's' : ''} using
                 OpenAI Vision and apply matching tags from your tag library.
+                {videoCount > 0 && (
+                  <span className="text-surface-500"> Videos are analyzed using all their scene thumbnails for more accurate tagging.</span>
+                )}
               </p>
 
-              <div className="bg-surface-50 rounded-xl p-4 space-y-2">
-                <div className="flex items-center gap-2 text-sm font-medium text-surface-800">
-                  <DollarSign className="w-4 h-4 text-surface-500" />
-                  Estimated Cost
+              {(() => {
+                // Calculate total images: images + scene thumbnails for videos
+                // For scope estimation, we approximate based on ratio
+                const totalImages = imageOnlyCount + sceneThumbnailCount;
+                const avgScenesPerVideo = videoCount > 0 ? sceneThumbnailCount / videoCount : 0;
+                // Rough proportion: if tagging a subset, scale images accordingly
+                const estimatedImages = scopeCount === assetCount
+                  ? totalImages
+                  : Math.round(scopeCount * (totalImages / Math.max(assetCount, 1)));
+                return (
+                <div className="bg-surface-50 rounded-xl p-4 space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium text-surface-800">
+                    <DollarSign className="w-4 h-4 text-surface-500" />
+                    Estimated Cost
+                  </div>
+                  <p className="text-2xl font-bold text-surface-900">
+                    ${estimateCost(scopeCount, estimatedImages).toFixed(2)}
+                  </p>
+                  <p className="text-xs text-surface-400">
+                    ~{estimatedImages.toLocaleString()} total images to analyze ({scopeCount.toLocaleString()} assets{videoCount > 0 ? `, avg ${avgScenesPerVideo.toFixed(1)} scenes/video` : ''}) at gpt-4o-mini rates. Actual cost may vary.
+                  </p>
                 </div>
-                <p className="text-2xl font-bold text-surface-900">
-                  ${estimateCost(scopeCount).toFixed(2)}
-                </p>
-                <p className="text-xs text-surface-400">
-                  This is an estimate based on ~1,700 input tokens per thumbnail image at gpt-4o-mini rates ($0.15/1M input, $0.60/1M output). Actual cost may vary.
-                </p>
-              </div>
+                );
+              })()}
 
               <div className="flex items-center gap-3 pt-2">
                 <button
