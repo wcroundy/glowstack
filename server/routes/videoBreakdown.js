@@ -215,7 +215,7 @@ Mark the FIRST frame as always unique. For duplicate frames showing the same thi
             ],
           },
         ],
-        max_tokens: 2000,
+        max_tokens: 4000,
         temperature: 0.3,
       }),
     });
@@ -240,6 +240,8 @@ Mark the FIRST frame as always unique. For duplicate frames showing the same thi
 
     const aiResult = await aiResponse.json();
     const content = aiResult.choices?.[0]?.message?.content || '[]';
+    const finishReason = aiResult.choices?.[0]?.finish_reason;
+    console.log('extract-and-process: OpenAI finish_reason:', finishReason, 'response length:', content.length);
 
     // Parse scene analysis
     const jsonMatch = content.match(/\[[\s\S]*\]/);
@@ -248,16 +250,43 @@ Mark the FIRST frame as always unique. For duplicate frames showing the same thi
       try {
         scenes = JSON.parse(jsonMatch[0]);
       } catch (parseErr) {
-        console.error('Failed to parse scene detection:', parseErr);
+        console.error('Failed to parse scene detection JSON:', parseErr.message);
+        console.error('Raw content (first 500 chars):', content.substring(0, 500));
+        // Fallback: treat all frames as unique
         scenes = frames.map((f, i) => ({
           frameIndex: i, timestamp: f.timestamp, isUnique: true,
           description: 'Scene ' + (i + 1), outfitOrProduct: 'Unknown',
         }));
       }
+    } else {
+      console.warn('extract-and-process: no JSON array found in OpenAI response');
+      console.warn('Raw content (first 500 chars):', content.substring(0, 500));
+      // Fallback: treat all frames as unique
+      scenes = frames.map((f, i) => ({
+        frameIndex: i, timestamp: f.timestamp, isUnique: true,
+        description: 'Scene ' + (i + 1), outfitOrProduct: 'Unknown',
+      }));
+    }
+
+    // Ensure the first frame is always unique (AI sometimes misses this)
+    if (scenes.length > 0 && !scenes[0].isUnique) {
+      scenes[0].isUnique = true;
     }
 
     // ---- STEP 5: Save unique frames as child assets ----
-    const uniqueScenes = scenes.filter(s => s.isUnique);
+    let uniqueScenes = scenes.filter(s => s.isUnique);
+
+    // Safety net: if AI marked everything as not unique, pick evenly spaced frames
+    if (uniqueScenes.length === 0 && frames.length > 0) {
+      console.warn('extract-and-process: AI found 0 unique scenes, falling back to evenly spaced frames');
+      const step = Math.max(1, Math.floor(frames.length / 5)); // pick ~5 frames
+      uniqueScenes = frames
+        .filter((_, i) => i % step === 0)
+        .map((f, idx) => ({
+          frameIndex: idx * step, timestamp: f.timestamp, isUnique: true,
+          description: `Scene ${idx + 1}`, outfitOrProduct: 'Unknown',
+        }));
+    }
     const savedAssets = [];
 
     for (const scene of uniqueScenes) {
