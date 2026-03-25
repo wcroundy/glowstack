@@ -29,21 +29,6 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
     }
   }, [asset.id]);
 
-  // Auto-fetch estimate on mount (only if not auto-starting)
-  React.useEffect(() => {
-    if (!autoStart) fetchEstimate();
-  }, [fetchEstimate, autoStart]);
-
-  // Auto-start extraction after mount (needs a tick for refs to be ready)
-  const autoStarted = useRef(false);
-  React.useEffect(() => {
-    if (autoStart && !autoStarted.current && step === 'waiting') {
-      autoStarted.current = true;
-      // Small delay to ensure video/canvas refs are ready
-      setTimeout(() => extractFrames(), 100);
-    }
-  }, [autoStart, step, extractFrames]);
-
   // Check if asset has a real video file (not just a thumbnail)
   const hasVideoFile = asset.file_url && asset.thumbnail_url && asset.file_url !== asset.thumbnail_url;
 
@@ -140,6 +125,20 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
       }
     }
   };
+
+  // Auto-fetch estimate on mount (only if not auto-starting)
+  React.useEffect(() => {
+    if (!autoStart) fetchEstimate();
+  }, [fetchEstimate, autoStart]);
+
+  // Auto-start extraction after mount (needs a tick for refs to be ready)
+  const autoStarted = useRef(false);
+  React.useEffect(() => {
+    if (autoStart && !autoStarted.current && step === 'waiting') {
+      autoStarted.current = true;
+      setTimeout(() => extractFrames(), 100);
+    }
+  }, [autoStart, step, extractFrames]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
