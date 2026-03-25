@@ -1,8 +1,15 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { supabase, isSupabaseConfigured, uploadFile } from '../services/supabase.js';
 import { demoMedia, demoTags } from '../services/demoData.js';
 
 const router = Router();
+
+// Multer: store files in memory (up to 200MB for videos)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 200 * 1024 * 1024 }, // 200MB
+});
 
 // GET /api/media — list all media with optional filters
 router.get('/', async (req, res) => {
@@ -189,6 +196,91 @@ router.post('/upload', async (req, res) => {
     res.json(data);
   } catch (err) {
     console.error('Media upload error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/media/upload-file — multipart file upload (images & videos)
+router.post('/upload-file', upload.single('file'), async (req, res) => {
+  try {
+    if (!isSupabaseConfigured()) {
+      return res.status(400).json({ error: 'Supabase not configured' });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file provided' });
+    }
+
+    const { originalname, mimetype, buffer, size } = req.file;
+    const isVideo = mimetype.startsWith('video/');
+    const fileType = isVideo ? 'video' : 'image';
+    const timestamp = Date.now();
+    const safeName = originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const storagePath = `uploads/${timestamp}-${safeName}`;
+
+    // Upload to Supabase storage
+    const result = await uploadFile('media', storagePath, buffer, mimetype);
+
+    // For videos, also generate a thumbnail from first frame if possible
+    // (the full scene extraction happens separately via extract-and-process)
+    const thumbnailUrl = result.publicUrl; // for images, same URL; for videos, we'll use the video URL as thumbnail for now
+
+    // Create asset record
+    const { data: asset, error } = await supabase
+      .from('media_assets')
+      .insert({
+        file_name: originalname,
+        file_url: result.publicUrl,
+        thumbnail_url: thumbnailUrl,
+        file_type: fileType,
+        mime_type: mimetype,
+        file_size_bytes: size,
+        source: 'upload',
+        title: originalname.replace(/\.[^/.]+$/, ''), // strip extension for title
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    console.log(`upload-file: ${fileType} uploaded — ${originalname} (${(size / 1024 / 1024).toFixed(1)}MB)`);
+
+    res.json({
+      ...asset,
+      needsVideoProcessing: isVideo,
+    });
+  } catch (err) {
+    console.error('Media upload-file error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/media/:id/extract-scenes — trigger server-side video scene extraction for an uploaded video
+// The video is already in Supabase storage, so we download from there instead of Google Photos
+router.post('/:id/extract-scenes', async (req, res) => {
+  try {
+    if (!isSupabaseConfigured()) {
+      return res.status(400).json({ error: 'Supabase not configured' });
+    }
+
+    const { data: asset, error: assetErr } = await supabase
+      .from('media_assets')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+
+    if (assetErr || !asset) return res.status(404).json({ error: 'Asset not found' });
+    if (asset.file_type !== 'video') return res.status(400).json({ error: 'Asset is not a video' });
+
+    // Forward to the video-breakdown extract-and-process endpoint
+    // But we need to pass the Supabase file URL instead of a Google Photos baseUrl
+    // We'll handle this by passing a special flag
+    res.json({
+      assetId: asset.id,
+      fileUrl: asset.file_url,
+      message: 'Use /api/video-breakdown/extract-and-process-url for uploaded videos',
+    });
+  } catch (err) {
+    console.error('Extract scenes error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

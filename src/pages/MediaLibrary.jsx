@@ -338,6 +338,9 @@ export default function MediaLibrary() {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(''); // status text
+  const fileInputRef = React.useRef(null);
 
   const totalPages = Math.max(1, Math.ceil(totalAssets / PAGE_SIZE));
 
@@ -417,6 +420,48 @@ export default function MediaLibrary() {
     setSelectedIds(new Set());
   };
 
+  const handleFileUpload = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    setUploading(true);
+    const uploadedVideos = [];
+
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setUploadProgress(`Uploading ${i + 1}/${files.length}: ${file.name}`);
+
+        const result = await api.uploadMediaFile(file);
+
+        if (result.needsVideoProcessing) {
+          uploadedVideos.push(result);
+        }
+      }
+
+      refreshMedia();
+
+      // Queue video scene extraction for any uploaded videos
+      if (uploadedVideos.length > 0) {
+        setUploadProgress(`Processing ${uploadedVideos.length} video${uploadedVideos.length > 1 ? 's' : ''} for scenes...`);
+        const videoQueue = uploadedVideos.map(v => ({
+          ...v,
+          uploadedVideoUrl: v.file_url, // direct Supabase URL
+        }));
+        setSceneExtractionQueue(videoQueue);
+        setExtractionStatus({ current: 0, total: videoQueue.length, currentAsset: videoQueue[0] });
+      }
+    } catch (err) {
+      console.error('Upload failed:', err);
+      alert(`Upload failed: ${err.message}`);
+    } finally {
+      setUploading(false);
+      setUploadProgress('');
+      // Reset file input so the same file can be re-selected
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   const tagCategories = [...new Set(tags.map(t => t.category))];
 
   return (
@@ -440,8 +485,24 @@ export default function MediaLibrary() {
           >
             <Camera className="w-4 h-4" /> Google Photos
           </button>
-          <button className="btn-primary">
-            <Upload className="w-4 h-4" /> Upload
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,video/*"
+            multiple
+            className="hidden"
+            onChange={handleFileUpload}
+          />
+          <button
+            className="btn-primary"
+            disabled={uploading}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            {uploading ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /> {uploadProgress || 'Uploading...'}</>
+            ) : (
+              <><Upload className="w-4 h-4" /> Upload</>
+            )}
           </button>
         </div>
       </div>
@@ -488,7 +549,8 @@ export default function MediaLibrary() {
         <VideoBreakdown
           key={extractionStatus.currentAsset.id}
           asset={extractionStatus.currentAsset}
-          googlePhotosBaseUrl={extractionStatus.currentAsset.googlePhotosBaseUrl}
+          googlePhotosBaseUrl={extractionStatus.currentAsset.googlePhotosBaseUrl || null}
+          uploadedVideoUrl={extractionStatus.currentAsset.uploadedVideoUrl || null}
           autoStart
           onComplete={() => {
             const nextIndex = extractionStatus.current + 1;

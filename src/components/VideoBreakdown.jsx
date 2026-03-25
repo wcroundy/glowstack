@@ -4,7 +4,7 @@ import { api } from '../services/api';
 
 const FRAME_INTERVAL = 2; // seconds between frame captures
 
-export default function VideoBreakdown({ asset, onComplete, onClose, autoStart = false, googlePhotosBaseUrl = null }) {
+export default function VideoBreakdown({ asset, onComplete, onClose, autoStart = false, googlePhotosBaseUrl = null, uploadedVideoUrl = null }) {
   const [step, setStep] = useState(autoStart ? 'waiting' : 'estimate'); // estimate, waiting, extracting, analyzing, complete, error
   const [estimate, setEstimate] = useState(null);
   const [extractionProgress, setExtractionProgress] = useState(0);
@@ -30,7 +30,7 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
   }, [asset.id]);
 
   // Check if we can extract frames: either has a real video file OR has a Google Photos baseUrl for proxy
-  const hasVideoFile = (asset.file_url && asset.thumbnail_url && asset.file_url !== asset.thumbnail_url) || !!googlePhotosBaseUrl;
+  const hasVideoFile = (asset.file_url && asset.thumbnail_url && asset.file_url !== asset.thumbnail_url) || !!googlePhotosBaseUrl || !!uploadedVideoUrl;
 
   // Step 2: Extract frames from video using canvas
   const extractFrames = useCallback(async () => {
@@ -62,14 +62,18 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
     }
 
     try {
-      if (googlePhotosBaseUrl) {
+      if (googlePhotosBaseUrl || uploadedVideoUrl) {
         // FULLY SERVER-SIDE pipeline: extract frames + AI analysis + save results
         // No giant base64 payloads cross the wire — everything stays on the server
-        console.log('VideoBreakdown: using server-side extract-and-process...');
+        const source = googlePhotosBaseUrl ? 'Google Photos' : 'uploaded video';
+        console.log(`VideoBreakdown: using server-side extract-and-process (${source})...`);
         setExtractionProgress(20);
         setStep('extracting');
 
-        const serverResult = await api.videoBreakdownExtractAndProcess(asset.id, googlePhotosBaseUrl);
+        const serverResult = await api.videoBreakdownExtractAndProcess(asset.id, {
+          baseUrl: googlePhotosBaseUrl || undefined,
+          videoUrl: uploadedVideoUrl || undefined,
+        });
 
         console.log(`VideoBreakdown: server processed ${serverResult.totalFramesAnalyzed} frames, found ${serverResult.uniqueScenesFound} scenes`);
         setExtractionProgress(100);

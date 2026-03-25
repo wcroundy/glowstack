@@ -41,6 +41,24 @@ export const api = {
   getMediaById: (id) => request(`/media/${id}`),
   deleteMediaBulk: (ids) => request('/media/bulk/delete', { method: 'POST', body: JSON.stringify({ ids }) }),
   uploadMedia: (data) => request('/media/upload', { method: 'POST', body: JSON.stringify(data) }),
+  uploadMediaFile: async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const headers = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    // Don't set Content-Type — browser sets it with boundary for multipart
+    const res = await fetch(`${API_BASE}/media/upload-file`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    if (!res.ok) {
+      let errorData;
+      try { errorData = await res.json(); } catch (_) {}
+      throw new Error(errorData?.message || errorData?.error || `Upload failed: ${res.status}`);
+    }
+    return res.json();
+  },
   tagMedia: (id, tagId) => request(`/media/${id}/tag`, { method: 'POST', body: JSON.stringify({ tag_id: tagId }) }),
   toggleFavorite: (id) => request(`/media/${id}/favorite`, { method: 'POST' }),
 
@@ -139,7 +157,7 @@ export const api = {
   googlePhotosDisconnect: () => request('/google-photos/disconnect', { method: 'POST' }),
 
   // Video Breakdown
-  videoBreakdownExtractAndProcess: (assetId, baseUrl) => request('/video-breakdown/extract-and-process', { method: 'POST', body: JSON.stringify({ assetId, baseUrl }) }),
+  videoBreakdownExtractAndProcess: (assetId, { baseUrl, videoUrl } = {}) => request('/video-breakdown/extract-and-process', { method: 'POST', body: JSON.stringify({ assetId, baseUrl, videoUrl }) }),
   videoBreakdownEstimate: (assetId) => request('/video-breakdown/estimate', { method: 'POST', body: JSON.stringify({ assetId }) }),
   videoBreakdownProcess: (assetId, frames) => request('/video-breakdown/process', { method: 'POST', body: JSON.stringify({ assetId, frames }) }),
   videoBreakdownFrames: (assetId) => request(`/video-breakdown/frames/${assetId}`),

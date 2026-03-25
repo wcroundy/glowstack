@@ -71,9 +71,9 @@ router.post('/extract-and-process', async (req, res) => {
     return res.status(400).json({ error: 'Supabase not configured' });
   }
 
-  const { assetId, baseUrl } = req.body;
+  const { assetId, baseUrl, videoUrl } = req.body;
   if (!assetId) return res.status(400).json({ error: 'assetId is required' });
-  if (!baseUrl) return res.status(400).json({ error: 'baseUrl is required' });
+  if (!baseUrl && !videoUrl) return res.status(400).json({ error: 'baseUrl or videoUrl is required' });
 
   const tmpId = randomUUID();
   const videoPath = join(tmpdir(), `glowstack-video-${tmpId}.mp4`);
@@ -92,14 +92,24 @@ router.post('/extract-and-process', async (req, res) => {
     }
 
     // ---- STEP 1: Download video ----
-    const accessToken = await getValidToken();
-    if (!accessToken) return res.status(401).json({ error: 'Google Photos not connected' });
+    let videoRes;
+    if (baseUrl) {
+      // Google Photos: needs auth token and =dv suffix
+      const accessToken = await getValidToken();
+      if (!accessToken) return res.status(401).json({ error: 'Google Photos not connected' });
 
-    console.log('extract-and-process: downloading video...');
-    const videoRes = await fetch(`${baseUrl}=dv`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-      signal: AbortSignal.timeout(240000),
-    });
+      console.log('extract-and-process: downloading from Google Photos...');
+      videoRes = await fetch(`${baseUrl}=dv`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(240000),
+      });
+    } else {
+      // Direct URL (e.g. Supabase storage) — no auth needed
+      console.log('extract-and-process: downloading from direct URL...');
+      videoRes = await fetch(videoUrl, {
+        signal: AbortSignal.timeout(240000),
+      });
+    }
 
     if (!videoRes.ok) {
       return res.status(502).json({ error: `Video download failed: HTTP ${videoRes.status}` });
