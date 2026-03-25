@@ -200,6 +200,7 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
     setImporting(true);
     setError('');
     setImportResult(null);
+    setFailedVideos([]);
     setImportProgress({ done: 0, total: selected.size });
 
     try {
@@ -221,26 +222,29 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
           const result = await api.googlePhotosImport(chunk);
           totalImported += result.imported || 0;
           totalAlreadyExisted += result.alreadyExisted || 0;
-          // Collect the actual imported asset IDs and check for video failures
+          // Collect the actual imported asset IDs
           if (result.items) {
-            for (const item of result.items) {
-              importedItemIds.push(item.id);
-              if (item.videoDownloadFailed) {
-                // Find the original picker item by google_photos_id to get its baseUrl
-                const pickerItem = googleIdToItem.get(item.googlePhotosId);
-                videoFailures.push({
-                  assetId: item.id,
-                  filename: item.filename,
-                  baseUrl: pickerItem?.baseUrl || '',
-                  retrying: false,
-                  retryDone: false,
-                });
-              }
+            importedItemIds = [...importedItemIds, ...result.items.map(it => it.id)];
+          }
+          // Collect failed video downloads (NOT inserted into DB)
+          if (result.failedVideos) {
+            for (const failed of result.failedVideos) {
+              const pickerItem = googleIdToItem.get(failed.googlePhotosId);
+              videoFailures.push({
+                googlePhotosId: failed.googlePhotosId,
+                filename: failed.filename,
+                thumbnailUrl: failed.thumbnailUrl,
+                baseUrl: pickerItem?.baseUrl || '',
+                // Keep full picker item data for thumbnail-only import
+                pickerItem,
+                retrying: false,
+                retryDone: false,
+                importedAsThumbnail: false,
+              });
             }
           }
         } catch (chunkErr) {
           console.error(`Chunk ${i / CHUNK_SIZE + 1} failed:`, chunkErr);
-          // Continue with remaining chunks
         }
         setImportProgress({ done: Math.min(i + CHUNK_SIZE, itemsToImport.length), total: itemsToImport.length });
       }
@@ -257,10 +261,18 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
       setImportResult(finalResult);
       setSelected(new Set());
 
-      // Move newly imported items into the duplicate set
+      // Move successfully imported items into the duplicate set
+      const importedGoogleIds = new Set(importedItemIds.map(id => {
+        // Find the picker item by iterating (we have the asset IDs, not google IDs)
+        return null; // We'll just add all selected to dupes
+      }));
       setDuplicateIds(prev => {
         const next = new Set(prev);
-        itemsToImport.forEach(i => next.add(i.id));
+        // Mark successfully imported items as duplicates (not the failed ones)
+        itemsToImport.forEach(i => {
+          const isFailed = videoFailures.some(f => f.googlePhotosId === i.id);
+          if (!isFailed) next.add(i.id);
+        });
         return next;
       });
 
@@ -278,18 +290,50 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
     }
   };
 
-  // Retry a single failed video download
+  // Retry importing a single failed video (re-attempts full video download)
   const retryVideoDownload = async (index) => {
     const failed = failedVideos[index];
-    if (!failed || !failed.baseUrl) return;
+    if (!failed || !failed.pickerItem) return;
+
+    setFailedVideos(prev => prev.map((f, i) => i === index ? { ...f, retrying: true, retryError: null } : f));
+
+    try {
+      // Re-import through the normal import endpoint (single item)
+      const result = await api.googlePhotosImport([failed.pickerItem]);
+      if (result.imported > 0 && result.items?.[0]) {
+        setFailedVideos(prev => prev.map((f, i) => i === index ? { ...f, retrying: false, retryDone: true, assetId: result.items[0].id } : f));
+      } else if (result.failedVideos?.length > 0) {
+        // Still failed
+        setFailedVideos(prev => prev.map((f, i) => i === index ? { ...f, retrying: false, retryError: 'Video download timed out again' } : f));
+      }
+    } catch (err) {
+      console.error('Retry failed:', err.message);
+      setFailedVideos(prev => prev.map((f, i) => i === index ? { ...f, retrying: false, retryError: err.message } : f));
+    }
+  };
+
+  // Import a single failed video as thumbnail only (no full video file)
+  const importAsThumbnailOnly = async (index) => {
+    const failed = failedVideos[index];
+    if (!failed) return;
 
     setFailedVideos(prev => prev.map((f, i) => i === index ? { ...f, retrying: true } : f));
 
     try {
-      await api.googlePhotosRetryVideo(failed.assetId, failed.baseUrl);
-      setFailedVideos(prev => prev.map((f, i) => i === index ? { ...f, retrying: false, retryDone: true } : f));
+      const item = failed.pickerItem || {};
+      await api.googlePhotosImportThumbnailOnly([{
+        googlePhotosId: failed.googlePhotosId,
+        filename: failed.filename,
+        thumbnailUrl: failed.thumbnailUrl,
+        mimeType: item.mimeType,
+        width: item.width,
+        height: item.height,
+        createTime: item.createTime,
+        productUrl: item.productUrl,
+      }]);
+      setFailedVideos(prev => prev.map((f, i) => i === index ? { ...f, retrying: false, importedAsThumbnail: true, retryDone: true } : f));
     } catch (err) {
-      console.error('Retry failed:', err.message);
+      console.error('Thumbnail import failed:', err.message);
       setFailedVideos(prev => prev.map((f, i) => i === index ? { ...f, retrying: false, retryError: err.message } : f));
     }
   };
@@ -299,6 +343,15 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
     for (let i = 0; i < failedVideos.length; i++) {
       if (!failedVideos[i].retryDone) {
         await retryVideoDownload(i);
+      }
+    }
+  };
+
+  // Import all failed as thumbnail only
+  const importAllAsThumbnail = async () => {
+    for (let i = 0; i < failedVideos.length; i++) {
+      if (!failedVideos[i].retryDone) {
+        await importAsThumbnailOnly(i);
       }
     }
   };
@@ -382,55 +435,76 @@ export default function GooglePhotosBrowser({ onImportComplete }) {
             </p>
           </div>
 
-          {/* Failed video downloads — retry UI */}
-          {failedVideos.length > 0 && (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
-              <div className="flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
-                <div>
-                  <p className="text-sm font-medium text-amber-800">
-                    {failedVideos.filter(f => !f.retryDone).length} video{failedVideos.filter(f => !f.retryDone).length !== 1 ? 's' : ''} imported without full video file
-                  </p>
-                  <p className="text-xs text-amber-600 mt-0.5">
-                    The video download timed out. You can retry the download — scene extraction requires the full video file.
-                  </p>
+          {/* Failed video downloads — not imported, show options */}
+          {failedVideos.length > 0 && (() => {
+            const pending = failedVideos.filter(f => !f.retryDone);
+            return (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-sm font-medium text-amber-800">
+                      {pending.length} video{pending.length !== 1 ? 's' : ''} not imported — download timed out
+                    </p>
+                    <p className="text-xs text-amber-600 mt-0.5">
+                      The full video file couldn't be downloaded within the server time limit.
+                      You can retry, or import with just the thumbnail (scene extraction won't be available).
+                    </p>
+                  </div>
                 </div>
-              </div>
 
-              {failedVideos.map((failed, idx) => (
-                <div key={failed.assetId} className="flex items-center gap-3 bg-white/60 rounded-lg px-3 py-2">
-                  <Video className="w-4 h-4 text-surface-400 shrink-0" />
-                  <span className="text-xs text-surface-700 truncate flex-1">{failed.filename}</span>
-                  {failed.retryDone ? (
-                    <span className="flex items-center gap-1 text-xs text-green-600 font-medium shrink-0">
-                      <CheckCircle2 className="w-3.5 h-3.5" /> Fixed
-                    </span>
-                  ) : failed.retrying ? (
-                    <span className="flex items-center gap-1 text-xs text-brand-500 shrink-0">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" /> Downloading...
-                    </span>
-                  ) : (
-                    <button
-                      onClick={() => retryVideoDownload(idx)}
-                      className="flex items-center gap-1 text-xs text-brand-600 hover:text-brand-700 font-medium shrink-0"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5" /> Retry
+                {failedVideos.map((failed, idx) => (
+                  <div key={failed.googlePhotosId} className="bg-white/60 rounded-lg px-3 py-2 space-y-2">
+                    <div className="flex items-center gap-3">
+                      <Video className="w-4 h-4 text-surface-400 shrink-0" />
+                      <span className="text-xs text-surface-700 truncate flex-1">{failed.filename}</span>
+                      {failed.retryDone && (
+                        <span className="flex items-center gap-1 text-xs text-green-600 font-medium shrink-0">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          {failed.importedAsThumbnail ? 'Imported (thumb)' : 'Imported'}
+                        </span>
+                      )}
+                    </div>
+                    {!failed.retryDone && !failed.retrying && (
+                      <div className="flex gap-2 ml-7">
+                        <button
+                          onClick={() => retryVideoDownload(idx)}
+                          className="flex items-center gap-1 text-[11px] text-brand-600 hover:text-brand-700 font-medium px-2 py-1 rounded-lg hover:bg-brand-50"
+                        >
+                          <RotateCcw className="w-3 h-3" /> Retry Download
+                        </button>
+                        <button
+                          onClick={() => importAsThumbnailOnly(idx)}
+                          className="flex items-center gap-1 text-[11px] text-surface-500 hover:text-surface-700 font-medium px-2 py-1 rounded-lg hover:bg-surface-100"
+                        >
+                          <Image className="w-3 h-3" /> Import as Thumbnail
+                        </button>
+                      </div>
+                    )}
+                    {failed.retrying && (
+                      <div className="flex items-center gap-1 ml-7 text-xs text-brand-500">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Working...
+                      </div>
+                    )}
+                    {failed.retryError && !failed.retrying && !failed.retryDone && (
+                      <p className="text-[11px] text-red-500 ml-7">{failed.retryError}</p>
+                    )}
+                  </div>
+                ))}
+
+                {pending.length > 1 && (
+                  <div className="flex gap-2">
+                    <button onClick={retryAllVideos} className="btn-secondary text-xs flex-1">
+                      <RotateCcw className="w-3.5 h-3.5" /> Retry All
                     </button>
-                  )}
-                  {failed.retryError && !failed.retrying && !failed.retryDone && (
-                    <span className="text-[10px] text-red-500 shrink-0">Failed</span>
-                  )}
-                </div>
-              ))}
-
-              {failedVideos.filter(f => !f.retryDone && !f.retrying).length > 1 && (
-                <button onClick={retryAllVideos} className="btn-secondary text-xs w-full">
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  Retry All
-                </button>
-              )}
-            </div>
-          )}
+                    <button onClick={importAllAsThumbnail} className="btn-ghost text-xs flex-1">
+                      <Image className="w-3.5 h-3.5" /> Import All as Thumbnail
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           <div className="text-center">
             <button

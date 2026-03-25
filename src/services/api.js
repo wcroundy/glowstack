@@ -133,6 +133,7 @@ export const api = {
   googlePhotosImport: (items) => request('/google-photos/import', { method: 'POST', body: JSON.stringify({ items }) }),
   googlePhotosDeleteSession: (sessionId) => request(`/google-photos/session/${sessionId}`, { method: 'DELETE' }),
   googlePhotosRetryVideo: (assetId, baseUrl) => request('/google-photos/retry-video', { method: 'POST', body: JSON.stringify({ assetId, baseUrl }) }),
+  googlePhotosImportThumbnailOnly: (items) => request('/google-photos/import-thumbnail-only', { method: 'POST', body: JSON.stringify({ items }) }),
   googlePhotosCleanup: () => request('/google-photos/cleanup', { method: 'POST' }),
   googlePhotosDisconnect: () => request('/google-photos/disconnect', { method: 'POST' }),
 

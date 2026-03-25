@@ -306,45 +306,54 @@ router.post('/import', async (req, res) => {
           }
         }
 
-        const videoDownloadFailed = isVideo && !videoUrl;
-        processedItems.push({
-          _googleId: item.id,
-          _videoDownloadFailed: videoDownloadFailed,
-          file_name: filename,
-          file_url: videoUrl || thumbnailUrl,
-          thumbnail_url: thumbnailUrl,
-          file_type: isVideo ? 'video' : 'image',
-          mime_type: item.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
-          source: 'google_photos',
-          source_url: item.productUrl || null,
-          google_photos_id: item.id,
-          title: filename.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '),
-          width: item.width || null,
-          height: item.height || null,
-          captured_at: item.createTime || null,
-        });
+        // If video download failed, DON'T insert — report separately
+        if (isVideo && !videoUrl) {
+          console.warn(`Video ${item.id}: skipping DB insert — full video file not downloaded`);
+          processedItems.push({
+            _skipped: true,
+            _googleId: item.id,
+            _filename: filename,
+            _thumbnailUrl: thumbnailUrl,
+          });
+        } else {
+          processedItems.push({
+            _skipped: false,
+            _googleId: item.id,
+            file_name: filename,
+            file_url: videoUrl || thumbnailUrl,
+            thumbnail_url: thumbnailUrl,
+            file_type: isVideo ? 'video' : 'image',
+            mime_type: item.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
+            source: 'google_photos',
+            source_url: item.productUrl || null,
+            google_photos_id: item.id,
+            title: filename.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '),
+            width: item.width || null,
+            height: item.height || null,
+            captured_at: item.createTime || null,
+          });
+        }
       } catch (itemErr) {
         console.error(`Failed to process item ${item.id}:`, itemErr.message);
       }
     }
 
-    if (processedItems.length === 0) {
-      return res.json({ imported: 0, alreadyExisted: alreadyCount, error: 'Failed to process any items' });
+    // Separate successful items from failed video downloads
+    const successItems = processedItems.filter(p => !p._skipped);
+    const failedVideoItems = processedItems.filter(p => p._skipped);
+
+    // 5. Insert only successful items
+    let inserted = [];
+    if (successItems.length > 0) {
+      const insertItems = successItems.map(({ _skipped, _googleId, ...rest }) => rest);
+      const { data, error } = await supabase
+        .from('media_assets')
+        .insert(insertItems)
+        .select('id, file_name, google_photos_id, file_type');
+
+      if (error) throw error;
+      inserted = data || [];
     }
-
-    // Track which google IDs had video download failures (before stripping internal fields)
-    const failedVideoGoogleIds = new Set(
-      processedItems.filter(p => p._videoDownloadFailed).map(p => p._googleId)
-    );
-
-    // 5. Batch insert all processed items (strip internal tracking fields)
-    const insertItems = processedItems.map(({ _googleId, _videoDownloadFailed, ...rest }) => rest);
-    const { data: inserted, error } = await supabase
-      .from('media_assets')
-      .insert(insertItems)
-      .select('id, file_name, google_photos_id, file_type');
-
-    if (error) throw error;
 
     res.json({
       imported: inserted.length,
@@ -354,11 +363,55 @@ router.post('/import', async (req, res) => {
         status: 'imported',
         filename: a.file_name,
         googlePhotosId: a.google_photos_id,
-        videoDownloadFailed: a.file_type === 'video' && failedVideoGoogleIds.has(a.google_photos_id),
+      })),
+      failedVideos: failedVideoItems.map(f => ({
+        googlePhotosId: f._googleId,
+        filename: f._filename,
+        thumbnailUrl: f._thumbnailUrl,
       })),
     });
   } catch (err) {
     console.error('Google Photos import error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/google-photos/import-thumbnail-only — import a video with just its thumbnail (no full file)
+router.post('/import-thumbnail-only', async (req, res) => {
+  try {
+    const { items } = req.body; // [{ googlePhotosId, filename, thumbnailUrl, mimeType, width, height, createTime, productUrl }]
+    if (!items || items.length === 0) {
+      return res.status(400).json({ error: 'No items provided' });
+    }
+
+    const insertItems = items.map(item => ({
+      file_name: item.filename,
+      file_url: item.thumbnailUrl,
+      thumbnail_url: item.thumbnailUrl,
+      file_type: 'video',
+      mime_type: item.mimeType || 'video/mp4',
+      source: 'google_photos',
+      source_url: item.productUrl || null,
+      google_photos_id: item.googlePhotosId,
+      title: (item.filename || 'video').replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '),
+      width: item.width || null,
+      height: item.height || null,
+      captured_at: item.createTime || null,
+    }));
+
+    const { data: inserted, error } = await supabase
+      .from('media_assets')
+      .insert(insertItems)
+      .select('id, file_name');
+
+    if (error) throw error;
+
+    res.json({
+      imported: inserted.length,
+      items: inserted.map(a => ({ id: a.id, filename: a.file_name })),
+    });
+  } catch (err) {
+    console.error('Thumbnail-only import error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
