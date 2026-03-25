@@ -240,93 +240,88 @@ router.post('/import', async (req, res) => {
       return res.status(401).json({ error: 'Google Photos not connected — cannot download images' });
     }
 
-    // 4. Download thumbnails to Supabase Storage (with auth headers)
-    const BATCH_SIZE = 10;
+    // 4. Download media to Supabase Storage (with auth headers)
+    // Process items ONE AT A TIME to avoid overwhelming the serverless function
+    // with parallel video downloads that can timeout
     const processedItems = [];
 
-    for (let i = 0; i < newItems.length; i += BATCH_SIZE) {
-      const batch = newItems.slice(i, i + BATCH_SIZE);
-      const results = await Promise.allSettled(
-        batch.map(async (item) => {
-          const isVideo = item.type === 'VIDEO';
-          const filename = item.filename || `photo_${item.id}.jpg`;
-          const thumbPath = `google-photos/${item.id}/thumb.jpg`;
+    for (const item of newItems) {
+      try {
+        const isVideo = item.type === 'VIDEO';
+        const filename = item.filename || `photo_${item.id}.jpg`;
+        const thumbPath = `google-photos/${item.id}/thumb.jpg`;
 
-          let thumbnailUrl = '';
-          let videoUrl = '';
-          const baseUrl = item.baseUrl || '';
+        let thumbnailUrl = '';
+        let videoUrl = '';
+        const baseUrl = item.baseUrl || '';
 
-          if (baseUrl) {
-            // Download thumbnail for all items
-            try {
-              const thumbSrc = `${baseUrl}=w400-h400-c`;
-              const thumbRes = await fetch(thumbSrc, {
-                headers: { Authorization: `Bearer ${accessToken}` },
-              });
-              if (thumbRes.ok) {
-                const buffer = Buffer.from(await thumbRes.arrayBuffer());
-                const uploaded = await uploadFile('thumbnails', thumbPath, buffer, 'image/jpeg');
-                thumbnailUrl = uploaded.publicUrl;
-              } else {
-                console.error(`Thumb download failed for ${item.id}: ${thumbRes.status}`);
-              }
-            } catch (err) {
-              console.error(`Thumb error for ${item.id}:`, err.message);
+        if (baseUrl) {
+          // Download thumbnail for all items
+          try {
+            const thumbSrc = `${baseUrl}=w400-h400-c`;
+            const thumbRes = await fetch(thumbSrc, {
+              headers: { Authorization: `Bearer ${accessToken}` },
+              signal: AbortSignal.timeout(15000), // 15s timeout for thumbnails
+            });
+            if (thumbRes.ok) {
+              const buffer = Buffer.from(await thumbRes.arrayBuffer());
+              const uploaded = await uploadFile('thumbnails', thumbPath, buffer, 'image/jpeg');
+              thumbnailUrl = uploaded.publicUrl;
+            } else {
+              console.error(`Thumb download failed for ${item.id}: ${thumbRes.status}`);
             }
-
-            // For videos, also download the full video file to media bucket
-            if (isVideo) {
-              try {
-                const videoSrc = `${baseUrl}=dv`;
-                console.log(`Downloading video for ${item.id}...`);
-                const videoRes = await fetch(videoSrc, {
-                  headers: { Authorization: `Bearer ${accessToken}` },
-                });
-                if (videoRes.ok) {
-                  const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
-                  const sizeMB = (videoBuffer.length / (1024 * 1024)).toFixed(1);
-                  console.log(`Video ${item.id}: ${sizeMB}MB`);
-                  // Only store if under 50MB (Supabase media bucket limit)
-                  if (videoBuffer.length <= 50 * 1024 * 1024) {
-                    const ext = (item.mimeType || 'video/mp4').includes('quicktime') ? 'mov' : 'mp4';
-                    const videoPath = `google-photos/${item.id}/video.${ext}`;
-                    const uploadedVideo = await uploadFile('media', videoPath, videoBuffer, item.mimeType || 'video/mp4');
-                    videoUrl = uploadedVideo.publicUrl;
-                  } else {
-                    console.warn(`Video ${item.id} too large (${sizeMB}MB), skipping full download`);
-                  }
-                } else {
-                  console.error(`Video download failed for ${item.id}: ${videoRes.status}`);
-                }
-              } catch (videoErr) {
-                console.error(`Video download error for ${item.id}:`, videoErr.message);
-              }
-            }
+          } catch (err) {
+            console.error(`Thumb error for ${item.id}:`, err.message);
           }
 
-          return {
-            file_name: filename,
-            file_url: videoUrl || thumbnailUrl,
-            thumbnail_url: thumbnailUrl,
-            file_type: isVideo ? 'video' : 'image',
-            mime_type: item.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
-            source: 'google_photos',
-            source_url: item.productUrl || null,
-            google_photos_id: item.id,
-            title: filename.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '),
-            width: item.width || null,
-            height: item.height || null,
-            captured_at: item.createTime || null,
-          };
-        })
-      );
-
-      for (const result of results) {
-        if (result.status === 'fulfilled') {
-          processedItems.push(result.value);
-        } else {
-          console.error('Item processing rejected:', result.reason);
+          // For videos, download the full video file SEQUENTIALLY (not in parallel)
+          if (isVideo) {
+            try {
+              const videoSrc = `${baseUrl}=dv`;
+              console.log(`Downloading video for ${item.id}...`);
+              const videoRes = await fetch(videoSrc, {
+                headers: { Authorization: `Bearer ${accessToken}` },
+                signal: AbortSignal.timeout(45000), // 45s timeout for video downloads
+              });
+              if (videoRes.ok) {
+                const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
+                const sizeMB = (videoBuffer.length / (1024 * 1024)).toFixed(1);
+                console.log(`Video ${item.id}: ${sizeMB}MB — download OK`);
+                // Only store if under 50MB (Supabase media bucket limit)
+                if (videoBuffer.length <= 50 * 1024 * 1024) {
+                  const ext = (item.mimeType || 'video/mp4').includes('quicktime') ? 'mov' : 'mp4';
+                  const videoPath = `google-photos/${item.id}/video.${ext}`;
+                  const uploadedVideo = await uploadFile('media', videoPath, videoBuffer, item.mimeType || 'video/mp4');
+                  videoUrl = uploadedVideo.publicUrl;
+                  console.log(`Video ${item.id}: uploaded to storage OK`);
+                } else {
+                  console.warn(`Video ${item.id} too large (${sizeMB}MB), skipping full download`);
+                }
+              } else {
+                console.error(`Video download FAILED for ${item.id}: HTTP ${videoRes.status}`);
+              }
+            } catch (videoErr) {
+              console.error(`Video download ERROR for ${item.id}:`, videoErr.message);
+            }
+          }
         }
+
+        processedItems.push({
+          file_name: filename,
+          file_url: videoUrl || thumbnailUrl,
+          thumbnail_url: thumbnailUrl,
+          file_type: isVideo ? 'video' : 'image',
+          mime_type: item.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
+          source: 'google_photos',
+          source_url: item.productUrl || null,
+          google_photos_id: item.id,
+          title: filename.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '),
+          width: item.width || null,
+          height: item.height || null,
+          captured_at: item.createTime || null,
+        });
+      } catch (itemErr) {
+        console.error(`Failed to process item ${item.id}:`, itemErr.message);
       }
     }
 
