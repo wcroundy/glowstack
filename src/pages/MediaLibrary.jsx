@@ -383,6 +383,7 @@ export default function MediaLibrary() {
       {showGooglePhotos && (
         <div className="card p-4 mb-4">
           <GooglePhotosBrowser onImportComplete={async (result) => {
+            console.log('[SceneQueue] Import complete result:', JSON.stringify(result));
             refreshMedia();
             if (result?.extractScenes && result.imported > 0 && result.importedItemIds?.length > 0) {
               // Fetch each imported asset by ID, filter for videos with full files
@@ -390,12 +391,14 @@ export default function MediaLibrary() {
                 const fetched = await Promise.all(
                   result.importedItemIds.map(id => api.getMediaById(id).catch(() => null))
                 );
+                console.log('[SceneQueue] Fetched assets:', fetched.map(a => a && { id: a.id, type: a.file_type, file_url: a.file_url?.slice(-30), thumb: a.thumbnail_url?.slice(-30) }));
                 const videos = fetched.filter(a =>
                   a &&
                   a.file_type === 'video' &&
                   a.file_url && a.thumbnail_url &&
                   a.file_url !== a.thumbnail_url
                 );
+                console.log('[SceneQueue] Videos to extract:', videos.length);
                 if (videos.length > 0) {
                   setSceneExtractionQueue(videos);
                   setExtractionStatus({ current: 0, total: videos.length, currentAsset: videos[0] });
@@ -403,6 +406,8 @@ export default function MediaLibrary() {
               } catch (err) {
                 console.error('Failed to queue scene extraction:', err);
               }
+            } else {
+              console.log('[SceneQueue] Skipped — extractScenes:', result?.extractScenes, 'imported:', result?.imported, 'ids:', result?.importedItemIds?.length);
             }
           }} />
         </div>
