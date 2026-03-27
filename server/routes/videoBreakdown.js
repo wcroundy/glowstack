@@ -45,7 +45,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 // Cost constants
 const COST_PER_FRAME_ANALYSIS_CENTS = 0.2; // ~$0.002 per gpt-4o-mini vision call (low detail)
 const COST_PER_SCENE_DETECTION_CENTS = 0.5; // slightly more for the comparison prompt
-const FRAME_INTERVAL_SECONDS = 2; // extract a frame every 2 seconds
+const FRAME_INTERVAL_SECONDS = 1.5; // extract a frame every 1.5 seconds
 
 // Helper: clean up temp files
 async function cleanupTempFiles(videoPath, framesDir) {
@@ -161,7 +161,7 @@ router.post('/extract-and-process', async (req, res) => {
       '-i', videoPath,
       '-vf', `fps=1/${FRAME_INTERVAL_SECONDS}`,
       '-q:v', '3',
-      '-vframes', '60',
+      '-vframes', '90',
       outputPattern,
     ], { timeout: 120000 });
 
@@ -213,7 +213,7 @@ router.post('/extract-and-process', async (req, res) => {
 
     const scenePrompt = `You are analyzing frames extracted from a beauty/fashion influencer video at ${FRAME_INTERVAL_SECONDS}-second intervals.
 
-Your goal is to identify EVERY distinct item, outfit, or product showcased in the video. This is for a media asset management system — the influencer needs a thumbnail for each unique thing shown.
+Your goal is to identify EVERY distinct item, outfit, or product showcased in the video. This is for a media asset management system — the influencer needs a thumbnail for each unique thing shown. It is CRITICAL that you do not miss any items. When in doubt, ALWAYS mark a frame as unique.
 
 For each frame, determine:
 1. What is the PRIMARY FOCUS — what outfit is being worn, OR what product/item is being held up, displayed, or showcased
@@ -224,6 +224,12 @@ A frame is UNIQUE if ANY of these are true:
 - A product, garment, or item is being HELD UP or DISPLAYED to camera (even if the person's own outfit hasn't changed)
 - A different beauty product, accessory, or item is the visual focus
 - A clearly different hairstyle or makeup look is shown
+
+PAY CLOSE ATTENTION TO THESE DETAILS when comparing frames:
+- Two items that are BOTH dark/black are NOT the same. A black dress is different from a black bodysuit, a black top with a skirt, etc. Look at the SILHOUETTE, LENGTH, and STYLE — not just the color.
+- Two items that are similar colors but different garment types (e.g. a blue dress vs blue shorts) are DIFFERENT scenes.
+- Outfit COMBINATIONS matter: a black top + patterned skirt is different from a black dress, even though both have black on top.
+- If the person has visibly changed what they're wearing between frames, it's a new scene — period.
 
 IMPORTANT: In fashion/beauty videos, creators often hold up or showcase items while wearing the same outfit. A person holding up a pair of shorts, a bag, a product, etc. IS a unique scene even though their own clothing hasn't changed. The held-up item is the focus.
 
@@ -240,7 +246,7 @@ Return a JSON array where each element corresponds to a frame (in order):
   ...
 ]
 
-Mark the FIRST frame as always unique. For duplicate frames showing the same thing, mark isUnique: false. When in doubt about whether something is new, lean toward marking it as unique — it's better to capture an extra scene than miss one.`;
+Mark the FIRST frame as always unique. For duplicate frames showing the same thing, mark isUnique: false. Err heavily on the side of marking frames as unique — it's much better to capture an extra scene than to miss one entirely.`;
 
     sendProgress(55, `AI analyzing ${frames.length} frames...`);
 
@@ -265,7 +271,7 @@ Mark the FIRST frame as always unique. For duplicate frames showing the same thi
             ],
           },
         ],
-        max_tokens: 4000,
+        max_tokens: 6000,
         temperature: 0.3,
       }),
     });
@@ -536,7 +542,7 @@ router.post('/process', async (req, res) => {
     // Build a single prompt with all frames for scene detection
     const scenePrompt = `You are analyzing frames extracted from a beauty/fashion influencer video at ${FRAME_INTERVAL_SECONDS}-second intervals.
 
-Your goal is to identify EVERY distinct item, outfit, or product showcased in the video. This is for a media asset management system — the influencer needs a thumbnail for each unique thing shown.
+Your goal is to identify EVERY distinct item, outfit, or product showcased in the video. This is for a media asset management system — the influencer needs a thumbnail for each unique thing shown. It is CRITICAL that you do not miss any items. When in doubt, ALWAYS mark a frame as unique.
 
 For each frame, determine:
 1. What is the PRIMARY FOCUS — what outfit is being worn, OR what product/item is being held up, displayed, or showcased
@@ -547,6 +553,12 @@ A frame is UNIQUE if ANY of these are true:
 - A product, garment, or item is being HELD UP or DISPLAYED to camera (even if the person's own outfit hasn't changed)
 - A different beauty product, accessory, or item is the visual focus
 - A clearly different hairstyle or makeup look is shown
+
+PAY CLOSE ATTENTION TO THESE DETAILS when comparing frames:
+- Two items that are BOTH dark/black are NOT the same. A black dress is different from a black bodysuit, a black top with a skirt, etc. Look at the SILHOUETTE, LENGTH, and STYLE — not just the color.
+- Two items that are similar colors but different garment types (e.g. a blue dress vs blue shorts) are DIFFERENT scenes.
+- Outfit COMBINATIONS matter: a black top + patterned skirt is different from a black dress, even though both have black on top.
+- If the person has visibly changed what they're wearing between frames, it's a new scene — period.
 
 IMPORTANT: In fashion/beauty videos, creators often hold up or showcase items while wearing the same outfit. A person holding up a pair of shorts, a bag, a product, etc. IS a unique scene even though their own clothing hasn't changed. The held-up item is the focus.
 
@@ -563,7 +575,7 @@ Return a JSON array where each element corresponds to a frame (in order):
   ...
 ]
 
-Mark the FIRST frame as always unique. For duplicate frames showing the same thing, mark isUnique: false. When in doubt about whether something is new, lean toward marking it as unique — it's better to capture an extra scene than miss one.`;
+Mark the FIRST frame as always unique. For duplicate frames showing the same thing, mark isUnique: false. Err heavily on the side of marking frames as unique — it's much better to capture an extra scene than to miss one entirely.`;
 
     try {
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -587,7 +599,7 @@ Mark the FIRST frame as always unique. For duplicate frames showing the same thi
               ],
             },
           ],
-          max_tokens: 2000,
+          max_tokens: 6000,
           temperature: 0.3,
         }),
       });
