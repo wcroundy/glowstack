@@ -9,7 +9,7 @@ import { api } from '../../services/api';
 // Cost constants (must match server/routes/videoBreakdown.js)
 const COST_PER_FRAME_CENTS = 0.2;
 const COST_PER_SCENE_DETECTION_CENTS = 0.5;
-const FRAME_INTERVAL_SECONDS = 2;
+const FRAME_INTERVAL_SECONDS = 1.5;
 const DEFAULT_VIDEO_DURATION = 30;
 
 export default function GooglePhotosBrowser({ onImportComplete }) {
