@@ -43,7 +43,7 @@ const router = Router();
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 // Cost constants
-const COST_PER_FRAME_ANALYSIS_CENTS = 0.2; // ~$0.002 per gpt-4o-mini vision call (low detail)
+const COST_PER_FRAME_ANALYSIS_CENTS = 0.6; // ~$0.006 per gpt-4o-mini vision call (auto detail)
 const COST_PER_SCENE_DETECTION_CENTS = 0.5; // slightly more for the comparison prompt
 const FRAME_INTERVAL_SECONDS = 1.5; // extract a frame every 1.5 seconds
 
@@ -208,7 +208,7 @@ router.post('/extract-and-process', async (req, res) => {
     // ---- STEP 4: Send frames to OpenAI for scene detection (50–80%) ----
     const imageContents = frames.map((frame) => ({
       type: 'image_url',
-      image_url: { url: frame.dataUrl, detail: 'low' },
+      image_url: { url: frame.dataUrl, detail: 'auto' },
     }));
 
     const scenePrompt = `You are analyzing frames extracted from a beauty/fashion influencer video at ${FRAME_INTERVAL_SECONDS}-second intervals.
@@ -536,7 +536,7 @@ router.post('/process', async (req, res) => {
     const frameDescriptions = [];
     const imageContents = frames.map((frame, i) => ({
       type: 'image_url',
-      image_url: { url: frame.dataUrl, detail: 'low' },
+      image_url: { url: frame.dataUrl, detail: 'auto' },
     }));
 
     // Build a single prompt with all frames for scene detection
