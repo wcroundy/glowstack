@@ -353,7 +353,7 @@ router.post('/sync/facebook', async (req, res) => {
 // GET /api/meta/instagram/posts — get stored Instagram posts with insights
 router.get('/instagram/posts', async (req, res) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
     const offset = parseInt(req.query.offset) || 0;
     const sort = req.query.sort || 'timestamp';
     const order = req.query.order === 'asc' ? true : false;
@@ -431,7 +431,7 @@ router.get('/instagram/summary', async (req, res) => {
 // GET /api/meta/facebook/posts — get stored Facebook posts with insights
 router.get('/facebook/posts', async (req, res) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
     const offset = parseInt(req.query.offset) || 0;
 
     const { data, error, count } = await supabase

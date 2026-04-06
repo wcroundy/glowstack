@@ -124,6 +124,11 @@ export default function SocialInsights() {
   const [sortField, setSortField] = useState('timestamp');
   const [sortOrder, setSortOrder] = useState('desc');
 
+  // Pagination
+  const PAGE_SIZE = 50;
+  const [igPage, setIgPage] = useState(0);
+  const [fbPage, setFbPage] = useState(0);
+
   useEffect(() => {
     loadStatus();
   }, []);
@@ -159,9 +164,9 @@ export default function SocialInsights() {
       if (metaConn) {
         promises.push(
           api.metaInstagramSummary().catch(() => null),
-          api.metaInstagramPosts({ limit: 50, sort: sortField, order: sortOrder }).catch(() => ({ data: [], total: 0 })),
+          api.metaInstagramPosts({ limit: PAGE_SIZE, offset: igPage * PAGE_SIZE, sort: sortField, order: sortOrder }).catch(() => ({ data: [], total: 0 })),
           api.metaFacebookSummary().catch(() => null),
-          api.metaFacebookPosts({ limit: 50 }).catch(() => ({ data: [], total: 0 })),
+          api.metaFacebookPosts({ limit: PAGE_SIZE, offset: fbPage * PAGE_SIZE }).catch(() => ({ data: [], total: 0 })),
         );
       } else {
         promises.push(null, { data: [], total: 0 }, null, { data: [], total: 0 });
@@ -188,6 +193,25 @@ export default function SocialInsights() {
     } catch (err) {
       // non-critical
     }
+  };
+
+  // Pagination handlers
+  const loadFbPage = async (page) => {
+    setFbPage(page);
+    try {
+      const result = await api.metaFacebookPosts({ limit: PAGE_SIZE, offset: page * PAGE_SIZE });
+      setFbPosts(result?.data || []);
+      setFbTotal(result?.total || 0);
+    } catch (err) { /* non-critical */ }
+  };
+
+  const loadIgPage = async (page) => {
+    setIgPage(page);
+    try {
+      const result = await api.metaInstagramPosts({ limit: PAGE_SIZE, offset: page * PAGE_SIZE, sort: sortField, order: sortOrder });
+      setIgPosts(result?.data || []);
+      setIgTotal(result?.total || 0);
+    } catch (err) { /* non-critical */ }
   };
 
   const handleConnect = async () => {
@@ -569,6 +593,33 @@ export default function SocialInsights() {
                         </tbody>
                       </table>
                     </div>
+                    {/* Pagination */}
+                    {igTotal > PAGE_SIZE && (
+                      <div className="px-4 py-3 border-t flex items-center justify-between">
+                        <p className="text-xs text-surface-400">
+                          Showing {igPage * PAGE_SIZE + 1}–{Math.min((igPage + 1) * PAGE_SIZE, igTotal)} of {igTotal.toLocaleString()}
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => loadIgPage(igPage - 1)}
+                            disabled={igPage === 0}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-surface-200 hover:bg-surface-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            Previous
+                          </button>
+                          <span className="text-xs text-surface-500">
+                            Page {igPage + 1} of {Math.ceil(igTotal / PAGE_SIZE)}
+                          </span>
+                          <button
+                            onClick={() => loadIgPage(igPage + 1)}
+                            disabled={(igPage + 1) * PAGE_SIZE >= igTotal}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-surface-200 hover:bg-surface-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </>
               ) : (
@@ -653,6 +704,33 @@ export default function SocialInsights() {
                         </tbody>
                       </table>
                     </div>
+                    {/* Pagination */}
+                    {fbTotal > PAGE_SIZE && (
+                      <div className="px-4 py-3 border-t flex items-center justify-between">
+                        <p className="text-xs text-surface-400">
+                          Showing {fbPage * PAGE_SIZE + 1}–{Math.min((fbPage + 1) * PAGE_SIZE, fbTotal)} of {fbTotal.toLocaleString()}
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => loadFbPage(fbPage - 1)}
+                            disabled={fbPage === 0}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-surface-200 hover:bg-surface-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            Previous
+                          </button>
+                          <span className="text-xs text-surface-500">
+                            Page {fbPage + 1} of {Math.ceil(fbTotal / PAGE_SIZE)}
+                          </span>
+                          <button
+                            onClick={() => loadFbPage(fbPage + 1)}
+                            disabled={(fbPage + 1) * PAGE_SIZE >= fbTotal}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-surface-200 hover:bg-surface-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </>
               ) : (
