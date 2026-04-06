@@ -91,9 +91,15 @@ router.get('/callback', async (req, res) => {
     }
 
     // Use the first page that has an Instagram Business Account connected
+    console.log('Meta callback: pages data:', JSON.stringify(pages.map(p => ({
+      id: p.id, name: p.name,
+      hasAccessToken: !!p.access_token,
+      instagram_business_account: p.instagram_business_account || 'NONE',
+    }))));
     let selectedPage = pages.find(p => p.instagram_business_account);
     if (!selectedPage) {
       // Fall back to first page
+      console.log('Meta callback: no page has instagram_business_account, using first page');
       selectedPage = pages[0];
     }
 
