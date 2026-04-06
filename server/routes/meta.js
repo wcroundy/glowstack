@@ -190,18 +190,16 @@ router.post('/sync/instagram', async (req, res) => {
       syncLogId = log?.id;
     }
 
-    // Fetch posts (paginate up to 200)
+    // Fetch all posts (paginate until exhausted)
     let allPosts = [];
     let after = null;
-    let pages = 0;
-    const maxPages = 4; // 4 × 50 = 200 posts max
 
     do {
-      const result = await getInstagramMedia(igUserId, pageAccessToken, 50, after);
+      const result = await getInstagramMedia(igUserId, pageAccessToken, 100, after);
       allPosts = allPosts.concat(result.data || []);
       after = result.paging?.cursors?.after;
-      pages++;
-    } while (after && pages < maxPages);
+      console.log(`Instagram sync: fetched ${allPosts.length} posts so far...`);
+    } while (after);
 
     // Process each post: get insights and upsert
     let synced = 0;
@@ -274,18 +272,16 @@ router.post('/sync/facebook', async (req, res) => {
       syncLogId = log?.id;
     }
 
-    // Fetch posts
+    // Fetch all posts (paginate until exhausted)
     let allPosts = [];
     let after = null;
-    let pages = 0;
-    const maxPages = 4;
 
     do {
-      const result = await getFacebookPosts(pageId, pageAccessToken, 50, after);
+      const result = await getFacebookPosts(pageId, pageAccessToken, 100, after);
       allPosts = allPosts.concat(result.data || []);
       after = result.paging?.cursors?.after;
-      pages++;
-    } while (after && pages < maxPages);
+      console.log(`Facebook sync: fetched ${allPosts.length} posts so far...`);
+    } while (after);
 
     // Process each post
     let synced = 0;
