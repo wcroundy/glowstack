@@ -162,7 +162,7 @@ export async function getInstagramAccountInsights(igUserId, pageAccessToken, per
 
 // Fetch Facebook Page posts
 export async function getFacebookPosts(pageId, pageAccessToken, limit = 50, after = null) {
-  let url = `${GRAPH_API}/${pageId}/posts?fields=id,message,permalink_url,type,created_time,full_picture,shares&limit=${limit}&access_token=${pageAccessToken}`;
+  let url = `${GRAPH_API}/${pageId}/posts?fields=id,message,permalink_url,type,created_time,full_picture&limit=${limit}&access_token=${pageAccessToken}`;
   if (after) url += `&after=${after}`;
 
   const res = await fetch(url);
@@ -175,16 +175,24 @@ export async function getFacebookPosts(pageId, pageAccessToken, limit = 50, afte
 
 // Fetch insights for a single Facebook post
 export async function getFacebookPostInsights(postId, pageAccessToken) {
-  const metrics = 'post_impressions,post_engaged_users,post_clicks,post_reactions_by_type_total';
-  const res = await fetch(`${GRAPH_API}/${postId}/insights?metric=${metrics}&access_token=${pageAccessToken}`);
-  if (!res.ok) return null;
+  try {
+    const metrics = 'post_impressions,post_engaged_users,post_clicks,post_reactions_by_type_total';
+    const res = await fetch(`${GRAPH_API}/${postId}/insights?metric=${metrics}&access_token=${pageAccessToken}`);
+    if (!res.ok) {
+      console.warn(`FB post insights failed for ${postId}:`, res.status);
+      return null;
+    }
 
-  const data = await res.json();
-  const insights = {};
-  (data.data || []).forEach(m => {
-    insights[m.name] = m.values?.[0]?.value ?? 0;
-  });
-  return insights;
+    const data = await res.json();
+    const insights = {};
+    (data.data || []).forEach(m => {
+      insights[m.name] = m.values?.[0]?.value ?? 0;
+    });
+    return insights;
+  } catch (err) {
+    console.warn(`FB post insights error for ${postId}:`, err.message);
+    return null;
+  }
 }
 
 // Get stored Meta connection from Supabase
