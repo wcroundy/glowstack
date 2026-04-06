@@ -482,6 +482,17 @@ export default function SocialInsights() {
               {/* Summary Stats */}
               {igSummary && igSummary.totalPosts > 0 ? (
                 <>
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-surface-500">{igSummary.totalPosts.toLocaleString()} posts synced</p>
+                    <button
+                      onClick={() => handleSync('instagram')}
+                      disabled={!!syncing}
+                      className="btn-ghost text-sm flex items-center gap-2"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${syncing === 'instagram' ? 'animate-spin' : ''}`} />
+                      {syncing === 'instagram' ? 'Syncing...' : 'Re-sync Instagram'}
+                    </button>
+                  </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <StatCard label="Total Posts" value={igSummary.totalPosts} icon={ImageIcon} color="brand" />
                     <StatCard label="Total Reach" value={igSummary.totalReach} icon={Eye} color="blue" />
@@ -586,6 +597,17 @@ export default function SocialInsights() {
             <div className="space-y-6">
               {fbSummary && fbSummary.totalPosts > 0 ? (
                 <>
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-surface-500">{fbSummary.totalPosts.toLocaleString()} posts synced</p>
+                    <button
+                      onClick={() => handleSync('facebook')}
+                      disabled={!!syncing}
+                      className="btn-ghost text-sm flex items-center gap-2"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${syncing === 'facebook' ? 'animate-spin' : ''}`} />
+                      {syncing === 'facebook' ? 'Syncing...' : 'Re-sync Facebook'}
+                    </button>
+                  </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <StatCard label="Total Posts" value={fbSummary.totalPosts} icon={ImageIcon} color="brand" />
                     <StatCard label="Total Reach" value={fbSummary.totalReach} icon={Eye} color="blue" />
