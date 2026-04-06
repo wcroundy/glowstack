@@ -67,6 +67,19 @@ export async function exchangeCode(code) {
 
 // Get user's Facebook Pages (needed to find connected IG account)
 export async function getPages(userAccessToken) {
+  // Debug: check who the token belongs to and what permissions it has
+  try {
+    const meRes = await fetch(`${GRAPH_API}/me?fields=id,name&access_token=${userAccessToken}`);
+    const meData = await meRes.json();
+    console.log('Token belongs to:', JSON.stringify(meData));
+
+    const permsRes = await fetch(`${GRAPH_API}/me/permissions?access_token=${userAccessToken}`);
+    const permsData = await permsRes.json();
+    console.log('Token permissions:', JSON.stringify(permsData));
+  } catch (debugErr) {
+    console.warn('Debug queries failed:', debugErr.message);
+  }
+
   const url = `${GRAPH_API}/me/accounts?fields=id,name,access_token,instagram_business_account&access_token=${userAccessToken}`;
   console.log('Fetching pages from:', url.replace(userAccessToken, '[REDACTED]'));
   const res = await fetch(url);
