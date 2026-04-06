@@ -201,12 +201,14 @@ router.post('/sync/instagram', async (req, res) => {
       console.log(`Instagram sync: fetched ${allPosts.length} posts so far...`);
     } while (after);
 
-    // Process each post: get insights and upsert
+    // Process posts — batch upsert for speed (skip per-post insights until App Review)
+    console.log(`Instagram sync: saving ${allPosts.length} posts to database...`);
     let synced = 0;
-    for (const post of allPosts) {
-      const insights = await getInstagramMediaInsights(post.id, post.media_type, pageAccessToken);
+    const IG_BATCH_SIZE = 50;
 
-      const row = {
+    for (let i = 0; i < allPosts.length; i += IG_BATCH_SIZE) {
+      const batch = allPosts.slice(i, i + IG_BATCH_SIZE);
+      const rows = batch.map(post => ({
         ig_media_id: post.id,
         media_type: post.media_type,
         media_product_type: post.media_product_type,
@@ -216,21 +218,26 @@ router.post('/sync/instagram', async (req, res) => {
         like_count: post.like_count || 0,
         comments_count: post.comments_count || 0,
         thumbnail_url: post.thumbnail_url,
-        impressions: insights?.impressions || 0,
-        reach: insights?.reach || 0,
-        saved: insights?.saved || 0,
-        shares: insights?.shares || 0,
-        engagement: (insights?.likes || 0) + (insights?.comments || 0) + (insights?.saved || 0) + (insights?.shares || 0),
-        plays: insights?.plays || 0,
-        raw_insights: insights || {},
+        impressions: 0,
+        reach: 0,
+        saved: 0,
+        shares: 0,
+        engagement: 0,
+        plays: 0,
+        raw_insights: {},
         last_synced_at: new Date().toISOString(),
-      };
+      }));
 
       const { error } = await supabase
         .from('instagram_insights')
-        .upsert(row, { onConflict: 'ig_media_id' });
+        .upsert(rows, { onConflict: 'ig_media_id' });
 
-      if (!error) synced++;
+      if (!error) {
+        synced += batch.length;
+      } else {
+        console.error('Instagram batch upsert error:', error.message);
+      }
+      console.log(`Instagram sync: saved ${synced}/${allPosts.length} posts`);
     }
 
     // Update sync log
@@ -283,37 +290,41 @@ router.post('/sync/facebook', async (req, res) => {
       console.log(`Facebook sync: fetched ${allPosts.length} posts so far...`);
     } while (after);
 
-    // Process each post
+    // Process each post — batch upsert for speed (skip per-post insights until App Review)
+    console.log(`Facebook sync: saving ${allPosts.length} posts to database...`);
     let synced = 0;
-    for (const post of allPosts) {
-      const insights = await getFacebookPostInsights(post.id, pageAccessToken);
+    const BATCH_SIZE = 50;
 
-      const reactions = insights?.post_reactions_by_type_total || {};
-      const reactionsTotal = Object.values(reactions).reduce((sum, v) => sum + (v || 0), 0);
-
-      const row = {
+    for (let i = 0; i < allPosts.length; i += BATCH_SIZE) {
+      const batch = allPosts.slice(i, i + BATCH_SIZE);
+      const rows = batch.map(post => ({
         fb_post_id: post.id,
         message: post.message,
         permalink_url: post.permalink_url,
-        post_type: null, // 'type' field deprecated in Graph API v3.3+
+        post_type: null,
         created_time: post.created_time,
         full_picture: post.full_picture,
-        impressions: insights?.post_impressions || 0,
-        reach: insights?.post_engaged_users || 0,
-        engagement: insights?.post_engaged_users || 0,
-        reactions_total: reactionsTotal,
+        impressions: 0,
+        reach: 0,
+        engagement: 0,
+        reactions_total: 0,
         comments_count: 0,
-        shares_count: post.shares?.count || 0,
-        clicks: insights?.post_clicks || 0,
-        raw_insights: insights || {},
+        shares_count: 0,
+        clicks: 0,
+        raw_insights: {},
         last_synced_at: new Date().toISOString(),
-      };
+      }));
 
       const { error } = await supabase
         .from('facebook_insights')
-        .upsert(row, { onConflict: 'fb_post_id' });
+        .upsert(rows, { onConflict: 'fb_post_id' });
 
-      if (!error) synced++;
+      if (!error) {
+        synced += batch.length;
+      } else {
+        console.error('Facebook batch upsert error:', error.message);
+      }
+      console.log(`Facebook sync: saved ${synced}/${allPosts.length} posts`);
     }
 
     // Update sync log
