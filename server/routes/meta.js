@@ -164,10 +164,13 @@ router.post('/disconnect', async (req, res) => {
 // POST /api/meta/sync/instagram — sync Instagram posts and insights
 router.post('/sync/instagram', async (req, res) => {
   try {
-    const { pageAccessToken, igUserId } = await getValidPageToken();
+    console.log('Instagram sync: fetching stored connection...');
+    const { pageAccessToken, pageId, igUserId } = await getValidPageToken();
+    console.log('Instagram sync: pageId=', pageId, 'igUserId=', igUserId);
 
     if (!igUserId) {
-      return res.status(400).json({ error: 'No Instagram Business Account connected to this Page' });
+      console.log('Instagram sync: No IG user ID found in stored connection');
+      return res.status(400).json({ error: 'No Instagram Business Account connected to this Page. Try disconnecting and reconnecting Meta.' });
     }
 
     // Log sync start

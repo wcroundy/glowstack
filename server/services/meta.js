@@ -13,6 +13,8 @@ const SCOPES = [
   'pages_show_list',
   'pages_read_engagement',
   'business_management',
+  'instagram_basic',
+  'instagram_manage_insights',
 ].join(',');
 
 export function isMetaConfigured() {
