@@ -299,7 +299,7 @@ router.post('/sync/facebook', async (req, res) => {
         fb_post_id: post.id,
         message: post.message,
         permalink_url: post.permalink_url,
-        post_type: post.type,
+        post_type: null, // 'type' field deprecated in Graph API v3.3+
         created_time: post.created_time,
         full_picture: post.full_picture,
         impressions: insights?.post_impressions || 0,

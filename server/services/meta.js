@@ -162,7 +162,7 @@ export async function getInstagramAccountInsights(igUserId, pageAccessToken, per
 
 // Fetch Facebook Page posts
 export async function getFacebookPosts(pageId, pageAccessToken, limit = 50, after = null) {
-  let url = `${GRAPH_API}/${pageId}/posts?fields=id,message,permalink_url,type,created_time,full_picture&limit=${limit}&access_token=${pageAccessToken}`;
+  let url = `${GRAPH_API}/${pageId}/posts?fields=id,message,permalink_url,created_time,full_picture&limit=${limit}&access_token=${pageAccessToken}`;
   if (after) url += `&after=${after}`;
 
   const res = await fetch(url);
