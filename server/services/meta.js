@@ -13,8 +13,8 @@ const SCOPES = [
   'pages_show_list',
   'pages_read_engagement',
   'business_management',
-  'instagram_basic',
-  'instagram_manage_insights',
+  // instagram_basic and instagram_manage_insights require App Review
+  // For now, we can still get IG account info via the Page's instagram_business_account field
 ].join(',');
 
 export function isMetaConfigured() {
