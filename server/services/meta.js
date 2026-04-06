@@ -12,6 +12,7 @@ const GRAPH_API = 'https://graph.facebook.com/v22.0';
 const SCOPES = [
   'pages_show_list',
   'pages_read_engagement',
+  'read_insights',
   'business_management',
   // instagram_basic and instagram_manage_insights require App Review
   // For now, we can still get IG account info via the Page's instagram_business_account field
@@ -179,7 +180,8 @@ export async function getFacebookPostInsights(postId, pageAccessToken) {
     const metrics = 'post_impressions,post_engaged_users,post_clicks,post_reactions_by_type_total';
     const res = await fetch(`${GRAPH_API}/${postId}/insights?metric=${metrics}&access_token=${pageAccessToken}`);
     if (!res.ok) {
-      console.warn(`FB post insights failed for ${postId}:`, res.status);
+      const errBody = await res.json().catch(() => ({}));
+      console.warn(`FB post insights failed for ${postId}:`, res.status, errBody.error?.message || '');
       return null;
     }
 
