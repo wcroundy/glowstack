@@ -12,6 +12,7 @@ const GRAPH_API = 'https://graph.facebook.com/v22.0';
 const SCOPES = [
   'pages_show_list',
   'pages_read_engagement',
+  'business_management',
 ].join(',');
 
 export function isMetaConfigured() {
