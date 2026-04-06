@@ -12,8 +12,8 @@ const GRAPH_API = 'https://graph.facebook.com/v22.0';
 const SCOPES = [
   'pages_show_list',
   'pages_read_engagement',
-  'read_insights',
   'business_management',
+  // read_insights, instagram_basic, instagram_manage_insights require App Review
   // instagram_basic and instagram_manage_insights require App Review
   // For now, we can still get IG account info via the Page's instagram_business_account field
 ].join(',');
