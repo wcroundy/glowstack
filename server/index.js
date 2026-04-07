@@ -35,6 +35,13 @@ app.use('/api/auth/google', googlePhotosRoutes); // callback route
 import metaRoutes from './routes/meta.js';
 app.use('/api/auth/meta', metaRoutes); // callback route
 
+// Meta routes mounted BEFORE auth middleware:
+// - webhook (Meta verification + events — unauthenticated)
+// - data-deletion (Meta data deletion callback — unauthenticated)
+// - privacy-policy, terms (public legal pages)
+// - All other Meta routes also work here (they check Meta connection internally)
+app.use('/api/meta', metaRoutes);
+
 // TikTok OAuth callback (before auth middleware — browser redirect, no Bearer token)
 import tiktokRoutes from './routes/tiktok.js';
 app.use('/api/auth/tiktok', tiktokRoutes); // callback route
@@ -44,9 +51,6 @@ app.use('/api', requireAuth);
 
 // Google Photos API routes (protected)
 app.use('/api/google-photos', googlePhotosRoutes);
-
-// Meta API routes (protected)
-app.use('/api/meta', metaRoutes);
 
 // TikTok API routes (protected)
 app.use('/api/tiktok', tiktokRoutes);
