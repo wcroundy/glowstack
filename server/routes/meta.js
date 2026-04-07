@@ -375,15 +375,15 @@ router.get('/instagram/posts', async (req, res) => {
 // GET /api/meta/instagram/summary — aggregated Instagram stats
 router.get('/instagram/summary', async (req, res) => {
   try {
-    // Get total posts and aggregate metrics
-    const { data: posts, error } = await supabase
+    // Get exact total count (not limited by default 1000 row cap)
+    const { count: totalPosts, error: countError } = await supabase
       .from('instagram_insights')
-      .select('like_count, comments_count, impressions, reach, saved, shares, engagement, plays, media_type');
+      .select('*', { count: 'exact', head: true });
 
-    if (error) throw error;
+    if (countError) throw countError;
 
     const summary = {
-      totalPosts: posts?.length || 0,
+      totalPosts: totalPosts || 0,
       totalLikes: 0,
       totalComments: 0,
       totalImpressions: 0,
@@ -395,26 +395,43 @@ router.get('/instagram/summary', async (req, res) => {
       byType: {},
     };
 
-    (posts || []).forEach(p => {
-      summary.totalLikes += p.like_count || 0;
-      summary.totalComments += p.comments_count || 0;
-      summary.totalImpressions += p.impressions || 0;
-      summary.totalReach += p.reach || 0;
-      summary.totalSaved += p.saved || 0;
-      summary.totalShares += p.shares || 0;
-      summary.totalEngagement += p.engagement || 0;
-      summary.totalPlays += p.plays || 0;
+    // Aggregate metrics by paginating through all rows
+    const PAGE_SIZE = 1000;
+    let offset = 0;
+    let hasMore = true;
 
-      const type = p.media_type || 'OTHER';
-      if (!summary.byType[type]) {
-        summary.byType[type] = { count: 0, likes: 0, comments: 0, reach: 0, engagement: 0 };
-      }
-      summary.byType[type].count++;
-      summary.byType[type].likes += p.like_count || 0;
-      summary.byType[type].comments += p.comments_count || 0;
-      summary.byType[type].reach += p.reach || 0;
-      summary.byType[type].engagement += p.engagement || 0;
-    });
+    while (hasMore) {
+      const { data: posts, error } = await supabase
+        .from('instagram_insights')
+        .select('like_count, comments_count, impressions, reach, saved, shares, engagement, plays, media_type')
+        .range(offset, offset + PAGE_SIZE - 1);
+
+      if (error) throw error;
+
+      (posts || []).forEach(p => {
+        summary.totalLikes += p.like_count || 0;
+        summary.totalComments += p.comments_count || 0;
+        summary.totalImpressions += p.impressions || 0;
+        summary.totalReach += p.reach || 0;
+        summary.totalSaved += p.saved || 0;
+        summary.totalShares += p.shares || 0;
+        summary.totalEngagement += p.engagement || 0;
+        summary.totalPlays += p.plays || 0;
+
+        const type = p.media_type || 'OTHER';
+        if (!summary.byType[type]) {
+          summary.byType[type] = { count: 0, likes: 0, comments: 0, reach: 0, engagement: 0 };
+        }
+        summary.byType[type].count++;
+        summary.byType[type].likes += p.like_count || 0;
+        summary.byType[type].comments += p.comments_count || 0;
+        summary.byType[type].reach += p.reach || 0;
+        summary.byType[type].engagement += p.engagement || 0;
+      });
+
+      hasMore = (posts?.length || 0) === PAGE_SIZE;
+      offset += PAGE_SIZE;
+    }
 
     // Average engagement rate
     summary.avgEngagementRate = summary.totalImpressions > 0
@@ -451,14 +468,16 @@ router.get('/facebook/posts', async (req, res) => {
 // GET /api/meta/facebook/summary — aggregated Facebook stats
 router.get('/facebook/summary', async (req, res) => {
   try {
-    const { data: posts, error } = await supabase
+    // Get exact total count (not limited by default 1000 row cap)
+    const { count: totalPosts, error: countError } = await supabase
       .from('facebook_insights')
-      .select('impressions, reach, engagement, reactions_total, comments_count, shares_count, clicks');
+      .select('*', { count: 'exact', head: true });
 
-    if (error) throw error;
+    if (countError) throw countError;
 
+    // Aggregate metrics by paginating through all rows
     const summary = {
-      totalPosts: posts?.length || 0,
+      totalPosts: totalPosts || 0,
       totalImpressions: 0,
       totalReach: 0,
       totalEngagement: 0,
@@ -468,15 +487,31 @@ router.get('/facebook/summary', async (req, res) => {
       totalClicks: 0,
     };
 
-    (posts || []).forEach(p => {
-      summary.totalImpressions += p.impressions || 0;
-      summary.totalReach += p.reach || 0;
-      summary.totalEngagement += p.engagement || 0;
-      summary.totalReactions += p.reactions_total || 0;
-      summary.totalComments += p.comments_count || 0;
-      summary.totalShares += p.shares_count || 0;
-      summary.totalClicks += p.clicks || 0;
-    });
+    const PAGE_SIZE = 1000;
+    let offset = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const { data: posts, error } = await supabase
+        .from('facebook_insights')
+        .select('impressions, reach, engagement, reactions_total, comments_count, shares_count, clicks')
+        .range(offset, offset + PAGE_SIZE - 1);
+
+      if (error) throw error;
+
+      (posts || []).forEach(p => {
+        summary.totalImpressions += p.impressions || 0;
+        summary.totalReach += p.reach || 0;
+        summary.totalEngagement += p.engagement || 0;
+        summary.totalReactions += p.reactions_total || 0;
+        summary.totalComments += p.comments_count || 0;
+        summary.totalShares += p.shares_count || 0;
+        summary.totalClicks += p.clicks || 0;
+      });
+
+      hasMore = (posts?.length || 0) === PAGE_SIZE;
+      offset += PAGE_SIZE;
+    }
 
     res.json(summary);
   } catch (err) {
