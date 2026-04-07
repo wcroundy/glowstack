@@ -14,6 +14,9 @@ import AiChat from './pages/AiChat';
 import SetupWizard from './pages/SetupWizard';
 import TagsManager from './pages/TagsManager';
 import SocialInsights from './pages/SocialInsights';
+import PrivacyPolicy from './pages/PrivacyPolicy';
+import TermsOfService from './pages/TermsOfService';
+import DataDeletionStatus from './pages/DataDeletionStatus';
 import ChatDrawer from './components/chat/ChatDrawer';
 import Login from './pages/Login';
 import { setAuthToken } from './services/api';
@@ -95,6 +98,18 @@ export default function App() {
           <p className="text-sm text-surface-400">Loading...</p>
         </div>
       </div>
+    );
+  }
+
+  // Public pages (accessible without auth — required by Meta App Review)
+  const publicPaths = ['/privacy', '/terms', '/data-deletion-status'];
+  if (publicPaths.includes(location.pathname)) {
+    return (
+      <Routes>
+        <Route path="/privacy" element={<PrivacyPolicy />} />
+        <Route path="/terms" element={<TermsOfService />} />
+        <Route path="/data-deletion-status" element={<DataDeletionStatus />} />
+      </Routes>
     );
   }
 

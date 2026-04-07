@@ -1,17 +1,24 @@
 import { Router } from 'express';
 import { supabase, isSupabaseConfigured } from '../services/supabase.js';
 import {
-  isMetaConfigured, getAuthUrl, exchangeCode, getPages,
+  isMetaConfigured, hasAdvancedAccess, getAuthUrl, exchangeCode, getPages,
   getInstagramAccount, getInstagramMedia, getInstagramMediaInsights,
-  getFacebookPosts, getFacebookPostInsights, getValidPageToken,
-  saveConnection,
+  getInstagramMediaSince, getInstagramAccountInsights,
+  getFacebookPosts, getFacebookPostInsights, getFacebookPostsSince,
+  getValidPageToken, getLastSyncTimestamp,
+  saveConnection, checkAndRefreshToken,
+  parseSignedRequest, handleDataDeletion,
+  verifyWebhookSignature, TokenExpiredError,
 } from '../services/meta.js';
 
 const router = Router();
 
 const CLIENT_REDIRECT = process.env.CLIENT_URL || 'http://localhost:5173';
+const WEBHOOK_VERIFY_TOKEN = process.env.META_WEBHOOK_VERIFY_TOKEN || 'glowstack_verify_token';
 
-// GET /api/meta/status — check connection status
+// ─── Status & Auth ─────────────────────────────────────────────────────────────
+
+// GET /api/meta/status — check connection status + token health
 router.get('/status', async (req, res) => {
   try {
     if (!isMetaConfigured()) {
@@ -33,19 +40,36 @@ router.get('/status', async (req, res) => {
       .single();
 
     const connected = !!(connection?.is_connected && connection?.metadata?.page_access_token);
+    const metadata = connection?.metadata || {};
+
+    // Calculate token expiry info
+    let tokenStatus = null;
+    if (connected && metadata.token_obtained_at) {
+      const obtainedAt = new Date(metadata.token_obtained_at).getTime();
+      const expiresIn = (metadata.token_expires_in || 5184000) * 1000;
+      const expiresAt = obtainedAt + expiresIn;
+      const daysLeft = Math.floor((expiresAt - Date.now()) / (24 * 60 * 60 * 1000));
+      tokenStatus = {
+        expiresAt: new Date(expiresAt).toISOString(),
+        daysRemaining: Math.max(0, daysLeft),
+        needsReauth: metadata.needs_reauth || false,
+      };
+    }
 
     res.json({
       configured: true,
       connected,
+      advancedAccess: hasAdvancedAccess(),
+      tokenStatus,
       instagram: connected ? {
-        username: connection.metadata?.ig_username,
-        name: connection.metadata?.ig_name,
-        followers: connection.metadata?.ig_followers,
-        profilePicture: connection.metadata?.ig_profile_picture,
+        username: metadata.ig_username,
+        name: metadata.ig_name,
+        followers: metadata.ig_followers,
+        profilePicture: metadata.ig_profile_picture,
       } : null,
       facebook: connected ? {
-        pageName: connection.metadata?.page_name,
-        pageId: connection.metadata?.page_id,
+        pageName: metadata.page_name,
+        pageId: metadata.page_id,
       } : null,
     });
   } catch (err) {
@@ -77,12 +101,10 @@ router.get('/callback', async (req, res) => {
       return res.redirect(`${CLIENT_REDIRECT}/settings?meta_error=no_code`);
     }
 
-    // Exchange code for long-lived user token
     console.log('Meta callback: exchanging code for token...');
     const tokenData = await exchangeCode(code);
     console.log('Meta callback: token obtained, fetching pages...');
 
-    // Get user's Facebook Pages
     const pages = await getPages(tokenData.access_token);
     console.log('Meta callback: found', pages?.length || 0, 'pages');
 
@@ -98,9 +120,20 @@ router.get('/callback', async (req, res) => {
     }))));
     let selectedPage = pages.find(p => p.instagram_business_account);
     if (!selectedPage) {
-      // Fall back to first page
       console.log('Meta callback: no page has instagram_business_account, using first page');
       selectedPage = pages[0];
+    }
+
+    // Store which scopes were actually granted
+    let grantedScopes = [];
+    try {
+      const permsRes = await fetch(`https://graph.facebook.com/v22.0/me/permissions?access_token=${tokenData.access_token}`);
+      const permsData = await permsRes.json();
+      grantedScopes = (permsData.data || [])
+        .filter(p => p.status === 'granted')
+        .map(p => p.permission);
+    } catch (e) {
+      console.warn('Could not fetch granted permissions:', e.message);
     }
 
     const metadata = {
@@ -110,10 +143,11 @@ router.get('/callback', async (req, res) => {
       page_id: selectedPage.id,
       page_name: selectedPage.name,
       page_access_token: selectedPage.access_token,
+      granted_scopes: grantedScopes,
+      needs_reauth: false,
     };
 
     // If there's a connected Instagram Business Account, try to get its info
-    // This may fail without instagram_basic scope — that's OK, we still save the FB connection
     if (selectedPage.instagram_business_account) {
       try {
         const igAccount = await getInstagramAccount(
@@ -134,8 +168,8 @@ router.get('/callback', async (req, res) => {
       }
     }
 
-    // Save to Supabase
     console.log('Meta callback: saving connection for page:', metadata.page_name);
+    console.log('Meta callback: granted scopes:', grantedScopes.join(', '));
     await saveConnection(metadata);
     console.log('Meta callback: connection saved successfully');
 
@@ -167,6 +201,24 @@ router.post('/disconnect', async (req, res) => {
   }
 });
 
+// ─── Token Management ──────────────────────────────────────────────────────────
+
+// POST /api/meta/refresh-token — manually trigger token refresh
+router.post('/refresh-token', async (req, res) => {
+  try {
+    const result = await checkAndRefreshToken();
+    if (!result) {
+      return res.status(400).json({ error: 'No Meta connection found' });
+    }
+    res.json(result);
+  } catch (err) {
+    console.error('Token refresh error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Sync Endpoints ────────────────────────────────────────────────────────────
+
 // POST /api/meta/sync/instagram — sync Instagram posts and insights
 router.post('/sync/instagram', async (req, res) => {
   try {
@@ -179,54 +231,85 @@ router.post('/sync/instagram', async (req, res) => {
       return res.status(400).json({ error: 'No Instagram Business Account connected to this Page. Try disconnecting and reconnecting Meta.' });
     }
 
+    // Determine sync type: incremental if we have prior data, otherwise full
+    const syncType = req.query.type || 'auto'; // 'full', 'incremental', or 'auto'
+    let lastSync = null;
+    let isIncremental = false;
+
+    if (syncType !== 'full') {
+      lastSync = await getLastSyncTimestamp('instagram');
+      isIncremental = !!(lastSync && syncType !== 'full');
+    }
+
     // Log sync start
     let syncLogId = null;
     if (isSupabaseConfigured()) {
       const { data: log } = await supabase
         .from('meta_sync_log')
-        .insert({ platform: 'instagram', sync_type: 'full' })
+        .insert({ platform: 'instagram', sync_type: isIncremental ? 'incremental' : 'full' })
         .select()
         .single();
       syncLogId = log?.id;
     }
 
-    // Fetch all posts (paginate until exhausted)
+    // Fetch posts
     let allPosts = [];
     let after = null;
 
     do {
-      const result = await getInstagramMedia(igUserId, pageAccessToken, 100, after);
+      const result = isIncremental
+        ? await getInstagramMediaSince(igUserId, pageAccessToken, lastSync, 100, after)
+        : await getInstagramMedia(igUserId, pageAccessToken, 100, after);
       allPosts = allPosts.concat(result.data || []);
       after = result.paging?.cursors?.after;
-      console.log(`Instagram sync: fetched ${allPosts.length} posts so far...`);
+      console.log(`Instagram sync (${isIncremental ? 'incremental' : 'full'}): fetched ${allPosts.length} posts so far...`);
     } while (after);
 
-    // Process posts — batch upsert for speed (skip per-post insights until App Review)
+    // Process posts with optional per-post insights
     console.log(`Instagram sync: saving ${allPosts.length} posts to database...`);
     let synced = 0;
-    const IG_BATCH_SIZE = 50;
+    let insightsFetched = 0;
+    const BATCH_SIZE = 50;
+    const canFetchInsights = hasAdvancedAccess();
 
-    for (let i = 0; i < allPosts.length; i += IG_BATCH_SIZE) {
-      const batch = allPosts.slice(i, i + IG_BATCH_SIZE);
-      const rows = batch.map(post => ({
-        ig_media_id: post.id,
-        media_type: post.media_type,
-        media_product_type: post.media_product_type,
-        caption: post.caption,
-        permalink: post.permalink,
-        timestamp: post.timestamp,
-        like_count: post.like_count || 0,
-        comments_count: post.comments_count || 0,
-        thumbnail_url: post.thumbnail_url,
-        impressions: 0,
-        reach: 0,
-        saved: 0,
-        shares: 0,
-        engagement: 0,
-        plays: 0,
-        raw_insights: {},
-        last_synced_at: new Date().toISOString(),
-      }));
+    for (let i = 0; i < allPosts.length; i += BATCH_SIZE) {
+      const batch = allPosts.slice(i, i + BATCH_SIZE);
+
+      // Fetch per-post insights if we have advanced access
+      const rows = [];
+      for (const post of batch) {
+        let insights = null;
+        if (canFetchInsights) {
+          try {
+            insights = await getInstagramMediaInsights(post.id, post.media_type, pageAccessToken);
+            if (insights) insightsFetched++;
+          } catch (insightErr) {
+            console.warn(`IG insight fetch failed for ${post.id}:`, insightErr.message);
+          }
+        }
+
+        rows.push({
+          ig_media_id: post.id,
+          media_type: post.media_type,
+          media_product_type: post.media_product_type,
+          caption: post.caption,
+          permalink: post.permalink,
+          timestamp: post.timestamp,
+          like_count: post.like_count || 0,
+          comments_count: post.comments_count || 0,
+          thumbnail_url: post.thumbnail_url,
+          impressions: insights?.impressions ?? 0,
+          reach: insights?.reach ?? 0,
+          saved: insights?.saved ?? 0,
+          shares: insights?.shares ?? 0,
+          engagement: insights
+            ? (insights.likes || 0) + (insights.comments || 0) + (insights.saved || 0) + (insights.shares || 0)
+            : 0,
+          plays: insights?.plays ?? 0,
+          raw_insights: insights || {},
+          last_synced_at: new Date().toISOString(),
+        });
+      }
 
       const { error } = await supabase
         .from('instagram_insights')
@@ -255,9 +338,15 @@ router.post('/sync/instagram', async (req, res) => {
     res.json({
       synced,
       total: allPosts.length,
-      message: `Synced ${synced} Instagram posts with insights`,
+      syncType: isIncremental ? 'incremental' : 'full',
+      insightsFetched,
+      advancedAccess: canFetchInsights,
+      message: `Synced ${synced} Instagram posts${canFetchInsights ? ` with ${insightsFetched} insights` : ''}`,
     });
   } catch (err) {
+    if (err instanceof TokenExpiredError) {
+      return res.status(401).json({ error: 'Token expired. Please reconnect your Meta account.', needsReauth: true });
+    }
     console.error('Instagram sync error:', err.message);
     res.status(500).json({ error: err.message });
   }
@@ -268,52 +357,84 @@ router.post('/sync/facebook', async (req, res) => {
   try {
     const { pageAccessToken, pageId } = await getValidPageToken();
 
+    // Determine sync type
+    const syncType = req.query.type || 'auto';
+    let lastSync = null;
+    let isIncremental = false;
+
+    if (syncType !== 'full') {
+      lastSync = await getLastSyncTimestamp('facebook');
+      isIncremental = !!(lastSync && syncType !== 'full');
+    }
+
     // Log sync start
     let syncLogId = null;
     if (isSupabaseConfigured()) {
       const { data: log } = await supabase
         .from('meta_sync_log')
-        .insert({ platform: 'facebook', sync_type: 'full' })
+        .insert({ platform: 'facebook', sync_type: isIncremental ? 'incremental' : 'full' })
         .select()
         .single();
       syncLogId = log?.id;
     }
 
-    // Fetch all posts (paginate until exhausted)
+    // Fetch posts
     let allPosts = [];
     let after = null;
 
     do {
-      const result = await getFacebookPosts(pageId, pageAccessToken, 100, after);
+      const result = isIncremental
+        ? await getFacebookPostsSince(pageId, pageAccessToken, lastSync, 100, after)
+        : await getFacebookPosts(pageId, pageAccessToken, 100, after);
       allPosts = allPosts.concat(result.data || []);
       after = result.paging?.cursors?.after;
-      console.log(`Facebook sync: fetched ${allPosts.length} posts so far...`);
+      console.log(`Facebook sync (${isIncremental ? 'incremental' : 'full'}): fetched ${allPosts.length} posts so far...`);
     } while (after);
 
-    // Process each post — batch upsert for speed (skip per-post insights until App Review)
+    // Process posts with optional per-post insights
     console.log(`Facebook sync: saving ${allPosts.length} posts to database...`);
     let synced = 0;
+    let insightsFetched = 0;
     const BATCH_SIZE = 50;
+    const canFetchInsights = hasAdvancedAccess();
 
     for (let i = 0; i < allPosts.length; i += BATCH_SIZE) {
       const batch = allPosts.slice(i, i + BATCH_SIZE);
-      const rows = batch.map(post => ({
-        fb_post_id: post.id,
-        message: post.message,
-        permalink_url: post.permalink_url,
-        post_type: null,
-        created_time: post.created_time,
-        full_picture: post.full_picture,
-        impressions: 0,
-        reach: 0,
-        engagement: 0,
-        reactions_total: 0,
-        comments_count: 0,
-        shares_count: 0,
-        clicks: 0,
-        raw_insights: {},
-        last_synced_at: new Date().toISOString(),
-      }));
+
+      const rows = [];
+      for (const post of batch) {
+        let insights = null;
+        if (canFetchInsights) {
+          try {
+            insights = await getFacebookPostInsights(post.id, pageAccessToken);
+            if (insights) insightsFetched++;
+          } catch (insightErr) {
+            console.warn(`FB insight fetch failed for ${post.id}:`, insightErr.message);
+          }
+        }
+
+        const reactionsTotal = insights?.post_reactions_by_type_total
+          ? Object.values(insights.post_reactions_by_type_total).reduce((a, b) => a + b, 0)
+          : 0;
+
+        rows.push({
+          fb_post_id: post.id,
+          message: post.message,
+          permalink_url: post.permalink_url,
+          post_type: null,
+          created_time: post.created_time,
+          full_picture: post.full_picture,
+          impressions: insights?.post_impressions ?? 0,
+          reach: 0,
+          engagement: insights?.post_engaged_users ?? 0,
+          reactions_total: reactionsTotal,
+          comments_count: 0,
+          shares_count: 0,
+          clicks: insights?.post_clicks ?? 0,
+          raw_insights: insights || {},
+          last_synced_at: new Date().toISOString(),
+        });
+      }
 
       const { error } = await supabase
         .from('facebook_insights')
@@ -342,13 +463,21 @@ router.post('/sync/facebook', async (req, res) => {
     res.json({
       synced,
       total: allPosts.length,
-      message: `Synced ${synced} Facebook posts with insights`,
+      syncType: isIncremental ? 'incremental' : 'full',
+      insightsFetched,
+      advancedAccess: canFetchInsights,
+      message: `Synced ${synced} Facebook posts${canFetchInsights ? ` with ${insightsFetched} insights` : ''}`,
     });
   } catch (err) {
+    if (err instanceof TokenExpiredError) {
+      return res.status(401).json({ error: 'Token expired. Please reconnect your Meta account.', needsReauth: true });
+    }
     console.error('Facebook sync error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
+
+// ─── Data Retrieval Endpoints ──────────────────────────────────────────────────
 
 // GET /api/meta/instagram/posts — get stored Instagram posts with insights
 router.get('/instagram/posts', async (req, res) => {
@@ -375,7 +504,6 @@ router.get('/instagram/posts', async (req, res) => {
 // GET /api/meta/instagram/summary — aggregated Instagram stats
 router.get('/instagram/summary', async (req, res) => {
   try {
-    // Get exact total count (not limited by default 1000 row cap)
     const { count: totalPosts, error: countError } = await supabase
       .from('instagram_insights')
       .select('*', { count: 'exact', head: true });
@@ -395,7 +523,6 @@ router.get('/instagram/summary', async (req, res) => {
       byType: {},
     };
 
-    // Aggregate metrics by paginating through all rows
     const PAGE_SIZE = 1000;
     let offset = 0;
     let hasMore = true;
@@ -433,7 +560,6 @@ router.get('/instagram/summary', async (req, res) => {
       offset += PAGE_SIZE;
     }
 
-    // Average engagement rate
     summary.avgEngagementRate = summary.totalImpressions > 0
       ? ((summary.totalEngagement / summary.totalImpressions) * 100).toFixed(2)
       : '0.00';
@@ -468,14 +594,12 @@ router.get('/facebook/posts', async (req, res) => {
 // GET /api/meta/facebook/summary — aggregated Facebook stats
 router.get('/facebook/summary', async (req, res) => {
   try {
-    // Get exact total count (not limited by default 1000 row cap)
     const { count: totalPosts, error: countError } = await supabase
       .from('facebook_insights')
       .select('*', { count: 'exact', head: true });
 
     if (countError) throw countError;
 
-    // Aggregate metrics by paginating through all rows
     const summary = {
       totalPosts: totalPosts || 0,
       totalImpressions: 0,
@@ -534,6 +658,145 @@ router.get('/sync-log', async (req, res) => {
     console.error('Sync log error:', err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ─── Data Deletion Callback (required by Meta for App Review) ──────────────────
+
+// POST /api/meta/data-deletion — Meta calls this when a user requests data deletion
+router.post('/data-deletion', async (req, res) => {
+  try {
+    const signedRequest = req.body?.signed_request;
+    if (!signedRequest) {
+      return res.status(400).json({ error: 'Missing signed_request' });
+    }
+
+    const data = parseSignedRequest(signedRequest);
+    console.log('Meta data deletion request for user:', data.user_id);
+
+    const result = await handleDataDeletion(data.user_id);
+
+    // Meta expects this exact response format
+    const statusUrl = `${process.env.CLIENT_URL || 'https://glowstack.net'}/data-deletion-status?code=${result.confirmationCode}`;
+    res.json({
+      url: statusUrl,
+      confirmation_code: result.confirmationCode,
+    });
+  } catch (err) {
+    console.error('Data deletion error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/meta/data-deletion-status — user can check deletion status
+router.get('/data-deletion-status', async (req, res) => {
+  const code = req.query.code;
+  if (!code) return res.status(400).json({ error: 'Missing confirmation code' });
+
+  // Check if the deletion was completed
+  const { data: conn } = await supabase
+    .from('platform_connections')
+    .select('metadata')
+    .eq('platform', 'meta')
+    .single();
+
+  const deletedAt = conn?.metadata?.deleted_at;
+  const deletionCode = conn?.metadata?.deletion_code;
+
+  if (deletionCode === code && deletedAt) {
+    return res.json({
+      status: 'completed',
+      deleted_at: deletedAt,
+      confirmation_code: code,
+    });
+  }
+
+  res.json({ status: 'pending', confirmation_code: code });
+});
+
+// ─── Webhooks (real-time updates from Meta) ────────────────────────────────────
+
+// GET /api/meta/webhook — Meta webhook verification (challenge-response)
+router.get('/webhook', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && token === WEBHOOK_VERIFY_TOKEN) {
+    console.log('Meta webhook verified');
+    return res.status(200).send(challenge);
+  }
+
+  console.warn('Meta webhook verification failed');
+  res.status(403).send('Forbidden');
+});
+
+// POST /api/meta/webhook — receive webhook events from Meta
+router.post('/webhook', async (req, res) => {
+  try {
+    // Verify signature
+    const signature = req.headers['x-hub-signature-256'];
+    const rawBody = JSON.stringify(req.body);
+
+    if (!verifyWebhookSignature(rawBody, signature)) {
+      console.warn('Meta webhook: invalid signature');
+      return res.status(403).send('Invalid signature');
+    }
+
+    const { object, entry } = req.body;
+    console.log('Meta webhook received:', object, 'entries:', entry?.length);
+
+    // Process webhook events asynchronously
+    if (object === 'page') {
+      for (const e of (entry || [])) {
+        for (const change of (e.changes || [])) {
+          await processWebhookChange('facebook', e.id, change);
+        }
+      }
+    } else if (object === 'instagram') {
+      for (const e of (entry || [])) {
+        for (const change of (e.changes || [])) {
+          await processWebhookChange('instagram', e.id, change);
+        }
+      }
+    }
+
+    // Always respond 200 quickly to avoid Meta retries
+    res.status(200).send('EVENT_RECEIVED');
+  } catch (err) {
+    console.error('Webhook processing error:', err.message);
+    // Still respond 200 to avoid retries
+    res.status(200).send('EVENT_RECEIVED');
+  }
+});
+
+/** Process a single webhook change event */
+async function processWebhookChange(platform, sourceId, change) {
+  console.log(`Webhook change [${platform}/${sourceId}]:`, change.field, change.value?.verb || '');
+
+  // For now, log webhook events. Once App Review is complete,
+  // we can trigger incremental syncs or real-time updates here.
+  if (isSupabaseConfigured()) {
+    await supabase.from('meta_sync_log').insert({
+      platform,
+      sync_type: 'webhook',
+      status: 'completed',
+      posts_synced: 0,
+      error_message: JSON.stringify({ field: change.field, verb: change.value?.verb }),
+    });
+  }
+}
+
+// ─── Privacy & Legal Pages ─────────────────────────────────────────────────────
+
+// GET /api/meta/privacy-policy — serve privacy policy (required by Meta)
+router.get('/privacy-policy', (req, res) => {
+  // Redirect to the main privacy policy page on the frontend
+  res.redirect(`${CLIENT_REDIRECT}/privacy`);
+});
+
+// GET /api/meta/terms — serve terms of service
+router.get('/terms', (req, res) => {
+  res.redirect(`${CLIENT_REDIRECT}/terms`);
 });
 
 export default router;

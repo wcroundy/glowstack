@@ -452,6 +452,32 @@ export default function SocialInsights() {
                 </div>
               )}
             </div>
+
+            {/* Token Health & Access Level */}
+            {status?.connected && (
+              <div className="flex items-center gap-3 text-xs flex-wrap">
+                {status.tokenStatus && (
+                  <span className={`px-2 py-1 rounded-full font-medium ${
+                    status.tokenStatus.needsReauth
+                      ? 'bg-red-100 text-red-700'
+                      : status.tokenStatus.daysRemaining < 14
+                        ? 'bg-amber-100 text-amber-700'
+                        : 'bg-green-100 text-green-700'
+                  }`}>
+                    {status.tokenStatus.needsReauth
+                      ? 'Re-auth needed'
+                      : `Token: ${status.tokenStatus.daysRemaining}d left`}
+                  </span>
+                )}
+                <span className={`px-2 py-1 rounded-full font-medium ${
+                  status.advancedAccess
+                    ? 'bg-purple-100 text-purple-700'
+                    : 'bg-surface-100 text-surface-500'
+                }`}>
+                  {status.advancedAccess ? 'Advanced Access' : 'Standard Access'}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Tab Switcher */}
