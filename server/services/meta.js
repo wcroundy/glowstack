@@ -302,11 +302,8 @@ export async function getInstagramAccount(igUserId, pageAccessToken) {
 // ─── Data Fetching (with rate limit handling) ──────────────────────────────────
 
 /** Fetch Instagram media (posts) with basic metrics */
-export async function getInstagramMedia(igUserId, pageAccessToken, limit = 50, after = null) {
-  // When we have advanced access, request more fields
-  const fields = HAS_ADVANCED_ACCESS
-    ? 'id,media_type,media_product_type,caption,permalink,timestamp,like_count,comments_count,thumbnail_url,media_url'
-    : 'id,media_type,media_product_type,caption,permalink,timestamp,like_count,comments_count,thumbnail_url';
+export async function getInstagramMedia(igUserId, pageAccessToken, limit = 25, after = null) {
+  const fields = 'id,media_type,media_product_type,caption,permalink,timestamp,like_count,comments_count,thumbnail_url';
 
   let url = `${GRAPH_API}/${igUserId}/media?fields=${fields}&limit=${limit}&access_token=${pageAccessToken}`;
   if (after) url += `&after=${after}`;
@@ -430,10 +427,8 @@ export async function getFacebookPostsSince(pageId, pageAccessToken, since, limi
 }
 
 /** Fetch Instagram media since a given timestamp (for incremental sync) */
-export async function getInstagramMediaSince(igUserId, pageAccessToken, since, limit = 50, after = null) {
-  const fields = HAS_ADVANCED_ACCESS
-    ? 'id,media_type,media_product_type,caption,permalink,timestamp,like_count,comments_count,thumbnail_url,media_url'
-    : 'id,media_type,media_product_type,caption,permalink,timestamp,like_count,comments_count,thumbnail_url';
+export async function getInstagramMediaSince(igUserId, pageAccessToken, since, limit = 25, after = null) {
+  const fields = 'id,media_type,media_product_type,caption,permalink,timestamp,like_count,comments_count,thumbnail_url';
 
   const sinceUnix = Math.floor(new Date(since).getTime() / 1000);
   let url = `${GRAPH_API}/${igUserId}/media?fields=${fields}&limit=${limit}&since=${sinceUnix}&access_token=${pageAccessToken}`;

@@ -258,8 +258,8 @@ router.post('/sync/instagram', async (req, res) => {
 
     do {
       const result = isIncremental
-        ? await getInstagramMediaSince(igUserId, pageAccessToken, lastSync, 100, after)
-        : await getInstagramMedia(igUserId, pageAccessToken, 100, after);
+        ? await getInstagramMediaSince(igUserId, pageAccessToken, lastSync, 25, after)
+        : await getInstagramMedia(igUserId, pageAccessToken, 25, after);
       allPosts = allPosts.concat(result.data || []);
       after = result.paging?.cursors?.after;
       console.log(`Instagram sync (${isIncremental ? 'incremental' : 'full'}): fetched ${allPosts.length} posts so far...`);
