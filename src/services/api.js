@@ -91,6 +91,7 @@ export const api = {
   // Dashboard
   getDashboardWidgets: () => request('/dashboard/widgets'),
   getInsights: () => request('/dashboard/insights'),
+  getSocialOverview: () => request('/dashboard/social-overview'),
 
   // AI
   aiTagMedia: (mediaId) => request('/ai/tag-media', { method: 'POST', body: JSON.stringify({ media_id: mediaId }) }),

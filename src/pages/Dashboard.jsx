@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import {
-  TrendingUp, TrendingDown, Users, Eye, Heart, DollarSign,
-  Sparkles, ArrowRight, ExternalLink, Zap, Clock, Target, BarChart3
+  TrendingUp, TrendingDown, Users, Eye, Heart, MessageCircle,
+  Sparkles, ArrowRight, Zap, Clock, Target, BarChart3,
+  Instagram, Facebook, Share2, Bookmark, Play, MousePointerClick,
 } from 'lucide-react';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { api } from '../services/api';
-import PlatformIcon from '../components/common/PlatformIcon';
+import { useTheme } from '../contexts/ThemeContext';
 
-function MetricCard({ title, value, change, prefix = '', suffix = '', icon: Icon }) {
-  const isPositive = change >= 0;
+function MetricCard({ title, value, change, prefix = '', suffix = '', icon: Icon, sub }) {
+  const isPositive = change == null || change >= 0;
   const formatted = typeof value === 'number'
     ? value >= 1000000 ? `${prefix}${(value / 1000000).toFixed(1)}M${suffix}`
     : value >= 1000 ? `${prefix}${(value / 1000).toFixed(1)}K${suffix}`
@@ -22,11 +23,14 @@ function MetricCard({ title, value, change, prefix = '', suffix = '', icon: Icon
         {Icon && <Icon className="w-5 h-5 text-surface-300" />}
       </div>
       <div className="text-2xl font-bold text-surface-900 mb-1">{formatted}</div>
-      <div className={`flex items-center gap-1 text-sm font-medium ${isPositive ? 'text-emerald-600' : 'text-red-500'}`}>
-        {isPositive ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-        {isPositive ? '+' : ''}{change}%
-        <span className="text-surface-400 font-normal ml-1">vs last period</span>
-      </div>
+      {change != null && (
+        <div className={`flex items-center gap-1 text-sm font-medium ${isPositive ? 'text-emerald-600' : 'text-red-500'}`}>
+          {isPositive ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+          {isPositive ? '+' : ''}{change}%
+          <span className="text-surface-400 font-normal ml-1">vs last period</span>
+        </div>
+      )}
+      {sub && <p className="text-xs text-surface-400 mt-1">{sub}</p>}
     </div>
   );
 }
@@ -35,7 +39,7 @@ function InsightCard({ insight }) {
   const typeStyles = {
     opportunity: { bg: 'bg-brand-50', border: 'border-brand-200', icon: Zap, color: 'text-brand-600' },
     timing: { bg: 'bg-blue-50', border: 'border-blue-200', icon: Clock, color: 'text-blue-600' },
-    revenue: { bg: 'bg-emerald-50', border: 'border-emerald-200', icon: DollarSign, color: 'text-emerald-600' },
+    revenue: { bg: 'bg-emerald-50', border: 'border-emerald-200', icon: Sparkles, color: 'text-emerald-600' },
     trend: { bg: 'bg-amber-50', border: 'border-amber-200', icon: TrendingUp, color: 'text-amber-600' },
     content: { bg: 'bg-purple-50', border: 'border-purple-200', icon: Target, color: 'text-purple-600' },
   };
@@ -63,100 +67,172 @@ function InsightCard({ insight }) {
 }
 
 export default function Dashboard() {
-  const [overview, setOverview] = useState(null);
+  const [social, setSocial] = useState(null);
   const [insights, setInsights] = useState([]);
-  const [posts, setPosts] = useState([]);
-  const [platformData, setPlatformData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const { theme } = useTheme();
 
   useEffect(() => {
-    api.getAnalyticsOverview().then(setOverview);
-    api.getInsights().then(r => setInsights(r.data || []));
-    api.getPosts({ limit: 5 }).then(r => setPosts(r.data || []));
-    api.getPlatformAnalytics('instagram').then(r => setPlatformData(r.data || []));
+    Promise.all([
+      api.getSocialOverview().catch(() => null),
+      api.getInsights().then(r => r.data || []).catch(() => []),
+    ]).then(([socialData, insightsData]) => {
+      setSocial(socialData);
+      setInsights(insightsData);
+    }).finally(() => setLoading(false));
   }, []);
 
-  // Chart data
-  const followerChartData = platformData.slice(-14).map(d => ({
-    date: d.date.slice(5),
-    followers: d.followers,
-    reach: Math.round(d.total_reach / 1000),
-  }));
+  const ig = social?.instagram;
+  const fb = social?.facebook;
+  const tk = social?.tiktok;
+  const totals = social?.totals;
 
-  const engagementByPlatform = [
-    { name: 'Instagram', engagement: 9.2, fill: '#E1306C' },
-    { name: 'TikTok', engagement: 12.1, fill: '#000000' },
-    { name: 'YouTube', engagement: 7.8, fill: '#FF0000' },
-    { name: 'Pinterest', engagement: 6.4, fill: '#E60023' },
-  ];
+  // Brand colors: pink in light mode, green in dark mode
+  const isDark = theme === 'dark';
+  const brandColors = isDark
+    ? { primary: '#22c55e', secondary: '#4ade80', tertiary: '#86efac', quaternary: '#16a34a' }
+    : { primary: '#ec4899', secondary: '#f472b6', tertiary: '#f9a8d4', quaternary: '#db2777' };
 
-  const revenueBySource = [
-    { name: 'ShopMy', value: 4441.25, fill: '#34d399' },
-    { name: 'LTK', value: 2100, fill: '#f472b6' },
-    { name: 'Amazon', value: 890.25, fill: '#fb923c' },
-  ];
+  // Engagement by platform — using real data
+  const engagementByPlatform = [];
+  if (ig) engagementByPlatform.push({ name: 'Instagram', engagement: ig.engagementRate, fill: brandColors.primary });
+  if (fb) engagementByPlatform.push({ name: 'Facebook', engagement: fb.engagementRate, fill: brandColors.secondary });
+  if (tk) engagementByPlatform.push({ name: 'TikTok', engagement: tk.engagementRate, fill: brandColors.tertiary });
+
+  // Content mix pie chart
+  const contentMix = [];
+  if (ig?.posts) contentMix.push({ name: 'Instagram', value: ig.posts, fill: brandColors.primary });
+  if (fb?.posts) contentMix.push({ name: 'Facebook', value: fb.posts, fill: brandColors.secondary });
+  if (tk?.posts) contentMix.push({ name: 'TikTok', value: tk.posts, fill: brandColors.tertiary });
+
+  // Chart theme colors
+  const gridColor = isDark ? '#334155' : '#e2e8f0';
+  const axisColor = isDark ? '#94a3b8' : '#94a3b8';
+  const tooltipStyle = {
+    borderRadius: '12px',
+    border: `1px solid ${isDark ? '#475569' : '#e2e8f0'}`,
+    fontSize: '12px',
+    backgroundColor: isDark ? '#1e293b' : '#ffffff',
+    color: isDark ? '#f1f5f9' : '#1e293b',
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center animate-pulse">
+            <Sparkles className="w-5 h-5 text-white" />
+          </div>
+          <p className="text-sm text-surface-400">Loading dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const hasData = totals && totals.posts > 0;
 
   return (
     <div className="p-4 lg:p-8 max-w-7xl mx-auto space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-surface-900">Dashboard</h1>
-          <p className="text-sm text-surface-500 mt-0.5">Welcome back! Here's how you're performing.</p>
-        </div>
-        <div className="flex gap-2">
-          <select className="input w-auto text-xs">
-            <option>Last 7 days</option>
-            <option selected>Last 30 days</option>
-            <option>Last 90 days</option>
-          </select>
-        </div>
+      <div>
+        <h1 className="text-2xl font-bold text-surface-900">Dashboard</h1>
+        <p className="text-sm text-surface-500 mt-0.5">
+          {hasData
+            ? `Tracking ${totals.posts.toLocaleString()} posts across ${engagementByPlatform.length} platform${engagementByPlatform.length !== 1 ? 's' : ''}`
+            : 'Connect your social accounts to see live analytics'}
+        </p>
       </div>
 
       {/* Metric Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard title="Total Followers" value={overview?.total_followers || 916000} change={4.2} icon={Users} />
-        <MetricCard title="Weekly Reach" value={overview?.weekly_reach || 2840000} change={12.8} icon={Eye} />
-        <MetricCard title="Avg Engagement" value={overview?.avg_engagement_rate || 8.6} change={1.3} suffix="%" icon={Heart} />
-        <MetricCard title="Revenue (30d)" value={overview?.total_revenue_30d || 7431.50} change={22.5} prefix="$" icon={DollarSign} />
+        <MetricCard
+          title="Total Posts"
+          value={totals?.posts || 0}
+          icon={BarChart3}
+          sub={`${ig?.posts || 0} IG · ${fb?.posts || 0} FB${tk ? ` · ${tk.posts} TK` : ''}`}
+        />
+        <MetricCard
+          title="Total Likes"
+          value={totals?.likes || 0}
+          icon={Heart}
+          sub={`${(ig?.likes || 0).toLocaleString()} IG · ${(fb?.reactions || 0).toLocaleString()} FB`}
+        />
+        <MetricCard
+          title="Total Comments"
+          value={totals?.comments || 0}
+          icon={MessageCircle}
+          sub={`${(ig?.comments || 0).toLocaleString()} IG · ${(fb?.comments || 0).toLocaleString()} FB`}
+        />
+        <MetricCard
+          title="Followers"
+          value={ig?.followers || 0}
+          icon={Users}
+          sub="Instagram"
+        />
       </div>
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Follower Growth */}
-        <div className="card p-5">
-          <h3 className="text-sm font-semibold text-surface-800 mb-4">Follower Growth & Reach (14d)</h3>
-          <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={followerChartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8" />
-              <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" />
-              <Tooltip contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', fontSize: '12px' }} />
-              <Line type="monotone" dataKey="followers" stroke="#ec4899" strokeWidth={2} dot={false} name="Followers" />
-              <Line type="monotone" dataKey="reach" stroke="#a78bfa" strokeWidth={2} dot={false} name="Reach (K)" />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-
         {/* Engagement by Platform */}
         <div className="card p-5">
-          <h3 className="text-sm font-semibold text-surface-800 mb-4">Engagement Rate by Platform</h3>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={engagementByPlatform}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="name" tick={{ fontSize: 11 }} stroke="#94a3b8" />
-              <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" unit="%" />
-              <Tooltip contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', fontSize: '12px' }} />
-              <Bar dataKey="engagement" radius={[8, 8, 0, 0]} name="Engagement %">
-                {engagementByPlatform.map((entry, i) => (
-                  <Cell key={i} fill={entry.fill} />
+          <h3 className="text-sm font-semibold text-surface-800 mb-4">Avg Engagement per Post by Platform</h3>
+          {engagementByPlatform.length > 0 ? (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={engagementByPlatform}>
+                <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+                <XAxis dataKey="name" tick={{ fontSize: 11, fill: axisColor }} stroke={gridColor} />
+                <YAxis tick={{ fontSize: 11, fill: axisColor }} stroke={gridColor} />
+                <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${v.toLocaleString()} avg interactions`} />
+                <Bar dataKey="engagement" radius={[8, 8, 0, 0]} name="Avg Engagement">
+                  {engagementByPlatform.map((entry, i) => (
+                    <Cell key={i} fill={entry.fill} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex items-center justify-center h-[220px] text-sm text-surface-400">
+              No platform data yet
+            </div>
+          )}
+        </div>
+
+        {/* Content Mix */}
+        <div className="card p-5">
+          <h3 className="text-sm font-semibold text-surface-800 mb-4">Content Mix by Platform</h3>
+          {contentMix.length > 0 ? (
+            <>
+              <ResponsiveContainer width="100%" height={160}>
+                <PieChart>
+                  <Pie data={contentMix} cx="50%" cy="50%" outerRadius={60} innerRadius={35} dataKey="value" paddingAngle={4}>
+                    {contentMix.map((entry, i) => (
+                      <Cell key={i} fill={entry.fill} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${v.toLocaleString()} posts`} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="space-y-2 mt-2">
+                {contentMix.map(s => (
+                  <div key={s.name} className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: s.fill }} />
+                      <span className="text-surface-600">{s.name}</span>
+                    </div>
+                    <span className="font-medium text-surface-800">{s.value.toLocaleString()} posts</span>
+                  </div>
                 ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center justify-center h-[220px] text-sm text-surface-400">
+              No platform data yet
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Bottom Row: Insights + Recent + Revenue */}
+      {/* Bottom Row: Insights + Recent IG + Recent FB */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* AI Insights */}
         <div className="card p-5 lg:col-span-1">
@@ -165,59 +241,72 @@ export default function Dashboard() {
             <h3 className="text-sm font-semibold text-surface-800">AI Insights</h3>
           </div>
           <div className="space-y-3">
-            {insights.slice(0, 4).map(ins => (
-              <InsightCard key={ins.id} insight={ins} />
-            ))}
+            {insights.length > 0 ? (
+              insights.slice(0, 4).map(ins => (
+                <InsightCard key={ins.id} insight={ins} />
+              ))
+            ) : (
+              <p className="text-sm text-surface-400">Insights will appear as more data is collected.</p>
+            )}
           </div>
         </div>
 
-        {/* Recent Posts */}
+        {/* Recent Instagram Posts */}
         <div className="card p-5">
-          <h3 className="text-sm font-semibold text-surface-800 mb-4">Recent Posts</h3>
+          <div className="flex items-center gap-2 mb-4">
+            <Instagram className="w-4 h-4 text-pink-500" />
+            <h3 className="text-sm font-semibold text-surface-800">Recent Instagram Posts</h3>
+          </div>
           <div className="space-y-3">
-            {posts.filter(p => p.status === 'published').slice(0, 5).map(post => (
-              <div key={post.id} className="flex items-center gap-3">
-                <PlatformIcon platform={post.platform} size="sm" />
+            {(ig?.recentPosts || []).slice(0, 6).map(post => (
+              <div key={post.ig_media_id} className="flex items-center gap-3">
+                {post.thumbnail_url && (
+                  <img src={post.thumbnail_url} alt="" className="w-9 h-9 rounded-lg object-cover flex-shrink-0" />
+                )}
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-medium text-surface-800 truncate">
-                    {post.caption?.slice(0, 50)}...
+                    {post.caption ? post.caption.slice(0, 50) + (post.caption.length > 50 ? '...' : '') : '(no caption)'}
                   </p>
                   <p className="text-[11px] text-surface-400">
-                    {post.reach >= 1000000 ? `${(post.reach/1000000).toFixed(1)}M reach` : `${(post.reach/1000).toFixed(0)}K reach`}
-                    {' · '}{post.engagement_rate}% eng
+                    {(post.like_count || 0).toLocaleString()} likes · {(post.comments_count || 0).toLocaleString()} comments
                   </p>
                 </div>
-                <span className="text-[11px] text-surface-400 shrink-0">
-                  {Math.round((Date.now() - new Date(post.published_at)) / 86400000)}d ago
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-100 text-surface-500 shrink-0">
+                  {post.media_type === 'VIDEO' ? 'Reel' : post.media_type === 'CAROUSEL_ALBUM' ? 'Carousel' : 'Photo'}
                 </span>
               </div>
             ))}
+            {(!ig?.recentPosts || ig.recentPosts.length === 0) && (
+              <p className="text-sm text-surface-400">No recent Instagram posts. Sync in Social Insights.</p>
+            )}
           </div>
         </div>
 
-        {/* Revenue Breakdown */}
+        {/* Recent Facebook Posts */}
         <div className="card p-5">
-          <h3 className="text-sm font-semibold text-surface-800 mb-4">Revenue by Source (30d)</h3>
-          <ResponsiveContainer width="100%" height={160}>
-            <PieChart>
-              <Pie data={revenueBySource} cx="50%" cy="50%" outerRadius={60} innerRadius={35} dataKey="value" paddingAngle={4}>
-                {revenueBySource.map((entry, i) => (
-                  <Cell key={i} fill={entry.fill} />
-                ))}
-              </Pie>
-              <Tooltip contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', fontSize: '12px' }} formatter={(v) => `$${v.toLocaleString()}`} />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="space-y-2 mt-2">
-            {revenueBySource.map(s => (
-              <div key={s.name} className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: s.fill }} />
-                  <span className="text-surface-600">{s.name}</span>
+          <div className="flex items-center gap-2 mb-4">
+            <Facebook className="w-4 h-4 text-blue-600" />
+            <h3 className="text-sm font-semibold text-surface-800">Recent Facebook Posts</h3>
+          </div>
+          <div className="space-y-3">
+            {(fb?.recentPosts || []).slice(0, 6).map(post => (
+              <div key={post.fb_post_id} className="flex items-center gap-3">
+                {post.full_picture && (
+                  <img src={post.full_picture} alt="" className="w-9 h-9 rounded-lg object-cover flex-shrink-0" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-surface-800 truncate">
+                    {post.message ? post.message.slice(0, 50) + (post.message.length > 50 ? '...' : '') : '(no text)'}
+                  </p>
+                  <p className="text-[11px] text-surface-400">
+                    {(post.reactions_total || 0).toLocaleString()} reactions · {(post.comments_count || 0).toLocaleString()} comments
+                  </p>
                 </div>
-                <span className="font-medium">${s.value.toLocaleString()}</span>
               </div>
             ))}
+            {(!fb?.recentPosts || fb.recentPosts.length === 0) && (
+              <p className="text-sm text-surface-400">No recent Facebook posts. Sync in Social Insights.</p>
+            )}
           </div>
         </div>
       </div>
