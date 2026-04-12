@@ -90,8 +90,8 @@ export default function Dashboard() {
   // Brand colors: pink in light mode, green in dark mode
   const isDark = theme === 'dark';
   const brandColors = isDark
-    ? { primary: '#22c55e', secondary: '#4ade80', tertiary: '#86efac', quaternary: '#16a34a' }
-    : { primary: '#ec4899', secondary: '#f472b6', tertiary: '#f9a8d4', quaternary: '#db2777' };
+    ? { primary: '#22c55e', secondary: '#ec4899', tertiary: '#f97316', quaternary: '#16a34a' }
+    : { primary: '#ec4899', secondary: '#22c55e', tertiary: '#f97316', quaternary: '#db2777' };
 
   // Engagement by platform — using real data
   const engagementByPlatform = [];
