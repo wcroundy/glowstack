@@ -5,7 +5,7 @@ import {
   getInstagramAccount, getInstagramMedia, getInstagramMediaInsights,
   getInstagramMediaSince, getInstagramAccountInsights,
   getFacebookPosts, getFacebookPostInsights, getFacebookPostsSince,
-  getValidPageToken, getLastSyncTimestamp,
+  getPageInfo, getValidPageToken, getLastSyncTimestamp,
   saveConnection, checkAndRefreshToken,
   parseSignedRequest, handleDataDeletion,
   verifyWebhookSignature, TokenExpiredError,
@@ -337,6 +337,33 @@ router.post('/sync/instagram', async (req, res) => {
         .eq('id', syncLogId);
     }
 
+    // Refresh follower counts in stored metadata
+    try {
+      const [igAccount, pageInfo] = await Promise.all([
+        getInstagramAccount(igUserId, pageAccessToken),
+        getPageInfo(pageId, pageAccessToken),
+      ]);
+      const { data: conn } = await supabase
+        .from('platform_connections')
+        .select('metadata')
+        .eq('platform', 'meta')
+        .single();
+      if (conn?.metadata) {
+        await supabase
+          .from('platform_connections')
+          .update({
+            metadata: {
+              ...conn.metadata,
+              ig_followers: igAccount.followers_count || conn.metadata.ig_followers,
+              fb_followers: pageInfo.fan_count || conn.metadata.fb_followers || 0,
+            },
+          })
+          .eq('platform', 'meta');
+      }
+    } catch (e) {
+      console.warn('Could not refresh follower counts during sync:', e.message);
+    }
+
     res.json({
       synced,
       total: allPosts.length,
@@ -460,6 +487,29 @@ router.post('/sync/facebook', async (req, res) => {
           completed_at: new Date().toISOString(),
         })
         .eq('id', syncLogId);
+    }
+
+    // Refresh follower counts in stored metadata
+    try {
+      const pageInfo = await getPageInfo(pageId, pageAccessToken);
+      const { data: conn } = await supabase
+        .from('platform_connections')
+        .select('metadata')
+        .eq('platform', 'meta')
+        .single();
+      if (conn?.metadata) {
+        await supabase
+          .from('platform_connections')
+          .update({
+            metadata: {
+              ...conn.metadata,
+              fb_followers: pageInfo.fan_count || conn.metadata.fb_followers || 0,
+            },
+          })
+          .eq('platform', 'meta');
+      }
+    } catch (e) {
+      console.warn('Could not refresh FB follower count during sync:', e.message);
     }
 
     res.json({

@@ -353,6 +353,17 @@ export async function getInstagramAccountInsights(igUserId, pageAccessToken, per
 }
 
 /** Fetch Facebook Page posts */
+/** Fetch page-level info (fan_count / followers) */
+export async function getPageInfo(pageId, pageAccessToken) {
+  const result = await metaFetch(
+    `${GRAPH_API}/${pageId}?fields=id,name,fan_count,followers_count&access_token=${pageAccessToken}`
+  );
+  if (!result.ok) {
+    throw new Error(`Failed to get page info: ${result.error?.message}`);
+  }
+  return result.data;
+}
+
 export async function getFacebookPosts(pageId, pageAccessToken, limit = 50, after = null) {
   // When we have advanced access with read_insights, we can request more fields
   const fields = 'id,message,permalink_url,created_time,full_picture';
