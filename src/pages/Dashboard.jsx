@@ -142,11 +142,33 @@ export default function Dashboard() {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-surface-900">Dashboard</h1>
-        <p className="text-sm text-surface-500 mt-0.5">
-          {hasData
-            ? `Tracking ${totals.posts.toLocaleString()} posts across ${engagementByPlatform.length} platform${engagementByPlatform.length !== 1 ? 's' : ''}`
-            : 'Connect your social accounts to see live analytics'}
-        </p>
+        {hasData ? (
+          <div className="flex flex-wrap items-center gap-2 mt-1.5">
+            <span className="text-sm text-surface-500">
+              Tracking {totals.posts.toLocaleString()} posts across
+            </span>
+            {[
+              ig && 'Instagram',
+              fb && 'Facebook',
+              tk && 'TikTok',
+            ].filter(Boolean).map((name, idx) => {
+              const pillColors = [
+                'bg-pink-100 text-pink-700 dark:bg-pink-900/40 dark:text-pink-300',
+                'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300',
+                'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300',
+              ];
+              return (
+                <span key={name} className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${pillColors[idx % 3]}`}>
+                  {name}
+                </span>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-sm text-surface-500 mt-0.5">
+            Connect your social accounts to see live analytics
+          </p>
+        )}
       </div>
 
       {/* Metric Cards */}
