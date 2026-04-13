@@ -277,7 +277,7 @@ export async function getPages(userAccessToken) {
     console.warn('Debug queries failed:', debugErr.message);
   }
 
-  const url = `${GRAPH_API}/me/accounts?fields=id,name,access_token,instagram_business_account&access_token=${userAccessToken}`;
+  const url = `${GRAPH_API}/me/accounts?fields=id,name,access_token,instagram_business_account,fan_count&access_token=${userAccessToken}`;
   console.log('Fetching pages from:', url.replace(userAccessToken, '[REDACTED]'));
   const res = await fetch(url);
   const data = await res.json();

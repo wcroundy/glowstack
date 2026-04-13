@@ -165,9 +165,9 @@ export default function Dashboard() {
         />
         <MetricCard
           title="Followers"
-          value={ig?.followers || 0}
+          value={(ig?.followers || 0) + (fb?.followers || 0)}
           icon={Users}
-          sub="Instagram"
+          sub={`${(ig?.followers || 0).toLocaleString()} IG · ${(fb?.followers || 0).toLocaleString()} FB`}
         />
       </div>
 

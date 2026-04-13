@@ -191,10 +191,11 @@ router.get('/social-overview', async (req, res) => {
       .single();
 
     const igFollowers = metaConn?.metadata?.ig_followers || 0;
+    const fbFollowers = metaConn?.metadata?.fb_followers || 0;
 
     res.json({
       instagram: { ...igTotals, followers: igFollowers, recentPosts: igRecent || [] },
-      facebook: { ...fbTotals, recentPosts: fbRecent || [] },
+      facebook: { ...fbTotals, followers: fbFollowers, recentPosts: fbRecent || [] },
       tiktok: tkTotals,
       totals: {
         posts: (igTotals.posts || 0) + (fbTotals.posts || 0) + (tkTotals?.posts || 0),

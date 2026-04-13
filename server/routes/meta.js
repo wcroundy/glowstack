@@ -70,6 +70,7 @@ router.get('/status', async (req, res) => {
       facebook: connected ? {
         pageName: metadata.page_name,
         pageId: metadata.page_id,
+        followers: metadata.fb_followers || 0,
       } : null,
     });
   } catch (err) {
@@ -143,6 +144,7 @@ router.get('/callback', async (req, res) => {
       page_id: selectedPage.id,
       page_name: selectedPage.name,
       page_access_token: selectedPage.access_token,
+      fb_followers: selectedPage.fan_count || 0,
       granted_scopes: grantedScopes,
       needs_reauth: false,
     };
