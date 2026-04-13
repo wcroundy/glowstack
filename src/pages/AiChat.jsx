@@ -17,7 +17,7 @@ function ChatMessage({ message }) {
   return (
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
       <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
-        isUser ? 'bg-surface-200' : 'bg-gradient-to-br from-brand-400 to-purple-500'
+        isUser ? 'bg-surface-200' : 'bg-gradient-to-br from-green-400 to-pink-500'
       }`}>
         {isUser ? <User className="w-4 h-4 text-surface-600" /> : <Sparkles className="w-4 h-4 text-white" />}
       </div>
@@ -110,7 +110,7 @@ export default function AiChat() {
       {/* Header */}
       <div className="px-4 lg:px-8 py-4 border-b bg-white">
         <div className="flex items-center gap-3 max-w-3xl mx-auto">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-400 to-purple-500 flex items-center justify-center">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-green-400 to-pink-500 flex items-center justify-center">
             <Sparkles className="w-5 h-5 text-white" />
           </div>
           <div>
@@ -129,7 +129,7 @@ export default function AiChat() {
 
           {sending && (
             <div className="flex gap-3">
-              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-brand-400 to-purple-500 flex items-center justify-center shrink-0">
+              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-green-400 to-pink-500 flex items-center justify-center shrink-0">
                 <Sparkles className="w-4 h-4 text-white" />
               </div>
               <div className="bg-white border border-surface-200 rounded-2xl rounded-bl-md px-4 py-3">
