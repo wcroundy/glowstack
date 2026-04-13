@@ -168,7 +168,7 @@ export default function ContentCalendar() {
                       <div className="flex items-center gap-2">
                         <h4 className="text-sm font-medium truncate">{event.title}</h4>
                         {event.ai_suggested && (
-                          <span className="badge bg-purple-100 text-purple-600 text-[10px]">
+                          <span className="badge bg-green-100 text-green-600 dark:bg-green-900/40 dark:text-green-300 text-[10px]">
                             <Sparkles className="w-2.5 h-2.5 mr-0.5" /> AI Suggested
                           </span>
                         )}
@@ -179,7 +179,7 @@ export default function ContentCalendar() {
                         {new Date(event.start_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
                       </p>
                       {event.ai_reason && (
-                        <p className="text-[11px] text-purple-500 mt-1 flex items-center gap-1">
+                        <p className="text-[11px] text-green-500 dark:text-green-400 mt-1 flex items-center gap-1">
                           <Sparkles className="w-3 h-3" /> {event.ai_reason}
                         </p>
                       )}
@@ -219,16 +219,16 @@ export default function ContentCalendar() {
           </div>
 
           {/* AI Suggestions */}
-          <div className="card p-5 bg-gradient-to-b from-purple-50 to-white">
+          <div className="card p-5 bg-gradient-to-b from-pink-50 dark:from-green-950/30 to-white dark:to-surface-800">
             <div className="flex items-center gap-2 mb-3">
-              <Sparkles className="w-4 h-4 text-purple-500" />
+              <Sparkles className="w-4 h-4 text-pink-500 dark:text-green-400" />
               <h3 className="text-sm font-semibold text-surface-800">AI Suggestions</h3>
             </div>
             <div className="space-y-3">
               {events.filter(e => e.ai_suggested).map(e => (
-                <div key={e.id} className="p-2.5 rounded-lg bg-white border border-purple-100">
+                <div key={e.id} className="p-2.5 rounded-lg bg-white dark:bg-surface-700 border border-pink-100 dark:border-green-800">
                   <p className="text-xs font-medium text-surface-800">{e.title}</p>
-                  <p className="text-[11px] text-purple-500 mt-1">{e.ai_reason}</p>
+                  <p className="text-[11px] text-pink-500 dark:text-green-400 mt-1">{e.ai_reason}</p>
                 </div>
               ))}
               {events.filter(e => e.ai_suggested).length === 0 && (
@@ -242,9 +242,9 @@ export default function ContentCalendar() {
             <h3 className="text-sm font-semibold text-surface-800 mb-3">This Week's Mix</h3>
             <div className="space-y-2">
               {[
-                { label: 'Posts', count: events.filter(e => e.event_type === 'post').length, color: 'bg-brand-400' },
-                { label: 'Shoots', count: events.filter(e => e.event_type === 'shoot').length, color: 'bg-purple-400' },
-                { label: 'Deadlines', count: events.filter(e => e.event_type === 'deadline').length, color: 'bg-red-400' },
+                { label: 'Posts', count: events.filter(e => e.event_type === 'post').length, color: 'bg-pink-400 dark:bg-green-400' },
+                { label: 'Shoots', count: events.filter(e => e.event_type === 'shoot').length, color: 'bg-green-400 dark:bg-pink-400' },
+                { label: 'Deadlines', count: events.filter(e => e.event_type === 'deadline').length, color: 'bg-orange-400' },
               ].map(item => (
                 <div key={item.label} className="flex items-center justify-between text-xs">
                   <div className="flex items-center gap-2">
