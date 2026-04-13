@@ -58,7 +58,7 @@ export default function ChatDrawer({ isOpen, onClose }) {
         {messages.map(msg => (
           <div key={msg.id} className={`flex gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
             <div className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${
-              msg.role === 'user' ? 'bg-surface-200' : 'bg-gradient-to-br from-brand-400 to-purple-500'
+              msg.role === 'user' ? 'bg-surface-200' : 'bg-gradient-to-br from-green-400 to-pink-500'
             }`}>
               {msg.role === 'user' ? <User className="w-3 h-3 text-surface-600" /> : <Sparkles className="w-3 h-3 text-white" />}
             </div>
@@ -84,7 +84,7 @@ export default function ChatDrawer({ isOpen, onClose }) {
         ))}
         {sending && (
           <div className="flex gap-2">
-            <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-brand-400 to-purple-500 flex items-center justify-center shrink-0">
+            <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-green-400 to-pink-500 flex items-center justify-center shrink-0">
               <Sparkles className="w-3 h-3 text-white" />
             </div>
             <div className="bg-surface-50 rounded-xl rounded-bl-sm px-3 py-2 flex gap-1">
