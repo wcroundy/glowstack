@@ -36,27 +36,26 @@ function MetricCard({ title, value, change, prefix = '', suffix = '', icon: Icon
 }
 
 function InsightCard({ insight }) {
-  const typeStyles = {
-    opportunity: { bg: 'bg-brand-50', border: 'border-brand-200', icon: Zap, color: 'text-brand-600' },
-    timing: { bg: 'bg-blue-50', border: 'border-blue-200', icon: Clock, color: 'text-blue-600' },
-    revenue: { bg: 'bg-emerald-50', border: 'border-emerald-200', icon: Sparkles, color: 'text-emerald-600' },
-    trend: { bg: 'bg-amber-50', border: 'border-amber-200', icon: TrendingUp, color: 'text-amber-600' },
-    content: { bg: 'bg-purple-50', border: 'border-purple-200', icon: Target, color: 'text-purple-600' },
+  const typeIcons = {
+    opportunity: Zap,
+    timing: Clock,
+    revenue: Sparkles,
+    trend: TrendingUp,
+    content: Target,
   };
-  const style = typeStyles[insight.type] || typeStyles.opportunity;
-  const Icon = style.icon;
+  const Icon = typeIcons[insight.type] || Zap;
 
   return (
-    <div className={`rounded-xl p-4 ${style.bg} border ${style.border}`}>
+    <div className="rounded-xl p-4 bg-pink-50 dark:bg-green-950/40 border border-pink-200 dark:border-green-800">
       <div className="flex items-start gap-3">
-        <div className={`p-2 rounded-lg bg-white/80 ${style.color}`}>
+        <div className="p-2 rounded-lg bg-white/80 dark:bg-green-900/50 text-pink-600 dark:text-green-400">
           <Icon className="w-4 h-4" />
         </div>
         <div className="flex-1 min-w-0">
           <h4 className="text-sm font-semibold text-surface-800 mb-1">{insight.title}</h4>
           <p className="text-xs text-surface-600 leading-relaxed">{insight.description}</p>
           {insight.action && (
-            <button className={`mt-2 text-xs font-medium ${style.color} flex items-center gap-1 hover:underline`}>
+            <button className="mt-2 text-xs font-medium text-pink-600 dark:text-green-400 flex items-center gap-1 hover:underline">
               {insight.action} <ArrowRight className="w-3 h-3" />
             </button>
           )}
