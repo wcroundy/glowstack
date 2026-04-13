@@ -35,7 +35,7 @@ function MetricCard({ title, value, change, prefix = '', suffix = '', icon: Icon
   );
 }
 
-function InsightCard({ insight }) {
+function InsightCard({ insight, colorIndex = 0 }) {
   const typeIcons = {
     opportunity: Zap,
     timing: Clock,
@@ -45,17 +45,24 @@ function InsightCard({ insight }) {
   };
   const Icon = typeIcons[insight.type] || Zap;
 
+  const colorCycle = [
+    { bg: 'bg-pink-50 dark:bg-pink-950/30', border: 'border-pink-200 dark:border-pink-800', icon: 'bg-white/80 dark:bg-pink-900/50', text: 'text-pink-600 dark:text-pink-400' },
+    { bg: 'bg-green-50 dark:bg-green-950/30', border: 'border-green-200 dark:border-green-800', icon: 'bg-white/80 dark:bg-green-900/50', text: 'text-green-600 dark:text-green-400' },
+    { bg: 'bg-orange-50 dark:bg-orange-950/30', border: 'border-orange-200 dark:border-orange-800', icon: 'bg-white/80 dark:bg-orange-900/50', text: 'text-orange-600 dark:text-orange-400' },
+  ];
+  const c = colorCycle[colorIndex % 3];
+
   return (
-    <div className="rounded-xl p-4 bg-pink-50 dark:bg-green-950/40 border border-pink-200 dark:border-green-800">
+    <div className={`rounded-xl p-4 ${c.bg} border ${c.border}`}>
       <div className="flex items-start gap-3">
-        <div className="p-2 rounded-lg bg-white/80 dark:bg-green-900/50 text-pink-600 dark:text-green-400">
+        <div className={`p-2 rounded-lg ${c.icon} ${c.text}`}>
           <Icon className="w-4 h-4" />
         </div>
         <div className="flex-1 min-w-0">
           <h4 className="text-sm font-semibold text-surface-800 mb-1">{insight.title}</h4>
           <p className="text-xs text-surface-600 leading-relaxed">{insight.description}</p>
           {insight.action && (
-            <button className="mt-2 text-xs font-medium text-pink-600 dark:text-green-400 flex items-center gap-1 hover:underline">
+            <button className={`mt-2 text-xs font-medium ${c.text} flex items-center gap-1 hover:underline`}>
               {insight.action} <ArrowRight className="w-3 h-3" />
             </button>
           )}
@@ -241,8 +248,8 @@ export default function Dashboard() {
           </div>
           <div className="space-y-3">
             {insights.length > 0 ? (
-              insights.slice(0, 4).map(ins => (
-                <InsightCard key={ins.id} insight={ins} />
+              insights.slice(0, 4).map((ins, idx) => (
+                <InsightCard key={ins.id} insight={ins} colorIndex={idx} />
               ))
             ) : (
               <p className="text-sm text-surface-400">Insights will appear as more data is collected.</p>
