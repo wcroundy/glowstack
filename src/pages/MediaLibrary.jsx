@@ -78,7 +78,7 @@ function MediaCard({ asset, onSelect, selectMode, isSelected, onToggleSelect }) 
               {asset.duration_seconds ? `${Math.round(asset.duration_seconds)}s` : 'Video'}
             </div>
             {asset.scene_count > 0 && (
-              <div className="badge bg-purple-600/80 text-white">
+              <div className="badge bg-pink-600/80 dark:bg-green-600/80 text-white">
                 <Scissors className="w-3 h-3 mr-0.5" />
                 {asset.scene_count}
               </div>
