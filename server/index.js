@@ -80,12 +80,24 @@ app.use('/api/reports', reportsRoutes);
 app.use('/api/tags', tagsRoutes);
 app.use('/api/video-breakdown', videoBreakdownRoutes);
 
-// Health check
-app.get('/api/health', (req, res) => {
+// Health check (also keeps Supabase active to prevent auto-pause)
+app.get('/api/health', async (req, res) => {
+  let dbStatus = 'not configured';
+  if (isSupabaseConfigured()) {
+    try {
+      const { default: supabase } = await import('./services/supabase.js');
+      const { count, error } = await supabase
+        .from('platform_connections')
+        .select('*', { count: 'exact', head: true });
+      dbStatus = error ? `error: ${error.message}` : `ok (${count} connections)`;
+    } catch (e) {
+      dbStatus = `error: ${e.message}`;
+    }
+  }
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    supabase: isSupabaseConfigured() ? 'connected' : 'using demo data',
+    supabase: dbStatus,
     version: '0.1.0',
   });
 });
