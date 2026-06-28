@@ -202,10 +202,10 @@ export async function refreshLongLivedToken(currentToken) {
  * Check if the stored token is expiring soon (within 7 days) and refresh it.
  * Also refreshes the page access token since it derives from the user token.
  */
-export async function checkAndRefreshToken() {
+export async function checkAndRefreshToken(userId = 'default') {
   if (!isSupabaseConfigured()) return null;
 
-  const conn = await getStoredConnection();
+  const conn = await getStoredConnection(userId);
   if (!conn?.is_connected || !conn?.metadata?.user_access_token) return null;
 
   const { metadata } = conn;
@@ -228,7 +228,8 @@ export async function checkAndRefreshToken() {
     await supabase
       .from('platform_connections')
       .update({ metadata: { ...metadata, needs_reauth: true } })
-      .eq('platform', 'meta');
+      .eq('platform', 'meta')
+      .eq('user_id', userId);
     return { refreshed: false, needsReauth: true };
   }
 
@@ -251,7 +252,7 @@ export async function checkAndRefreshToken() {
     needs_reauth: false,
   };
 
-  await saveConnection(updatedMetadata);
+  await saveConnection(updatedMetadata, userId);
   console.log('Meta token refreshed successfully, new expiry:', newToken.expires_in, 'seconds');
 
   return {
@@ -406,7 +407,7 @@ export async function getFacebookPostInsights(postId, pageAccessToken) {
  * Get the timestamp of the most recently synced post for a platform.
  * Used for incremental sync — only fetch posts newer than this.
  */
-export async function getLastSyncTimestamp(platform) {
+export async function getLastSyncTimestamp(platform, userId = 'default') {
   if (!isSupabaseConfigured()) return null;
 
   const table = platform === 'instagram' ? 'instagram_insights' : 'facebook_insights';
@@ -415,6 +416,7 @@ export async function getLastSyncTimestamp(platform) {
   const { data, error } = await supabase
     .from(table)
     .select(timeCol)
+    .eq('user_id', userId)
     .order(timeCol, { ascending: false })
     .limit(1)
     .single();
@@ -532,20 +534,21 @@ export function verifyWebhookSignature(rawBody, signature) {
 
 // ─── Connection Management ─────────────────────────────────────────────────────
 
-/** Get stored Meta connection from Supabase */
-export async function getStoredConnection() {
+/** Get stored Meta connection from Supabase, scoped to user */
+export async function getStoredConnection(userId = 'default') {
   if (!isSupabaseConfigured()) return null;
   const { data } = await supabase
     .from('platform_connections')
     .select('*')
     .eq('platform', 'meta')
+    .eq('user_id', userId)
     .single();
   return data;
 }
 
 /** Get a valid page access token, auto-refreshing if needed */
-export async function getValidPageToken() {
-  const conn = await getStoredConnection();
+export async function getValidPageToken(userId = 'default') {
+  const conn = await getStoredConnection(userId);
   if (!conn?.is_connected || !conn?.metadata?.page_access_token) {
     throw new Error('Meta is not connected. Please connect your Instagram/Facebook account first.');
   }
@@ -564,10 +567,10 @@ export async function getValidPageToken() {
   // If token expires within 1 day, try auto-refresh
   if (expiresAt - Date.now() < oneDayMs) {
     console.log('Token expiring soon, attempting auto-refresh...');
-    const refreshResult = await checkAndRefreshToken();
+    const refreshResult = await checkAndRefreshToken(userId);
     if (refreshResult?.refreshed) {
       // Re-fetch the connection to get the new token
-      const refreshedConn = await getStoredConnection();
+      const refreshedConn = await getStoredConnection(userId);
       return {
         pageAccessToken: refreshedConn.metadata.page_access_token,
         pageId: refreshedConn.metadata.page_id,
@@ -587,19 +590,20 @@ export async function getValidPageToken() {
   };
 }
 
-/** Save connection to Supabase */
-export async function saveConnection(metadata) {
+/** Save connection to Supabase, scoped to user */
+export async function saveConnection(metadata, userId = 'default') {
   if (!isSupabaseConfigured()) return null;
   const { data, error } = await supabase
     .from('platform_connections')
     .upsert({
       platform: 'meta',
+      user_id: userId,
       display_name: 'Instagram & Facebook',
       is_connected: true,
       connected_at: new Date().toISOString(),
       access_token: metadata.user_access_token,
       metadata,
-    }, { onConflict: 'platform' })
+    }, { onConflict: 'platform,user_id' })
     .select()
     .single();
   if (error) throw error;

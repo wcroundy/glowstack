@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import crypto from 'crypto';
 import { supabase, isSupabaseConfigured } from '../services/supabase.js';
 import {
   isMetaConfigured, hasAdvancedAccess, getAuthUrl, exchangeCode, getPages,
@@ -33,10 +34,12 @@ router.get('/status', async (req, res) => {
       return res.json({ configured: true, connected: false, message: 'Supabase not configured' });
     }
 
+    const userId = req.userId || 'default';
     const { data: connection } = await supabase
       .from('platform_connections')
       .select('is_connected, metadata')
       .eq('platform', 'meta')
+      .eq('user_id', userId)
       .single();
 
     const connected = !!(connection?.is_connected && connection?.metadata?.page_access_token);
@@ -84,14 +87,18 @@ router.get('/auth-url', (req, res) => {
   if (!isMetaConfigured()) {
     return res.status(400).json({ error: 'Meta API credentials not configured' });
   }
-  const url = getAuthUrl('meta_connect');
+  // Encode userId in the state so we can associate the connection on callback
+  const userId = req.userId || 'default';
+  const state = JSON.stringify({ csrf: crypto.randomBytes(16).toString('hex'), userId });
+  const stateB64 = Buffer.from(state).toString('base64url');
+  const url = getAuthUrl(stateB64);
   res.json({ url });
 });
 
 // GET /api/auth/meta/callback — OAuth callback (browser redirect, no auth middleware)
 router.get('/callback', async (req, res) => {
   try {
-    const { code, error: fbError, error_description } = req.query;
+    const { code, state, error: fbError, error_description } = req.query;
 
     if (fbError) {
       console.error('Meta OAuth error:', fbError, error_description);
@@ -102,7 +109,18 @@ router.get('/callback', async (req, res) => {
       return res.redirect(`${CLIENT_REDIRECT}/settings?meta_error=no_code`);
     }
 
-    console.log('Meta callback: exchanging code for token...');
+    // Extract userId from state parameter
+    let userId = 'default';
+    if (state) {
+      try {
+        const stateData = JSON.parse(Buffer.from(state, 'base64url').toString());
+        userId = stateData.userId || 'default';
+      } catch {
+        console.warn('Could not parse OAuth state, using default userId');
+      }
+    }
+
+    console.log('Meta callback: exchanging code for token (userId:', userId, ')...');
     const tokenData = await exchangeCode(code);
     console.log('Meta callback: token obtained, fetching pages...');
 
@@ -170,9 +188,9 @@ router.get('/callback', async (req, res) => {
       }
     }
 
-    console.log('Meta callback: saving connection for page:', metadata.page_name);
+    console.log('Meta callback: saving connection for page:', metadata.page_name, 'userId:', userId);
     console.log('Meta callback: granted scopes:', grantedScopes.join(', '));
-    await saveConnection(metadata);
+    await saveConnection(metadata, userId);
     console.log('Meta callback: connection saved successfully');
 
     res.redirect(`${CLIENT_REDIRECT}/settings?meta_connected=true`);
@@ -185,6 +203,7 @@ router.get('/callback', async (req, res) => {
 // POST /api/meta/disconnect — disconnect Meta
 router.post('/disconnect', async (req, res) => {
   try {
+    const userId = req.userId || 'default';
     if (!isSupabaseConfigured()) {
       return res.json({ message: 'Disconnected (demo)' });
     }
@@ -195,7 +214,8 @@ router.post('/disconnect', async (req, res) => {
         access_token: null,
         metadata: {},
       })
-      .eq('platform', 'meta');
+      .eq('platform', 'meta')
+      .eq('user_id', userId);
     res.json({ message: 'Meta disconnected' });
   } catch (err) {
     console.error('Meta disconnect error:', err.message);
@@ -208,7 +228,8 @@ router.post('/disconnect', async (req, res) => {
 // POST /api/meta/refresh-token — manually trigger token refresh
 router.post('/refresh-token', async (req, res) => {
   try {
-    const result = await checkAndRefreshToken();
+    const userId = req.userId || 'default';
+    const result = await checkAndRefreshToken(userId);
     if (!result) {
       return res.status(400).json({ error: 'No Meta connection found' });
     }
@@ -224,8 +245,9 @@ router.post('/refresh-token', async (req, res) => {
 // POST /api/meta/sync/instagram — sync Instagram posts and insights
 router.post('/sync/instagram', async (req, res) => {
   try {
-    console.log('Instagram sync: fetching stored connection...');
-    const { pageAccessToken, pageId, igUserId } = await getValidPageToken();
+    const userId = req.userId || 'default';
+    console.log('Instagram sync: fetching stored connection for user:', userId);
+    const { pageAccessToken, pageId, igUserId } = await getValidPageToken(userId);
     console.log('Instagram sync: pageId=', pageId, 'igUserId=', igUserId);
 
     if (!igUserId) {
@@ -239,7 +261,7 @@ router.post('/sync/instagram', async (req, res) => {
     let isIncremental = false;
 
     if (syncType !== 'full') {
-      lastSync = await getLastSyncTimestamp('instagram');
+      lastSync = await getLastSyncTimestamp('instagram', userId);
       isIncremental = !!(lastSync && syncType !== 'full');
     }
 
@@ -248,7 +270,7 @@ router.post('/sync/instagram', async (req, res) => {
     if (isSupabaseConfigured()) {
       const { data: log } = await supabase
         .from('meta_sync_log')
-        .insert({ platform: 'instagram', sync_type: isIncremental ? 'incremental' : 'full' })
+        .insert({ platform: 'instagram', sync_type: isIncremental ? 'incremental' : 'full', user_id: userId })
         .select()
         .single();
       syncLogId = log?.id;
@@ -292,6 +314,7 @@ router.post('/sync/instagram', async (req, res) => {
 
         rows.push({
           ig_media_id: post.id,
+          user_id: userId,
           media_type: post.media_type,
           media_product_type: post.media_product_type,
           caption: post.caption,
@@ -315,7 +338,7 @@ router.post('/sync/instagram', async (req, res) => {
 
       const { error } = await supabase
         .from('instagram_insights')
-        .upsert(rows, { onConflict: 'ig_media_id' });
+        .upsert(rows, { onConflict: 'ig_media_id,user_id' });
 
       if (!error) {
         synced += batch.length;
@@ -347,6 +370,7 @@ router.post('/sync/instagram', async (req, res) => {
         .from('platform_connections')
         .select('metadata')
         .eq('platform', 'meta')
+        .eq('user_id', userId)
         .single();
       if (conn?.metadata) {
         await supabase
@@ -358,7 +382,8 @@ router.post('/sync/instagram', async (req, res) => {
               fb_followers: pageInfo.fan_count || conn.metadata.fb_followers || 0,
             },
           })
-          .eq('platform', 'meta');
+          .eq('platform', 'meta')
+          .eq('user_id', userId);
       }
     } catch (e) {
       console.warn('Could not refresh follower counts during sync:', e.message);
@@ -384,7 +409,8 @@ router.post('/sync/instagram', async (req, res) => {
 // POST /api/meta/sync/facebook — sync Facebook Page posts and insights
 router.post('/sync/facebook', async (req, res) => {
   try {
-    const { pageAccessToken, pageId } = await getValidPageToken();
+    const userId = req.userId || 'default';
+    const { pageAccessToken, pageId } = await getValidPageToken(userId);
 
     // Determine sync type
     const syncType = req.query.type || 'auto';
@@ -392,7 +418,7 @@ router.post('/sync/facebook', async (req, res) => {
     let isIncremental = false;
 
     if (syncType !== 'full') {
-      lastSync = await getLastSyncTimestamp('facebook');
+      lastSync = await getLastSyncTimestamp('facebook', userId);
       isIncremental = !!(lastSync && syncType !== 'full');
     }
 
@@ -401,7 +427,7 @@ router.post('/sync/facebook', async (req, res) => {
     if (isSupabaseConfigured()) {
       const { data: log } = await supabase
         .from('meta_sync_log')
-        .insert({ platform: 'facebook', sync_type: isIncremental ? 'incremental' : 'full' })
+        .insert({ platform: 'facebook', sync_type: isIncremental ? 'incremental' : 'full', user_id: userId })
         .select()
         .single();
       syncLogId = log?.id;
@@ -448,6 +474,7 @@ router.post('/sync/facebook', async (req, res) => {
 
         rows.push({
           fb_post_id: post.id,
+          user_id: userId,
           message: post.message,
           permalink_url: post.permalink_url,
           post_type: null,
@@ -467,7 +494,7 @@ router.post('/sync/facebook', async (req, res) => {
 
       const { error } = await supabase
         .from('facebook_insights')
-        .upsert(rows, { onConflict: 'fb_post_id' });
+        .upsert(rows, { onConflict: 'fb_post_id,user_id' });
 
       if (!error) {
         synced += batch.length;
@@ -496,6 +523,7 @@ router.post('/sync/facebook', async (req, res) => {
         .from('platform_connections')
         .select('metadata')
         .eq('platform', 'meta')
+        .eq('user_id', userId)
         .single();
       if (conn?.metadata) {
         await supabase
@@ -506,7 +534,8 @@ router.post('/sync/facebook', async (req, res) => {
               fb_followers: pageInfo.fan_count || conn.metadata.fb_followers || 0,
             },
           })
-          .eq('platform', 'meta');
+          .eq('platform', 'meta')
+          .eq('user_id', userId);
       }
     } catch (e) {
       console.warn('Could not refresh FB follower count during sync:', e.message);
@@ -534,6 +563,7 @@ router.post('/sync/facebook', async (req, res) => {
 // GET /api/meta/instagram/posts — get stored Instagram posts with insights
 router.get('/instagram/posts', async (req, res) => {
   try {
+    const userId = req.userId || 'default';
     const limit = Math.min(parseInt(req.query.limit) || 50, 200);
     const offset = parseInt(req.query.offset) || 0;
     const sort = req.query.sort || 'timestamp';
@@ -542,6 +572,7 @@ router.get('/instagram/posts', async (req, res) => {
     const { data, error, count } = await supabase
       .from('instagram_insights')
       .select('*', { count: 'exact' })
+      .eq('user_id', userId)
       .order(sort, { ascending: order })
       .range(offset, offset + limit - 1);
 
@@ -556,9 +587,11 @@ router.get('/instagram/posts', async (req, res) => {
 // GET /api/meta/instagram/summary — aggregated Instagram stats
 router.get('/instagram/summary', async (req, res) => {
   try {
+    const userId = req.userId || 'default';
     const { count: totalPosts, error: countError } = await supabase
       .from('instagram_insights')
-      .select('*', { count: 'exact', head: true });
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId);
 
     if (countError) throw countError;
 
@@ -583,6 +616,7 @@ router.get('/instagram/summary', async (req, res) => {
       const { data: posts, error } = await supabase
         .from('instagram_insights')
         .select('like_count, comments_count, impressions, reach, saved, shares, engagement, plays, media_type')
+        .eq('user_id', userId)
         .range(offset, offset + PAGE_SIZE - 1);
 
       if (error) throw error;
@@ -626,12 +660,14 @@ router.get('/instagram/summary', async (req, res) => {
 // GET /api/meta/facebook/posts — get stored Facebook posts with insights
 router.get('/facebook/posts', async (req, res) => {
   try {
+    const userId = req.userId || 'default';
     const limit = Math.min(parseInt(req.query.limit) || 50, 200);
     const offset = parseInt(req.query.offset) || 0;
 
     const { data, error, count } = await supabase
       .from('facebook_insights')
       .select('*', { count: 'exact' })
+      .eq('user_id', userId)
       .order('created_time', { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -646,9 +682,11 @@ router.get('/facebook/posts', async (req, res) => {
 // GET /api/meta/facebook/summary — aggregated Facebook stats
 router.get('/facebook/summary', async (req, res) => {
   try {
+    const userId = req.userId || 'default';
     const { count: totalPosts, error: countError } = await supabase
       .from('facebook_insights')
-      .select('*', { count: 'exact', head: true });
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId);
 
     if (countError) throw countError;
 
@@ -671,6 +709,7 @@ router.get('/facebook/summary', async (req, res) => {
       const { data: posts, error } = await supabase
         .from('facebook_insights')
         .select('impressions, reach, engagement, reactions_total, comments_count, shares_count, clicks')
+        .eq('user_id', userId)
         .range(offset, offset + PAGE_SIZE - 1);
 
       if (error) throw error;
@@ -699,9 +738,11 @@ router.get('/facebook/summary', async (req, res) => {
 // GET /api/meta/sync-log — get sync history
 router.get('/sync-log', async (req, res) => {
   try {
+    const userId = req.userId || 'default';
     const { data, error } = await supabase
       .from('meta_sync_log')
       .select('*')
+      .eq('user_id', userId)
       .order('started_at', { ascending: false })
       .limit(20);
     if (error) throw error;

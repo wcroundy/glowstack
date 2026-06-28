@@ -7,11 +7,16 @@ const APP_PASSWORD = process.env.APP_PASSWORD || 'glowstack2026';
 const TOKEN_SECRET = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.APP_PASSWORD || 'fallback-secret';
 const TOKEN_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-// Create a signed token with expiry (no external DB needed)
-function createToken() {
+// Default user ID for single-tenant mode (Brooklyn / Blush Basics)
+// When multi-tenant auth is added, this will come from the users table
+const DEFAULT_USER_ID = 'default';
+
+// Create a signed token with expiry and user identity
+function createToken(userId = DEFAULT_USER_ID) {
   const payload = {
     iat: Date.now(),
     exp: Date.now() + TOKEN_EXPIRY_MS,
+    uid: userId,
     nonce: crypto.randomBytes(8).toString('hex'),
   };
   const data = Buffer.from(JSON.stringify(payload)).toString('base64url');
@@ -19,7 +24,7 @@ function createToken() {
   return `${data}.${sig}`;
 }
 
-// Verify a signed token
+// Verify a signed token — returns the payload if valid, false otherwise
 function verifyToken(token) {
   if (!token || !token.includes('.')) return false;
   const [data, sig] = token.split('.');
@@ -29,7 +34,7 @@ function verifyToken(token) {
   try {
     const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
     if (Date.now() > payload.exp) return false;
-    return true;
+    return payload;
   } catch {
     return false;
   }
@@ -44,7 +49,7 @@ router.post('/login', (req, res) => {
     return res.status(401).json({ error: 'Invalid password' });
   }
 
-  const token = createToken();
+  const token = createToken(DEFAULT_USER_ID);
   res.json({ token, expires_in: TOKEN_EXPIRY_MS });
 });
 
@@ -64,7 +69,7 @@ router.post('/logout', (req, res) => {
   res.json({ message: 'Logged out' });
 });
 
-// Middleware: protect API routes
+// Middleware: protect API routes and attach userId to request
 export function requireAuth(req, res, next) {
   // Skip auth for health endpoint
   if (req.path === '/health') {
@@ -74,10 +79,13 @@ export function requireAuth(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
-  if (!verifyToken(token)) {
+  const payload = verifyToken(token);
+  if (!payload) {
     return res.status(401).json({ error: 'Session expired' });
   }
 
+  // Attach user identity to request for downstream routes
+  req.userId = payload.uid || DEFAULT_USER_ID;
   next();
 }
 
