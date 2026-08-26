@@ -141,6 +141,30 @@ export const api = {
   tiktokVideos: (params) => request(`/tiktok/videos?${new URLSearchParams(params || {})}`),
   tiktokSummary: () => request('/tiktok/summary'),
 
+  // ManyChat
+  manychatStatus: () => request('/manychat/status'),
+  manychatConnect: (apiToken) => request('/manychat/connect', { method: 'POST', body: JSON.stringify({ apiToken }) }),
+  manychatDisconnect: () => request('/manychat/disconnect', { method: 'POST' }),
+  manychatPageInfo: () => request('/manychat/page/info'),
+  manychatTags: () => request('/manychat/tags'),
+  manychatCreateTag: (name) => request('/manychat/tags', { method: 'POST', body: JSON.stringify({ name }) }),
+  manychatDeleteTag: (id) => request(`/manychat/tags/${id}`, { method: 'DELETE' }),
+  manychatCustomFields: () => request('/manychat/custom-fields'),
+  manychatCreateCustomField: (data) => request('/manychat/custom-fields', { method: 'POST', body: JSON.stringify(data) }),
+  manychatFlows: () => request('/manychat/flows'),
+  manychatGrowthTools: () => request('/manychat/growth-tools'),
+  manychatBotFields: () => request('/manychat/bot-fields'),
+  manychatSetBotField: (data) => request('/manychat/bot-fields', { method: 'POST', body: JSON.stringify(data) }),
+  manychatSubscriber: (id) => request(`/manychat/subscribers/${id}`),
+  manychatSearchSubscribers: (params) => request('/manychat/subscribers/search', { method: 'POST', body: JSON.stringify(params) }),
+  manychatCreateSubscriber: (data) => request('/manychat/subscribers', { method: 'POST', body: JSON.stringify(data) }),
+  manychatAddSubscriberTag: (subscriberId, data) => request(`/manychat/subscribers/${subscriberId}/tags`, { method: 'POST', body: JSON.stringify(data) }),
+  manychatRemoveSubscriberTag: (subscriberId, data) => request(`/manychat/subscribers/${subscriberId}/tags`, { method: 'DELETE', body: JSON.stringify(data) }),
+  manychatSetSubscriberField: (subscriberId, data) => request(`/manychat/subscribers/${subscriberId}/custom-fields`, { method: 'POST', body: JSON.stringify(data) }),
+  manychatSendContent: (subscriberId, data) => request('/manychat/send/content', { method: 'POST', body: JSON.stringify({ subscriberId, data }) }),
+  manychatSendFlow: (subscriberId, flowNs) => request('/manychat/send/flow', { method: 'POST', body: JSON.stringify({ subscriberId, flowNs }) }),
+  manychatSyncLog: () => request('/manychat/sync-log'),
+
   // Reports
   generateReport: (data) => request('/reports/generate', { method: 'POST', body: JSON.stringify(data) }),
 

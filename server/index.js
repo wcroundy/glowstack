@@ -55,6 +55,10 @@ app.use('/api/google-photos', googlePhotosRoutes);
 // TikTok API routes (protected)
 app.use('/api/tiktok', tiktokRoutes);
 
+// ManyChat API routes (protected — all routes require auth)
+import manychatRoutes from './routes/manychat.js';
+app.use('/api/manychat', manychatRoutes);
+
 // Routes
 import mediaRoutes from './routes/media.js';
 import analyticsRoutes from './routes/analytics.js';

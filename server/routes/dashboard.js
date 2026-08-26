@@ -200,10 +200,26 @@ router.get('/social-overview', async (req, res) => {
     const igFollowers = metaConn?.metadata?.ig_followers || 0;
     const fbFollowers = metaConn?.metadata?.fb_followers || 0;
 
+    // ManyChat subscriber count
+    let manychatSubscribers = null;
+    try {
+      const { data: mcConn } = await supabase
+        .from('platform_connections')
+        .select('metadata')
+        .eq('platform', 'manychat')
+        .eq('user_id', userId)
+        .eq('is_connected', true)
+        .single();
+      if (mcConn?.metadata?.subscribers) {
+        manychatSubscribers = mcConn.metadata.subscribers;
+      }
+    } catch { /* manychat not connected */ }
+
     res.json({
       instagram: { ...igTotals, followers: igFollowers, recentPosts: igRecent || [] },
       facebook: { ...fbTotals, followers: fbFollowers, recentPosts: fbRecent || [] },
       tiktok: tkTotals,
+      manychat: manychatSubscribers != null ? { subscribers: manychatSubscribers } : null,
       totals: {
         posts: (igTotals.posts || 0) + (fbTotals.posts || 0) + (tkTotals?.posts || 0),
         likes: (igTotals.likes || 0) + (fbTotals.reactions || 0) + (tkTotals?.likes || 0),
