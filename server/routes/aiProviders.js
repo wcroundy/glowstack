@@ -40,7 +40,10 @@ router.post('/:platform/connect', async (req, res) => {
     const trimmed = apiToken.trim();
     const validation = await ai.validateProviderToken(platform, trimmed);
     if (!validation.ok) {
-      return res.status(401).json({ error: 'Invalid API key. Please check it and try again.', details: validation.error });
+      // 400, not 401 — a 401 from ANY endpoint makes the frontend's global fetch
+      // handler treat it as "your GlowStack session expired" and force a logout.
+      // This is about the third-party key being invalid, not the user's GlowStack session.
+      return res.status(400).json({ error: 'Invalid API key. Please check it and try again.', details: validation.error });
     }
 
     await ai.saveProviderConnection(userId, platform, trimmed);

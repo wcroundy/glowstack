@@ -53,7 +53,9 @@ router.post('/connect', async (req, res) => {
     // Validate the token by calling getInfo
     const validation = await mc.validateToken(trimmedToken);
     if (!validation.ok) {
-      return res.status(401).json({
+      // 400, not 401 — a 401 from ANY endpoint makes the frontend's global fetch
+      // handler treat it as "your GlowStack session expired" and force a logout.
+      return res.status(400).json({
         error: 'Invalid API token. Please check your ManyChat API key and try again.',
         details: validation.error,
       });
