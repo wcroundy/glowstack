@@ -2,14 +2,15 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Image, BarChart3, CalendarDays, MessageCircle,
-  Settings, Sparkles, Menu, X, ChevronRight, LogOut, Tags, TrendingUp,
-  Sun, Moon,
+  Settings, Sparkles, Menu, X, ChevronRight, ChevronDown, LogOut, Tags, TrendingUp,
+  Sun, Moon, PenSquare, Rocket,
 } from 'lucide-react';
 import { useTheme } from './contexts/ThemeContext';
 import Dashboard from './pages/Dashboard';
 import MediaLibrary from './pages/MediaLibrary';
 import Analytics from './pages/Analytics';
 import ContentCalendar from './pages/ContentCalendar';
+import CreateContent from './pages/CreateContent';
 import AiChat from './pages/AiChat';
 import SetupWizard from './pages/SetupWizard';
 import TagsManager from './pages/TagsManager';
@@ -26,11 +27,54 @@ const NAV_ITEMS = [
   { to: '/media',      icon: Image,           label: 'Media Library' },
   { to: '/analytics',  icon: BarChart3,       label: 'Analytics' },
   { to: '/social',     icon: TrendingUp,      label: 'Social Insights' },
-  { to: '/calendar',   icon: CalendarDays,    label: 'Calendar' },
+  {
+    icon: Rocket, label: 'Posting',
+    children: [
+      { to: '/posting/create', icon: PenSquare,    label: 'Create Content' },
+      { to: '/calendar',       icon: CalendarDays, label: 'Calendar' },
+    ],
+  },
   { to: '/tags',       icon: Tags,            label: 'Tag Manager' },
   { to: '/chat',       icon: MessageCircle,   label: 'AI Assistant' },
   { to: '/settings',   icon: Settings,        label: 'Integrations' },
 ];
+
+function NavGroup({ item, currentPath, onNavigate }) {
+  const hasActiveChild = item.children.some(c => c.to === currentPath);
+  const [open, setOpen] = useState(hasActiveChild);
+
+  useEffect(() => {
+    if (hasActiveChild) setOpen(true);
+  }, [hasActiveChild]);
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`sidebar-link w-full ${hasActiveChild ? 'text-brand-600' : ''}`}
+      >
+        <item.icon className="w-5 h-5" />
+        {item.label}
+        <ChevronDown className={`w-4 h-4 ml-auto transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="mt-1 ml-4 pl-3 border-l border-surface-200 space-y-1">
+          {item.children.map(({ to, icon: Icon, label }) => (
+            <NavLink
+              key={to}
+              to={to}
+              className={({ isActive }) => isActive ? 'sidebar-link-active' : 'sidebar-link'}
+              onClick={onNavigate}
+            >
+              <Icon className="w-4 h-4" />
+              {label}
+            </NavLink>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -150,18 +194,27 @@ export default function App() {
 
           {/* Navigation */}
           <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-            {NAV_ITEMS.map(({ to, icon: Icon, label }) => (
-              <NavLink
-                key={to}
-                to={to}
-                end={to === '/'}
-                className={({ isActive }) => isActive ? 'sidebar-link-active' : 'sidebar-link'}
-                onClick={() => setSidebarOpen(false)}
-              >
-                <Icon className="w-5 h-5" />
-                {label}
-              </NavLink>
-            ))}
+            {NAV_ITEMS.map((item) =>
+              item.children ? (
+                <NavGroup
+                  key={item.label}
+                  item={item}
+                  currentPath={location.pathname}
+                  onNavigate={() => setSidebarOpen(false)}
+                />
+              ) : (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.to === '/'}
+                  className={({ isActive }) => isActive ? 'sidebar-link-active' : 'sidebar-link'}
+                  onClick={() => setSidebarOpen(false)}
+                >
+                  <item.icon className="w-5 h-5" />
+                  {item.label}
+                </NavLink>
+              )
+            )}
           </nav>
 
           {/* AI Quick Action */}
@@ -230,6 +283,7 @@ export default function App() {
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/social" element={<SocialInsights />} />
             <Route path="/calendar" element={<ContentCalendar />} />
+            <Route path="/posting/create" element={<CreateContent />} />
             <Route path="/tags" element={<TagsManager />} />
             <Route path="/chat" element={<AiChat />} />
             <Route path="/settings" element={<SetupWizard />} />
