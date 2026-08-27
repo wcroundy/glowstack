@@ -147,9 +147,7 @@ export default function CreateContent() {
 
   const suggestedTitle = useMemo(() => {
     if (form.title) return form.title;
-    const idea = form.ideaNotes.trim();
-    if (!idea) return '';
-    return idea.length > 60 ? idea.slice(0, 57) + '...' : idea;
+    return form.ideaNotes.trim();
   }, [form.ideaNotes, form.title]);
 
   const goTo = (i) => {
