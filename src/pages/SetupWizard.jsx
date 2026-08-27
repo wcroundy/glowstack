@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Check, ChevronRight, ExternalLink, Plug, AlertCircle,
   RefreshCw, Unplug, Sparkles, Shield, Instagram, Facebook, Link2, Loader2, Music2, Camera,
-  MessageSquare, Eye, EyeOff, Key, Bot, Wand2,
+  MessageSquare, Eye, EyeOff, Key,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
@@ -668,58 +668,115 @@ function GooglePhotosCard() {
 const AI_PROVIDER_META = {
   openai: {
     displayName: 'OpenAI',
-    gradient: 'from-emerald-500 to-teal-600',
     docsUrl: 'https://platform.openai.com/api-keys',
     keyPlaceholder: 'sk-...',
-    blurb: 'GPT models — often the cheaper choice for image tagging and video analysis.',
   },
   anthropic: {
     displayName: 'Anthropic (Claude)',
-    gradient: 'from-orange-500 to-amber-600',
     docsUrl: 'https://console.anthropic.com/settings/keys',
     keyPlaceholder: 'sk-ant-...',
-    blurb: 'Claude models — often the cheaper choice for the AI Assistant chat.',
   },
 };
 
-function AiProviderCard({ platform, connected, onChanged }) {
-  const meta = AI_PROVIDER_META[platform];
+// Each AI feature in GlowStack is powered by whichever provider is assigned
+// to its purpose here — a single connected key can power one purpose or both.
+const AI_PURPOSES = [
+  {
+    key: 'chat_provider',
+    otherKey: 'vision_provider',
+    title: 'Chat & Research',
+    icon: MessageSquare,
+    gradient: 'from-blue-500 to-indigo-600',
+    description: 'Powers the AI Assistant — answering questions, planning content, and making sense of your analytics.',
+  },
+  {
+    key: 'vision_provider',
+    otherKey: 'chat_provider',
+    title: 'Media Processing',
+    icon: Camera,
+    gradient: 'from-purple-500 to-fuchsia-600',
+    description: 'Powers AI auto-tagging in the Media Library and scene detection in Video Breakdown.',
+    note: 'ChatGPT (OpenAI) is often the cheaper choice for media analysis tasks.',
+  },
+];
+
+function AiPurposeCard({ purpose, providers, settings, onChanged }) {
+  const assignedProvider = settings?.[purpose.key] || null;
+  const otherPurpose = AI_PURPOSES.find(p => p.key === purpose.otherKey);
+  const otherAssignedProvider = settings?.[purpose.otherKey] || null;
+
   const [expanded, setExpanded] = useState(false);
-  const [connecting, setConnecting] = useState(false);
-  const [disconnecting, setDisconnecting] = useState(false);
+  const [pendingProvider, setPendingProvider] = useState(null); // provider whose key-entry form is open
   const [apiToken, setApiToken] = useState('');
   const [showToken, setShowToken] = useState(false);
+  const [shareWithOther, setShareWithOther] = useState(!otherAssignedProvider);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
-  const handleConnect = async () => {
-    if (!apiToken.trim()) {
-      setError('Please enter your API key.');
-      return;
-    }
-    setConnecting(true);
+  useEffect(() => {
+    setShareWithOther(!otherAssignedProvider);
+  }, [otherAssignedProvider]);
+
+  const assignOnly = async (platform) => {
+    setBusy(true);
     setError(null);
     try {
-      await api.aiProviderConnect(platform, apiToken.trim());
+      await api.updateAiSettings({
+        chat_provider: purpose.key === 'chat_provider' ? platform : settings.chat_provider,
+        vision_provider: purpose.key === 'vision_provider' ? platform : settings.vision_provider,
+      });
+      onChanged();
+    } catch (err) {
+      setError(err.data?.error || err.message || 'Could not update.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSelectProvider = (platform) => {
+    if (providers[platform]?.connected) {
+      assignOnly(platform);
+    } else {
+      setPendingProvider(platform);
       setApiToken('');
+      setError(null);
+    }
+  };
+
+  const handleConnect = async () => {
+    if (!apiToken.trim()) { setError('Please enter your API key.'); return; }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.aiProviderConnect(pendingProvider, apiToken.trim());
+      await api.updateAiSettings({
+        chat_provider: purpose.key === 'chat_provider' ? pendingProvider : (shareWithOther ? pendingProvider : settings.chat_provider),
+        vision_provider: purpose.key === 'vision_provider' ? pendingProvider : (shareWithOther ? pendingProvider : settings.vision_provider),
+      });
+      setApiToken('');
+      setPendingProvider(null);
       onChanged();
     } catch (err) {
       setError(err.data?.error || err.message || 'Failed to connect. Check your API key.');
     } finally {
-      setConnecting(false);
+      setBusy(false);
     }
   };
 
   const handleDisconnect = async () => {
-    setDisconnecting(true);
+    if (!assignedProvider) return;
+    setBusy(true);
     try {
-      await api.aiProviderDisconnect(platform);
+      await api.aiProviderDisconnect(assignedProvider);
       onChanged();
     } catch (err) {
-      console.error(`${platform} disconnect error:`, err);
+      console.error('AI provider disconnect error:', err);
     } finally {
-      setDisconnecting(false);
+      setBusy(false);
     }
   };
+
+  const Icon = purpose.icon;
 
   return (
     <div className={`card transition-all ${expanded ? 'ring-2 ring-brand-300' : ''}`}>
@@ -727,190 +784,138 @@ function AiProviderCard({ platform, connected, onChanged }) {
         className="flex items-center gap-4 p-4 cursor-pointer hover:bg-surface-50 rounded-t-2xl transition-colors"
         onClick={() => setExpanded(!expanded)}
       >
-        <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${meta.gradient} flex items-center justify-center flex-shrink-0`}>
-          <Bot className="w-5 h-5 text-white" />
+        <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${purpose.gradient} flex items-center justify-center flex-shrink-0`}>
+          <Icon className="w-5 h-5 text-white" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="font-semibold text-surface-900">{meta.displayName}</h3>
-            {connected ? (
+            <h3 className="font-semibold text-surface-900">{purpose.title}</h3>
+            {assignedProvider ? (
               <span className="badge bg-emerald-100 text-emerald-700 text-[10px]">
-                <Check className="w-3 h-3 mr-0.5" /> Connected
+                <Check className="w-3 h-3 mr-0.5" /> {AI_PROVIDER_META[assignedProvider].displayName}
               </span>
             ) : (
               <span className="badge bg-surface-100 text-surface-500 text-[10px]">Not Connected</span>
             )}
           </div>
-          <p className="text-xs text-surface-500 mt-0.5">{meta.blurb}</p>
+          <p className="text-xs text-surface-500 mt-0.5">{purpose.description}</p>
         </div>
         <ChevronRight className={`w-5 h-5 text-surface-300 transition-transform ${expanded ? 'rotate-90' : ''}`} />
       </div>
 
       {expanded && (
-        <div className="border-t px-4 pb-4">
-          {connected ? (
-            <div className="pt-4 space-y-4">
-              <div className="flex items-center gap-3 p-3 rounded-xl bg-emerald-50 border border-emerald-200">
-                <Check className="w-5 h-5 text-emerald-600" />
-                <p className="text-sm font-medium text-emerald-800">API key saved and validated</p>
-              </div>
-              <button
-                onClick={handleDisconnect}
-                disabled={disconnecting}
-                className="btn-ghost text-xs text-red-500 hover:bg-red-50 flex items-center gap-1.5"
-              >
-                {disconnecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Unplug className="w-3.5 h-3.5" />}
-                Disconnect
-              </button>
+        <div className="border-t px-4 pb-4 pt-4 space-y-4">
+          {purpose.note && (
+            <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200">
+              <Sparkles className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+              <p className="text-xs text-amber-700">{purpose.note}</p>
             </div>
-          ) : (
-            <div className="pt-4 space-y-4">
-              <p className="text-sm text-surface-600">
-                Bring your own {meta.displayName} API key — you're billed directly by {meta.displayName} for what you use, not through GlowStack.
-              </p>
-              <a
-                href={meta.docsUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs text-brand-500 hover:underline flex items-center gap-1"
-              >
-                Get an API key <ExternalLink className="w-3 h-3" />
-              </a>
+          )}
 
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-surface-500 uppercase tracking-wider flex items-center gap-1.5">
-                  <Key className="w-3.5 h-3.5" /> API Key
-                </label>
-                <div className="relative">
-                  <input
-                    type={showToken ? 'text' : 'password'}
-                    className="input text-sm pr-10"
-                    placeholder={meta.keyPlaceholder}
-                    value={apiToken}
-                    onChange={e => setApiToken(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleConnect()}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowToken(!showToken)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-surface-400 hover:text-surface-600"
-                  >
-                    {showToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
+          <div className="grid grid-cols-2 gap-2">
+            {Object.keys(AI_PROVIDER_META).map((platform) => {
+              const meta = AI_PROVIDER_META[platform];
+              const isAssigned = assignedProvider === platform;
+              const isConnected = providers[platform]?.connected;
+              return (
+                <button
+                  key={platform}
+                  onClick={() => handleSelectProvider(platform)}
+                  disabled={busy}
+                  className={`text-left p-3 rounded-xl border transition-colors ${
+                    isAssigned ? 'border-brand-400 bg-brand-50' : 'border-surface-200 hover:border-surface-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-surface-800">{meta.displayName}</span>
+                    {isAssigned && <Check className="w-4 h-4 text-brand-600" />}
+                  </div>
+                  <span className="text-[11px] text-surface-400">
+                    {isConnected ? (isAssigned ? 'In use' : 'Connected — tap to use') : 'Not connected'}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {pendingProvider && (
+            <div className="space-y-3 p-3 rounded-xl bg-surface-50 border border-surface-200">
+              <p className="text-xs text-surface-600">
+                Connect your {AI_PROVIDER_META[pendingProvider].displayName} API key.{' '}
+                <a
+                  href={AI_PROVIDER_META[pendingProvider].docsUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-brand-500 hover:underline inline-flex items-center gap-1"
+                >
+                  Get one <ExternalLink className="w-3 h-3" />
+                </a>
+              </p>
+              <div className="relative">
+                <input
+                  type={showToken ? 'text' : 'password'}
+                  className="input text-sm pr-10"
+                  placeholder={AI_PROVIDER_META[pendingProvider].keyPlaceholder}
+                  value={apiToken}
+                  onChange={e => setApiToken(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleConnect()}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowToken(!showToken)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-surface-400 hover:text-surface-600"
+                >
+                  {showToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
+
+              <label className="flex items-center gap-2 text-xs text-surface-600">
+                <input
+                  type="checkbox"
+                  checked={shareWithOther}
+                  onChange={e => setShareWithOther(e.target.checked)}
+                  className="rounded border-surface-300"
+                />
+                Also use this for {otherPurpose.title}
+              </label>
 
               {error && (
-                <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">
-                  {error}
-                </div>
+                <div className="p-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">{error}</div>
               )}
 
               <button
                 onClick={handleConnect}
-                disabled={connecting || !apiToken.trim()}
-                className="btn-primary w-full flex items-center justify-center gap-2"
+                disabled={busy || !apiToken.trim()}
+                className="btn-primary w-full text-sm flex items-center justify-center gap-2"
               >
-                {connecting ? (
-                  <><Loader2 className="w-4 h-4 animate-spin" /> Validating...</>
-                ) : (
-                  <><Plug className="w-4 h-4" /> Connect {meta.displayName}</>
-                )}
+                {busy ? <><Loader2 className="w-4 h-4 animate-spin" /> Validating...</> : <><Plug className="w-4 h-4" /> Connect &amp; Use</>}
               </button>
+            </div>
+          )}
 
-              <div className="flex items-center gap-2 text-xs text-surface-400">
-                <Shield className="w-3.5 h-3.5" />
-                Your API key is stored securely and never exposed to the browser after saving.
-              </div>
+          {!pendingProvider && error && (
+            <div className="p-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">{error}</div>
+          )}
+
+          {assignedProvider && (
+            <div className="flex items-center justify-between pt-1 gap-3">
+              <p className="text-[11px] text-surface-400 flex items-center gap-1.5">
+                <Shield className="w-3.5 h-3.5 shrink-0" />
+                {otherAssignedProvider === assignedProvider
+                  ? `Also powering ${otherPurpose.title} — disconnecting removes it everywhere.`
+                  : 'Key stored securely, never exposed to the browser.'}
+              </p>
+              <button
+                onClick={handleDisconnect}
+                disabled={busy}
+                className="btn-ghost text-xs text-red-500 hover:bg-red-50 flex items-center gap-1.5 shrink-0"
+              >
+                <Unplug className="w-3.5 h-3.5" /> Disconnect
+              </button>
             </div>
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-function AiAssignments({ providers, settings, onSaved }) {
-  const [chatProvider, setChatProvider] = useState(settings?.chat_provider || '');
-  const [visionProvider, setVisionProvider] = useState(settings?.vision_provider || '');
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    setChatProvider(settings?.chat_provider || '');
-    setVisionProvider(settings?.vision_provider || '');
-  }, [settings]);
-
-  const connectedOptions = Object.entries(providers || {})
-    .filter(([, v]) => v.connected)
-    .map(([platform]) => platform);
-
-  const save = async (next) => {
-    setSaving(true);
-    try {
-      await api.updateAiSettings(next);
-      onSaved();
-    } catch (err) {
-      console.error('AI settings save error:', err);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  if (connectedOptions.length === 0) {
-    return (
-      <div className="card p-5 text-sm text-surface-500">
-        Connect an AI provider above, then choose which one powers Chat and which one powers Media Analysis.
-      </div>
-    );
-  }
-
-  return (
-    <div className="card p-5 space-y-4">
-      <div className="flex items-center gap-2">
-        <Wand2 className="w-4 h-4 text-brand-500" />
-        <h3 className="text-sm font-semibold text-surface-800">AI Assignments</h3>
-      </div>
-      <p className="text-xs text-surface-500 -mt-2">
-        Choose which connected provider powers each AI feature — e.g. Claude for chat, ChatGPT for media analysis.
-      </p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label className="text-xs font-medium text-surface-500 mb-1 block">AI Assistant (Chat)</label>
-          <select
-            className="input text-sm"
-            value={chatProvider}
-            disabled={saving}
-            onChange={(e) => {
-              const v = e.target.value;
-              setChatProvider(v);
-              save({ chat_provider: v || null, vision_provider: visionProvider || null });
-            }}
-          >
-            <option value="">Not set</option>
-            {connectedOptions.map((p) => (
-              <option key={p} value={p}>{AI_PROVIDER_META[p].displayName}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="text-xs font-medium text-surface-500 mb-1 block">Media Analysis (tagging &amp; video)</label>
-          <select
-            className="input text-sm"
-            value={visionProvider}
-            disabled={saving}
-            onChange={(e) => {
-              const v = e.target.value;
-              setVisionProvider(v);
-              save({ chat_provider: chatProvider || null, vision_provider: v || null });
-            }}
-          >
-            <option value="">Not set</option>
-            {connectedOptions.map((p) => (
-              <option key={p} value={p}>{AI_PROVIDER_META[p].displayName}</option>
-            ))}
-          </select>
-        </div>
-      </div>
     </div>
   );
 }
@@ -929,15 +934,15 @@ function AiProvidersSection() {
 
   return (
     <div className="space-y-3">
-      {Object.keys(AI_PROVIDER_META).map((platform) => (
-        <AiProviderCard
-          key={platform}
-          platform={platform}
-          connected={!!status.providers?.[platform]?.connected}
+      {AI_PURPOSES.map((purpose) => (
+        <AiPurposeCard
+          key={purpose.key}
+          purpose={purpose}
+          providers={status.providers}
+          settings={status.settings}
           onChanged={load}
         />
       ))}
-      <AiAssignments providers={status.providers} settings={status.settings} onSaved={load} />
     </div>
   );
 }
