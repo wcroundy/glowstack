@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { supabase, isSupabaseConfigured, uploadFile } from '../services/supabase.js';
 import { getValidToken } from '../services/googlePhotos.js';
+import * as aiProviders from '../services/aiProviders.js';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { readFile, unlink, readdir, mkdir, access, chmod } from 'fs/promises';
@@ -40,10 +41,9 @@ if (!ffmpegBinPath) {
 }
 
 const router = Router();
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-// Cost constants
-const COST_PER_FRAME_ANALYSIS_CENTS = 0.6; // ~$0.006 per gpt-4o-mini vision call (auto detail)
+// Cost constants (rough estimate — actual cost depends on which provider is connected)
+const COST_PER_FRAME_ANALYSIS_CENTS = 0.6; // ~$0.006 per vision call (auto detail)
 const COST_PER_SCENE_DETECTION_CENTS = 0.5; // slightly more for the comparison prompt
 const FRAME_INTERVAL_SECONDS = 1.5; // extract a frame every 1.5 seconds
 
@@ -57,17 +57,60 @@ async function cleanupTempFiles(videoPath, framesDir) {
   } catch {}
 }
 
+// Shared scene-detection prompt used by both the server-side and client-side-extraction paths
+function buildScenePrompt(frames) {
+  return `You are analyzing frames extracted from a beauty/fashion influencer video at ${FRAME_INTERVAL_SECONDS}-second intervals.
+
+Your goal is to identify EVERY distinct item, outfit, or product showcased in the video. This is for a media asset management system — the influencer needs a thumbnail for each unique thing shown. It is CRITICAL that you do not miss any items. When in doubt, ALWAYS mark a frame as unique.
+
+For each frame, determine:
+1. What is the PRIMARY FOCUS — what outfit is being worn, OR what product/item is being held up, displayed, or showcased
+2. Whether this represents something NEW that hasn't been captured yet
+
+A frame is UNIQUE if ANY of these are true:
+- A different outfit or clothing item is being WORN vs previous frames
+- A product, garment, or item is being HELD UP or DISPLAYED to camera (even if the person's own outfit hasn't changed)
+- A different beauty product, accessory, or item is the visual focus
+- A clearly different hairstyle or makeup look is shown
+
+PAY CLOSE ATTENTION TO THESE DETAILS when comparing frames:
+- Two items that are BOTH dark/black are NOT the same. A black dress is different from a black bodysuit, a black top with a skirt, etc. Look at the SILHOUETTE, LENGTH, and STYLE — not just the color.
+- Two items that are similar colors but different garment types (e.g. a blue dress vs blue shorts) are DIFFERENT scenes.
+- Outfit COMBINATIONS matter: a black top + patterned skirt is different from a black dress, even though both have black on top.
+- If the person has visibly changed what they're wearing between frames, it's a new scene — period.
+
+IMPORTANT: In fashion/beauty videos, creators often hold up or showcase items while wearing the same outfit. A person holding up a pair of shorts, a bag, a product, etc. IS a unique scene even though their own clothing hasn't changed. The held-up item is the focus.
+
+Return a JSON array where each element corresponds to a frame (in order):
+[
+  {
+    "frameIndex": 0,
+    "timestamp": ${frames[0]?.timestamp || 0},
+    "isUnique": true,
+    "description": "Wearing pink floral dress with gold jewelry, outdoor setting",
+    "outfitOrProduct": "Pink floral dress",
+    "setting": "Outdoor garden"
+  },
+  ...
+]
+
+Mark the FIRST frame as always unique. For duplicate frames showing the same thing, mark isUnique: false. Err heavily on the side of marking frames as unique — it's much better to capture an extra scene than to miss one entirely.`;
+}
+
 // POST /api/video-breakdown/extract-and-process — full server-side pipeline with SSE progress
 // Streams progress events to the client, then sends a final 'done' event with the result JSON
 router.post('/extract-and-process', async (req, res) => {
   if (!ffmpegBinPath) {
     return res.status(501).json({ error: 'Server-side frame extraction is not available (ffmpeg not found)' });
   }
-  if (!OPENAI_API_KEY) {
-    return res.status(400).json({ error: 'OpenAI API key required for video breakdown' });
-  }
   if (!isSupabaseConfigured()) {
     return res.status(400).json({ error: 'Supabase not configured' });
+  }
+
+  const userId = req.userId || 'default';
+  const visionConfig = await aiProviders.getVisionConfig(userId);
+  if (!visionConfig) {
+    return res.status(400).json({ error: 'No AI vision provider connected. Add one in Integrations.' });
   }
 
   const { assetId, baseUrl, videoUrl } = req.body;
@@ -205,101 +248,32 @@ router.post('/extract-and-process', async (req, res) => {
 
     if (runErr) console.error('Failed to create breakdown run:', runErr);
 
-    // ---- STEP 4: Send frames to OpenAI for scene detection (50–80%) ----
-    const imageContents = frames.map((frame) => ({
-      type: 'image_url',
-      image_url: { url: frame.dataUrl, detail: 'auto' },
-    }));
-
-    const scenePrompt = `You are analyzing frames extracted from a beauty/fashion influencer video at ${FRAME_INTERVAL_SECONDS}-second intervals.
-
-Your goal is to identify EVERY distinct item, outfit, or product showcased in the video. This is for a media asset management system — the influencer needs a thumbnail for each unique thing shown. It is CRITICAL that you do not miss any items. When in doubt, ALWAYS mark a frame as unique.
-
-For each frame, determine:
-1. What is the PRIMARY FOCUS — what outfit is being worn, OR what product/item is being held up, displayed, or showcased
-2. Whether this represents something NEW that hasn't been captured yet
-
-A frame is UNIQUE if ANY of these are true:
-- A different outfit or clothing item is being WORN vs previous frames
-- A product, garment, or item is being HELD UP or DISPLAYED to camera (even if the person's own outfit hasn't changed)
-- A different beauty product, accessory, or item is the visual focus
-- A clearly different hairstyle or makeup look is shown
-
-PAY CLOSE ATTENTION TO THESE DETAILS when comparing frames:
-- Two items that are BOTH dark/black are NOT the same. A black dress is different from a black bodysuit, a black top with a skirt, etc. Look at the SILHOUETTE, LENGTH, and STYLE — not just the color.
-- Two items that are similar colors but different garment types (e.g. a blue dress vs blue shorts) are DIFFERENT scenes.
-- Outfit COMBINATIONS matter: a black top + patterned skirt is different from a black dress, even though both have black on top.
-- If the person has visibly changed what they're wearing between frames, it's a new scene — period.
-
-IMPORTANT: In fashion/beauty videos, creators often hold up or showcase items while wearing the same outfit. A person holding up a pair of shorts, a bag, a product, etc. IS a unique scene even though their own clothing hasn't changed. The held-up item is the focus.
-
-Return a JSON array where each element corresponds to a frame (in order):
-[
-  {
-    "frameIndex": 0,
-    "timestamp": ${frames[0]?.timestamp || 0},
-    "isUnique": true,
-    "description": "Wearing pink floral dress with gold jewelry, outdoor setting",
-    "outfitOrProduct": "Pink floral dress",
-    "setting": "Outdoor garden"
-  },
-  ...
-]
-
-Mark the FIRST frame as always unique. For duplicate frames showing the same thing, mark isUnique: false. Err heavily on the side of marking frames as unique — it's much better to capture an extra scene than to miss one entirely.`;
+    // ---- STEP 4: Send frames to the connected AI vision provider for scene detection (50–80%) ----
+    const scenePrompt = buildScenePrompt(frames);
 
     sendProgress(55, `AI analyzing ${frames.length} frames...`);
 
-    const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: scenePrompt },
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: `Analyze these ${frames.length} frames from a video (timestamps: ${frames.map(f => f.timestamp + 's').join(', ')}). Identify which frames show unique outfits, products, or looks. Return JSON array.`,
-              },
-              ...imageContents,
-            ],
-          },
-        ],
-        max_tokens: 6000,
+    let content, usage;
+    try {
+      ({ text: content, usage } = await aiProviders.visionComplete(userId, {
+        systemPrompt: scenePrompt,
+        userText: `Analyze these ${frames.length} frames from a video (timestamps: ${frames.map(f => f.timestamp + 's').join(', ')}). Identify which frames show unique outfits, products, or looks. Return JSON array.`,
+        imageUrls: frames.map(f => f.dataUrl),
+        maxTokens: 6000,
         temperature: 0.3,
-      }),
-    });
-
-    if (!aiResponse.ok) {
-      const errBody = await aiResponse.text();
-      console.error('OpenAI scene detection error:', aiResponse.status, errBody);
-
-      if (aiResponse.status === 429 || errBody.includes('insufficient_quota')) {
-        let detail = 'OpenAI quota exceeded';
-        try { detail = JSON.parse(errBody).error?.message || detail; } catch (_) {}
-        if (run) {
-          await supabase.from('video_breakdown_runs')
-            .update({ status: 'failed', error_message: detail, completed_at: new Date().toISOString() })
-            .eq('id', run.id);
-        }
-        return sendError(detail);
+      }));
+    } catch (aiErr) {
+      console.error('AI scene detection error:', aiErr.message);
+      if (run) {
+        await supabase.from('video_breakdown_runs')
+          .update({ status: 'failed', error_message: aiErr.message, completed_at: new Date().toISOString() })
+          .eq('id', run.id);
       }
-
-      throw new Error(`OpenAI API error: ${aiResponse.status}`);
+      return sendError(aiErr.message);
     }
 
     sendProgress(78, 'Identifying unique scenes...');
-
-    const aiResult = await aiResponse.json();
-    const content = aiResult.choices?.[0]?.message?.content || '[]';
-    const finishReason = aiResult.choices?.[0]?.finish_reason;
-    console.log('extract-and-process: OpenAI finish_reason:', finishReason, 'response length:', content.length);
+    console.log('extract-and-process: response length:', content.length);
 
     // Parse scene analysis
     const jsonMatch = content.match(/\[[\s\S]*\]/);
@@ -391,8 +365,8 @@ Mark the FIRST frame as always unique. For duplicate frames showing the same thi
     sendProgress(96, 'Finalizing...');
 
     const actualCostCents = Math.ceil(
-      aiResult.usage?.total_tokens
-        ? (aiResult.usage.total_tokens / 1000) * 0.015 * 100
+      usage?.totalTokens
+        ? (usage.totalTokens / 1000) * 0.015 * 100
         : estimatedCostCents
     );
 
@@ -441,6 +415,7 @@ Mark the FIRST frame as always unique. For duplicate frames showing the same thi
 router.post('/estimate', async (req, res) => {
   try {
     const { assetId } = req.body;
+    const userId = req.userId || 'default';
 
     if (!isSupabaseConfigured()) {
       return res.status(400).json({ error: 'Supabase not configured' });
@@ -477,7 +452,7 @@ router.post('/estimate', async (req, res) => {
       estimatedUniqueScenes,
       estimatedCostCents: totalEstimatedCostCents,
       estimatedCostDisplay: `$${(totalEstimatedCostCents / 100).toFixed(2)}`,
-      hasOpenAI: !!OPENAI_API_KEY,
+      hasVisionAi: !!(await aiProviders.getVisionConfig(userId)),
     });
   } catch (err) {
     console.error('Video breakdown estimate error:', err.message);
@@ -490,12 +465,14 @@ router.post('/estimate', async (req, res) => {
 router.post('/process', async (req, res) => {
   try {
     const { assetId, frames } = req.body;
+    const userId = req.userId || 'default';
 
     if (!isSupabaseConfigured()) {
       return res.status(400).json({ error: 'Supabase not configured' });
     }
-    if (!OPENAI_API_KEY) {
-      return res.status(400).json({ error: 'OpenAI API key required for video breakdown' });
+    const visionConfig = await aiProviders.getVisionConfig(userId);
+    if (!visionConfig) {
+      return res.status(400).json({ error: 'No AI vision provider connected. Add one in Integrations.' });
     }
     if (!frames || frames.length === 0) {
       return res.status(400).json({ error: 'No frames provided' });
@@ -532,98 +509,17 @@ router.post('/process', async (req, res) => {
       console.error('Failed to create breakdown run:', runErr);
     }
 
-    // Step 1: Send all frames to OpenAI to identify unique scenes
-    const frameDescriptions = [];
-    const imageContents = frames.map((frame, i) => ({
-      type: 'image_url',
-      image_url: { url: frame.dataUrl, detail: 'auto' },
-    }));
-
-    // Build a single prompt with all frames for scene detection
-    const scenePrompt = `You are analyzing frames extracted from a beauty/fashion influencer video at ${FRAME_INTERVAL_SECONDS}-second intervals.
-
-Your goal is to identify EVERY distinct item, outfit, or product showcased in the video. This is for a media asset management system — the influencer needs a thumbnail for each unique thing shown. It is CRITICAL that you do not miss any items. When in doubt, ALWAYS mark a frame as unique.
-
-For each frame, determine:
-1. What is the PRIMARY FOCUS — what outfit is being worn, OR what product/item is being held up, displayed, or showcased
-2. Whether this represents something NEW that hasn't been captured yet
-
-A frame is UNIQUE if ANY of these are true:
-- A different outfit or clothing item is being WORN vs previous frames
-- A product, garment, or item is being HELD UP or DISPLAYED to camera (even if the person's own outfit hasn't changed)
-- A different beauty product, accessory, or item is the visual focus
-- A clearly different hairstyle or makeup look is shown
-
-PAY CLOSE ATTENTION TO THESE DETAILS when comparing frames:
-- Two items that are BOTH dark/black are NOT the same. A black dress is different from a black bodysuit, a black top with a skirt, etc. Look at the SILHOUETTE, LENGTH, and STYLE — not just the color.
-- Two items that are similar colors but different garment types (e.g. a blue dress vs blue shorts) are DIFFERENT scenes.
-- Outfit COMBINATIONS matter: a black top + patterned skirt is different from a black dress, even though both have black on top.
-- If the person has visibly changed what they're wearing between frames, it's a new scene — period.
-
-IMPORTANT: In fashion/beauty videos, creators often hold up or showcase items while wearing the same outfit. A person holding up a pair of shorts, a bag, a product, etc. IS a unique scene even though their own clothing hasn't changed. The held-up item is the focus.
-
-Return a JSON array where each element corresponds to a frame (in order):
-[
-  {
-    "frameIndex": 0,
-    "timestamp": ${frames[0]?.timestamp || 0},
-    "isUnique": true,
-    "description": "Wearing pink floral dress with gold jewelry, outdoor setting",
-    "outfitOrProduct": "Pink floral dress",
-    "setting": "Outdoor garden"
-  },
-  ...
-]
-
-Mark the FIRST frame as always unique. For duplicate frames showing the same thing, mark isUnique: false. Err heavily on the side of marking frames as unique — it's much better to capture an extra scene than to miss one entirely.`;
+    // Step 1: Send all frames to the connected AI vision provider to identify unique scenes
+    const scenePrompt = buildScenePrompt(frames);
 
     try {
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${OPENAI_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: [
-            { role: 'system', content: scenePrompt },
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'text',
-                  text: `Analyze these ${frames.length} frames from a video (timestamps: ${frames.map(f => f.timestamp + 's').join(', ')}). Identify which frames show unique outfits, products, or looks. Return JSON array.`,
-                },
-                ...imageContents,
-              ],
-            },
-          ],
-          max_tokens: 6000,
-          temperature: 0.3,
-        }),
+      const { text: content, usage } = await aiProviders.visionComplete(userId, {
+        systemPrompt: scenePrompt,
+        userText: `Analyze these ${frames.length} frames from a video (timestamps: ${frames.map(f => f.timestamp + 's').join(', ')}). Identify which frames show unique outfits, products, or looks. Return JSON array.`,
+        imageUrls: frames.map(f => f.dataUrl),
+        maxTokens: 6000,
+        temperature: 0.3,
       });
-
-      if (!response.ok) {
-        const errBody = await response.text();
-        console.error('OpenAI scene detection error:', response.status, errBody);
-
-        if (response.status === 429 || errBody.includes('insufficient_quota')) {
-          let detail = 'OpenAI quota exceeded';
-          try { detail = JSON.parse(errBody).error?.message || detail; } catch (_) {}
-          if (run) {
-            await supabase.from('video_breakdown_runs')
-              .update({ status: 'failed', error_message: detail, completed_at: new Date().toISOString() })
-              .eq('id', run.id);
-          }
-          return res.status(402).json({ error: 'openai_insufficient_quota', message: detail });
-        }
-
-        throw new Error(`OpenAI API error: ${response.status}`);
-      }
-
-      const result = await response.json();
-      const content = result.choices?.[0]?.message?.content || '[]';
 
       // Parse the scene analysis
       const jsonMatch = content.match(/\[[\s\S]*\]/);
@@ -694,8 +590,8 @@ Mark the FIRST frame as always unique. For duplicate frames showing the same thi
 
       // Update the breakdown run
       const actualCostCents = Math.ceil(
-        result.usage?.total_tokens
-          ? (result.usage.total_tokens / 1000) * 0.015 * 100 // rough cost calc
+        usage?.totalTokens
+          ? (usage.totalTokens / 1000) * 0.015 * 100 // rough cost calc
           : estimatedCostCents
       );
 
@@ -736,6 +632,9 @@ Mark the FIRST frame as always unique. For duplicate frames showing the same thi
         await supabase.from('video_breakdown_runs')
           .update({ status: 'failed', error_message: aiErr.message, completed_at: new Date().toISOString() })
           .eq('id', run.id);
+      }
+      if (aiErr.code === 'ai_insufficient_quota') {
+        return res.status(402).json({ error: 'ai_insufficient_quota', message: aiErr.message, provider: aiErr.provider });
       }
       res.status(500).json({ error: aiErr.message });
     }

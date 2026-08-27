@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Check, ChevronRight, ExternalLink, Plug, AlertCircle,
   RefreshCw, Unplug, Sparkles, Shield, Instagram, Facebook, Link2, Loader2, Music2, Camera,
-  MessageSquare, Eye, EyeOff, Key,
+  MessageSquare, Eye, EyeOff, Key, Bot, Wand2,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
@@ -665,6 +665,283 @@ function GooglePhotosCard() {
   );
 }
 
+const AI_PROVIDER_META = {
+  openai: {
+    displayName: 'OpenAI',
+    gradient: 'from-emerald-500 to-teal-600',
+    docsUrl: 'https://platform.openai.com/api-keys',
+    keyPlaceholder: 'sk-...',
+    blurb: 'GPT models — often the cheaper choice for image tagging and video analysis.',
+  },
+  anthropic: {
+    displayName: 'Anthropic (Claude)',
+    gradient: 'from-orange-500 to-amber-600',
+    docsUrl: 'https://console.anthropic.com/settings/keys',
+    keyPlaceholder: 'sk-ant-...',
+    blurb: 'Claude models — often the cheaper choice for the AI Assistant chat.',
+  },
+};
+
+function AiProviderCard({ platform, connected, onChanged }) {
+  const meta = AI_PROVIDER_META[platform];
+  const [expanded, setExpanded] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [apiToken, setApiToken] = useState('');
+  const [showToken, setShowToken] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleConnect = async () => {
+    if (!apiToken.trim()) {
+      setError('Please enter your API key.');
+      return;
+    }
+    setConnecting(true);
+    setError(null);
+    try {
+      await api.aiProviderConnect(platform, apiToken.trim());
+      setApiToken('');
+      onChanged();
+    } catch (err) {
+      setError(err.data?.error || err.message || 'Failed to connect. Check your API key.');
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    setDisconnecting(true);
+    try {
+      await api.aiProviderDisconnect(platform);
+      onChanged();
+    } catch (err) {
+      console.error(`${platform} disconnect error:`, err);
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
+  return (
+    <div className={`card transition-all ${expanded ? 'ring-2 ring-brand-300' : ''}`}>
+      <div
+        className="flex items-center gap-4 p-4 cursor-pointer hover:bg-surface-50 rounded-t-2xl transition-colors"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${meta.gradient} flex items-center justify-center flex-shrink-0`}>
+          <Bot className="w-5 h-5 text-white" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <h3 className="font-semibold text-surface-900">{meta.displayName}</h3>
+            {connected ? (
+              <span className="badge bg-emerald-100 text-emerald-700 text-[10px]">
+                <Check className="w-3 h-3 mr-0.5" /> Connected
+              </span>
+            ) : (
+              <span className="badge bg-surface-100 text-surface-500 text-[10px]">Not Connected</span>
+            )}
+          </div>
+          <p className="text-xs text-surface-500 mt-0.5">{meta.blurb}</p>
+        </div>
+        <ChevronRight className={`w-5 h-5 text-surface-300 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+      </div>
+
+      {expanded && (
+        <div className="border-t px-4 pb-4">
+          {connected ? (
+            <div className="pt-4 space-y-4">
+              <div className="flex items-center gap-3 p-3 rounded-xl bg-emerald-50 border border-emerald-200">
+                <Check className="w-5 h-5 text-emerald-600" />
+                <p className="text-sm font-medium text-emerald-800">API key saved and validated</p>
+              </div>
+              <button
+                onClick={handleDisconnect}
+                disabled={disconnecting}
+                className="btn-ghost text-xs text-red-500 hover:bg-red-50 flex items-center gap-1.5"
+              >
+                {disconnecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Unplug className="w-3.5 h-3.5" />}
+                Disconnect
+              </button>
+            </div>
+          ) : (
+            <div className="pt-4 space-y-4">
+              <p className="text-sm text-surface-600">
+                Bring your own {meta.displayName} API key — you're billed directly by {meta.displayName} for what you use, not through GlowStack.
+              </p>
+              <a
+                href={meta.docsUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-brand-500 hover:underline flex items-center gap-1"
+              >
+                Get an API key <ExternalLink className="w-3 h-3" />
+              </a>
+
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-surface-500 uppercase tracking-wider flex items-center gap-1.5">
+                  <Key className="w-3.5 h-3.5" /> API Key
+                </label>
+                <div className="relative">
+                  <input
+                    type={showToken ? 'text' : 'password'}
+                    className="input text-sm pr-10"
+                    placeholder={meta.keyPlaceholder}
+                    value={apiToken}
+                    onChange={e => setApiToken(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleConnect()}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowToken(!showToken)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-surface-400 hover:text-surface-600"
+                  >
+                    {showToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              {error && (
+                <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">
+                  {error}
+                </div>
+              )}
+
+              <button
+                onClick={handleConnect}
+                disabled={connecting || !apiToken.trim()}
+                className="btn-primary w-full flex items-center justify-center gap-2"
+              >
+                {connecting ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Validating...</>
+                ) : (
+                  <><Plug className="w-4 h-4" /> Connect {meta.displayName}</>
+                )}
+              </button>
+
+              <div className="flex items-center gap-2 text-xs text-surface-400">
+                <Shield className="w-3.5 h-3.5" />
+                Your API key is stored securely and never exposed to the browser after saving.
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AiAssignments({ providers, settings, onSaved }) {
+  const [chatProvider, setChatProvider] = useState(settings?.chat_provider || '');
+  const [visionProvider, setVisionProvider] = useState(settings?.vision_provider || '');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setChatProvider(settings?.chat_provider || '');
+    setVisionProvider(settings?.vision_provider || '');
+  }, [settings]);
+
+  const connectedOptions = Object.entries(providers || {})
+    .filter(([, v]) => v.connected)
+    .map(([platform]) => platform);
+
+  const save = async (next) => {
+    setSaving(true);
+    try {
+      await api.updateAiSettings(next);
+      onSaved();
+    } catch (err) {
+      console.error('AI settings save error:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (connectedOptions.length === 0) {
+    return (
+      <div className="card p-5 text-sm text-surface-500">
+        Connect an AI provider above, then choose which one powers Chat and which one powers Media Analysis.
+      </div>
+    );
+  }
+
+  return (
+    <div className="card p-5 space-y-4">
+      <div className="flex items-center gap-2">
+        <Wand2 className="w-4 h-4 text-brand-500" />
+        <h3 className="text-sm font-semibold text-surface-800">AI Assignments</h3>
+      </div>
+      <p className="text-xs text-surface-500 -mt-2">
+        Choose which connected provider powers each AI feature — e.g. Claude for chat, ChatGPT for media analysis.
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label className="text-xs font-medium text-surface-500 mb-1 block">AI Assistant (Chat)</label>
+          <select
+            className="input text-sm"
+            value={chatProvider}
+            disabled={saving}
+            onChange={(e) => {
+              const v = e.target.value;
+              setChatProvider(v);
+              save({ chat_provider: v || null, vision_provider: visionProvider || null });
+            }}
+          >
+            <option value="">Not set</option>
+            {connectedOptions.map((p) => (
+              <option key={p} value={p}>{AI_PROVIDER_META[p].displayName}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-surface-500 mb-1 block">Media Analysis (tagging &amp; video)</label>
+          <select
+            className="input text-sm"
+            value={visionProvider}
+            disabled={saving}
+            onChange={(e) => {
+              const v = e.target.value;
+              setVisionProvider(v);
+              save({ chat_provider: chatProvider || null, vision_provider: v || null });
+            }}
+          >
+            <option value="">Not set</option>
+            {connectedOptions.map((p) => (
+              <option key={p} value={p}>{AI_PROVIDER_META[p].displayName}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AiProvidersSection() {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = () => {
+    api.aiProviderStatus().then(s => { setStatus(s); setLoading(false); }).catch(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, []);
+
+  if (loading || !status) return null;
+
+  return (
+    <div className="space-y-3">
+      {Object.keys(AI_PROVIDER_META).map((platform) => (
+        <AiProviderCard
+          key={platform}
+          platform={platform}
+          connected={!!status.providers?.[platform]?.connected}
+          onChanged={load}
+        />
+      ))}
+      <AiAssignments providers={status.providers} settings={status.settings} onSaved={load} />
+    </div>
+  );
+}
+
 function ManyChatCard() {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -914,6 +1191,10 @@ export default function SetupWizard() {
         {platforms.filter(p => ['youtube', 'pinterest'].includes(p.platform)).map(p => (
           <PlatformCard key={p.id} platform={p} expanded={expanded === p.platform} onExpand={setExpanded} />
         ))}
+
+        {/* AI Providers */}
+        <h2 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mt-6 mb-2">AI Providers</h2>
+        <AiProvidersSection />
 
         {/* Messaging & Automation */}
         <h2 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mt-6 mb-2">Messaging & Automation</h2>

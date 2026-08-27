@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { Film, Scissors, Loader2, CheckCircle, AlertCircle, X, DollarSign, Image } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -258,16 +259,19 @@ export default function VideoBreakdown({ asset, onComplete, onClose, autoStart =
                     </div>
                   )}
 
-                  {!estimate.hasOpenAI && (
+                  {!estimate.hasVisionAi && (
                     <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200">
                       <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
-                      <p className="text-xs text-amber-700">OpenAI API key is required. Add OPENAI_API_KEY to your environment variables.</p>
+                      <p className="text-xs text-amber-700">
+                        No Media Analysis AI connected. Add one on the{' '}
+                        <Link to="/settings" className="underline hover:text-amber-900">Integrations page</Link>.
+                      </p>
                     </div>
                   )}
 
                   <button
                     onClick={extractFrames}
-                    disabled={!estimate.hasOpenAI || !hasVideoFile}
+                    disabled={!estimate.hasVisionAi || !hasVideoFile}
                     className="btn-primary w-full flex items-center justify-center gap-2"
                   >
                     <Film className="w-4 h-4" />

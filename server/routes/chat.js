@@ -1,8 +1,22 @@
 import { Router } from 'express';
 import { supabase, isSupabaseConfigured } from '../services/supabase.js';
 import { demoInsights, demoPosts, demoMedia, demoPlatformAnalytics } from '../services/demoData.js';
+import * as aiProviders from '../services/aiProviders.js';
 
 const router = Router();
+
+const CHAT_SYSTEM_PROMPT = `You are the AI assistant inside GlowStack, a media library and analytics tool built for a beauty/fashion content creator. You help with content planning, caption ideas, interpreting analytics, and organizing their media library. Be concise, warm, and actionable — this creator is not deeply technical, so avoid jargon.`;
+
+/** Calls the user's connected Chat AI provider with recent conversation history. Returns null if none is configured. */
+async function generateAiResponse(userId, message, history) {
+  const messages = [
+    { role: 'system', content: CHAT_SYSTEM_PROMPT },
+    ...history.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content })),
+    { role: 'user', content: message },
+  ];
+  const text = await aiProviders.chatComplete(userId, messages);
+  return text || null;
+}
 
 // In-memory chat history for demo
 const chatHistory = [
@@ -88,8 +102,21 @@ router.post('/send', async (req, res) => {
   try {
     const { message } = req.body;
     if (!message) return res.status(400).json({ error: 'Message required' });
+    const userId = req.userId || 'default';
 
-    const aiResponse = generateResponse(message);
+    let aiResponse = null;
+    try {
+      const history = isSupabaseConfigured()
+        ? (await supabase.from('chat_messages').select('role, content').order('created_at', { ascending: false }).limit(10)).data?.reverse() || []
+        : chatHistory.slice(-10);
+      const aiText = await generateAiResponse(userId, message, history);
+      if (aiText) aiResponse = { content: aiText };
+    } catch (err) {
+      console.error('AI chat error, falling back to canned response:', err.message);
+    }
+
+    // Fall back to the keyword-based stub if no Chat AI is configured or the call failed
+    if (!aiResponse) aiResponse = generateResponse(message);
 
     if (!isSupabaseConfigured()) {
       const userMsg = {

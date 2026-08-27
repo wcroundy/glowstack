@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import { supabase, isSupabaseConfigured } from '../services/supabase.js';
 import { demoMedia, demoInsights } from '../services/demoData.js';
+import * as aiProviders from '../services/aiProviders.js';
 
 const router = Router();
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 // POST /api/ai/tag-media — AI auto-tagging
 router.post('/tag-media', async (req, res) => {
@@ -21,7 +21,7 @@ router.post('/tag-media', async (req, res) => {
         detected_products: asset.ai_detected_products || [],
         detected_brands: asset.ai_detected_brands || [],
         dominant_colors: asset.ai_dominant_colors || [],
-        message: 'In production, this uses OpenAI Vision API for real analysis',
+        message: 'In production, this uses your connected Media Analysis AI provider for real analysis',
       });
     }
 
@@ -39,12 +39,12 @@ router.post('/tag-media', async (req, res) => {
     res.json({
       media_id,
       tags: asset.ai_tags || [],
-      description: asset.ai_description || 'AI analysis pending — configure OpenAI API key',
+      description: asset.ai_description || 'AI analysis pending — connect a Media Analysis AI provider in Integrations',
       quality_score: asset.ai_quality_score,
       detected_products: asset.ai_detected_products || [],
       detected_brands: asset.ai_detected_brands || [],
       dominant_colors: asset.ai_dominant_colors || [],
-      message: asset.ai_description ? 'AI analysis complete' : 'Configure OPENAI_API_KEY for real AI analysis',
+      message: asset.ai_description ? 'AI analysis complete' : 'Connect a Media Analysis AI provider in Integrations for real AI analysis',
     });
   } catch (err) {
     console.error('AI tag-media error:', err.message);
@@ -124,6 +124,9 @@ router.post('/auto-tag', async (req, res) => {
     if (!isSupabaseConfigured()) {
       return res.json({ tagged: 0, message: 'Demo mode — no Supabase configured' });
     }
+
+    const userId = req.userId || 'default';
+    const visionConfig = await aiProviders.getVisionConfig(userId);
 
     const { assetIds, untaggedOnly, limit = 50, offset = 0 } = req.body; // optional filters
     const batchLimit = Math.min(parseInt(limit) || 50, 100); // cap at 100 per batch
@@ -231,29 +234,13 @@ router.post('/auto-tag', async (req, res) => {
       const imageCount = imageUrls.length;
       totalImagesAnalyzed += imageCount;
 
-      if (OPENAI_API_KEY && imageUrls.length > 0) {
-        // Use OpenAI Vision to analyze the image(s) and match tags + suggest new ones
+      if (visionConfig && imageUrls.length > 0) {
+        // Use the connected AI vision provider to analyze the image(s) and match tags + suggest new ones
         try {
           const tagList = allTags.map(t => t.name).join(', ');
           const isVideo = asset.file_type === 'video';
-          const imageContent = imageUrls.map(url => ({
-            type: 'image_url',
-            image_url: { url, detail: 'low' },
-          }));
-
-          const response = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${OPENAI_API_KEY}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              model: 'gpt-4o-mini',
-              messages: [
-                {
-                  role: 'system',
-                  content: isVideo
-                    ? `You are a media tagging assistant for a beauty/fashion influencer. You are given ${imageCount} scene thumbnails extracted from a video. Analyze ALL scenes together and do two things:
+          const systemPrompt = isVideo
+            ? `You are a media tagging assistant for a beauty/fashion influencer. You are given ${imageCount} scene thumbnails extracted from a video. Analyze ALL scenes together and do two things:
 1. Determine which of the provided existing tags apply to this video (considering all scenes).
 2. Suggest up to 3 NEW tags that are NOT in the existing list but would be useful for categorizing this video (think: specific products, techniques, aesthetics, settings, content formats).
 
@@ -261,84 +248,63 @@ Return a JSON object with two arrays:
 {"existing": ["Tag Name 1", "Tag Name 2"], "suggested": ["New Tag Idea 1"]}
 
 Be generous with existing tag matching — if ANY scene matches a tag, include it. For suggested tags, focus on specific, reusable beauty/fashion categories that would help organize a media library. Don't suggest tags that are too similar to existing ones.`
-                    : `You are a media tagging assistant for a beauty/fashion influencer. Given an image, do two things:
+            : `You are a media tagging assistant for a beauty/fashion influencer. Given an image, do two things:
 1. Determine which of the provided existing tags apply to the image.
 2. Suggest up to 3 NEW tags that are NOT in the existing list but would be useful for categorizing this image (think: specific products, techniques, aesthetics, settings, content formats).
 
 Return a JSON object with two arrays:
 {"existing": ["Tag Name 1", "Tag Name 2"], "suggested": ["New Tag Idea 1"]}
 
-Be generous with existing tag matching. For suggested tags, focus on specific, reusable beauty/fashion categories that would help organize a media library. Don't suggest tags that are too similar to existing ones.`,
-                },
-                {
-                  role: 'user',
-                  content: [
-                    {
-                      type: 'text',
-                      text: `Existing tags: ${tagList}\n\nFilename: ${asset.file_name}\nTitle: ${asset.title || ''}${isVideo ? `\nThis is a video with ${imageCount} scene thumbnail${imageCount !== 1 ? 's' : ''}.` : ''}\n\nReturn JSON with "existing" matches and "suggested" new tags.`,
-                    },
-                    ...imageContent,
-                  ],
-                },
-              ],
-              max_tokens: 500,
-              temperature: 0.3,
-            }),
+Be generous with existing tag matching. For suggested tags, focus on specific, reusable beauty/fashion categories that would help organize a media library. Don't suggest tags that are too similar to existing ones.`;
+
+          const userText = `Existing tags: ${tagList}\n\nFilename: ${asset.file_name}\nTitle: ${asset.title || ''}${isVideo ? `\nThis is a video with ${imageCount} scene thumbnail${imageCount !== 1 ? 's' : ''}.` : ''}\n\nReturn JSON with "existing" matches and "suggested" new tags.`;
+
+          const { text: content } = await aiProviders.visionComplete(userId, {
+            systemPrompt, userText, imageUrls, maxTokens: 500, temperature: 0.3,
           });
 
-          if (response.ok) {
-            const result = await response.json();
-            const content = result.choices?.[0]?.message?.content || '{}';
+          // Try to parse as {existing: [], suggested: []}
+          const jsonMatch = (content || '{}').match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            try {
+              const parsed = JSON.parse(jsonMatch[0]);
 
-            // Try to parse as {existing: [], suggested: []}
-            const jsonMatch = content.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-              try {
-                const parsed = JSON.parse(jsonMatch[0]);
+              // Handle existing tag matches
+              const existingMatches = parsed.existing || parsed.matched || [];
+              matchedTagIds = existingMatches
+                .map(name => tagMap[String(name).toLowerCase()])
+                .filter(Boolean)
+                .map(t => t.id);
 
-                // Handle existing tag matches
-                const existingMatches = parsed.existing || parsed.matched || [];
-                matchedTagIds = existingMatches
+              // Collect suggested new tags
+              assetSuggestedNew = (parsed.suggested || [])
+                .map(name => String(name).trim())
+                .filter(name => name.length > 0 && !tagMap[name.toLowerCase()]);
+            } catch (parseErr) {
+              // Fallback: try parsing as plain array (old format)
+              const arrMatch = content.match(/\[[\s\S]*?\]/);
+              if (arrMatch) {
+                const tags = JSON.parse(arrMatch[0]);
+                matchedTagIds = tags
                   .map(name => tagMap[String(name).toLowerCase()])
                   .filter(Boolean)
                   .map(t => t.id);
-
-                // Collect suggested new tags
-                assetSuggestedNew = (parsed.suggested || [])
-                  .map(name => String(name).trim())
-                  .filter(name => name.length > 0 && !tagMap[name.toLowerCase()]);
-              } catch (parseErr) {
-                // Fallback: try parsing as plain array (old format)
-                const arrMatch = content.match(/\[[\s\S]*?\]/);
-                if (arrMatch) {
-                  const tags = JSON.parse(arrMatch[0]);
-                  matchedTagIds = tags
-                    .map(name => tagMap[String(name).toLowerCase()])
-                    .filter(Boolean)
-                    .map(t => t.id);
-                }
               }
-            }
-          } else {
-            const errorBody = await response.text();
-            console.error('OpenAI API error:', response.status, errorBody);
-
-            // Detect insufficient quota / billing errors and stop early
-            if (response.status === 429 || errorBody.includes('insufficient_quota') || errorBody.includes('billing')) {
-              let detail = 'Unknown billing error';
-              try {
-                const parsed = JSON.parse(errorBody);
-                detail = parsed.error?.message || detail;
-              } catch (_) {}
-              return res.status(402).json({
-                error: 'openai_insufficient_quota',
-                message: detail,
-                totalAssetsProcessed: 0,
-              });
             }
           }
         } catch (aiErr) {
-          console.error('OpenAI Vision error for asset', asset.id, ':', aiErr.message);
+          console.error('AI vision error for asset', asset.id, ':', aiErr.message);
+
+          // Insufficient quota/billing — stop the whole batch early
+          if (aiErr.code === 'ai_insufficient_quota') {
+            return res.status(402).json({
+              error: 'ai_insufficient_quota',
+              message: aiErr.message,
+              provider: aiErr.provider,
+              totalAssetsProcessed: 0,
+            });
+          }
+          // ai_not_configured or a one-off provider error: fall through to keyword matching below
         }
       }
 
@@ -379,7 +345,7 @@ Be generous with existing tag matching. For suggested tags, focus on specific, r
           media_id: asset.id,
           tag_id: tagId,
           is_ai_assigned: true,
-          confidence: OPENAI_API_KEY ? 0.85 : 0.5,
+          confidence: visionConfig ? 0.85 : 0.5,
         }));
 
         const { error: insertErr } = await supabase
@@ -413,13 +379,13 @@ Be generous with existing tag matching. For suggested tags, focus on specific, r
       totalAssetsProcessed: assets.length,
       totalImagesAnalyzed,
       totalNewTags,
-      aiPowered: !!OPENAI_API_KEY,
+      aiPowered: !!visionConfig,
       suggestedTags: suggestions,
       batchComplete,
       nextOffset: batchOffset + assets.length,
-      message: OPENAI_API_KEY
+      message: visionConfig
         ? `AI analyzed ${assets.length} assets (${totalImagesAnalyzed} images) and applied ${totalNewTags} tags to ${totalTagged} assets`
-        : `Keyword matching applied ${totalNewTags} tags to ${totalTagged} assets. Add an OpenAI API key for AI-powered visual tagging.`,
+        : `Keyword matching applied ${totalNewTags} tags to ${totalTagged} assets. Connect an AI vision provider in Integrations for AI-powered visual tagging.`,
     });
   } catch (err) {
     console.error('AI auto-tag error:', err.message);

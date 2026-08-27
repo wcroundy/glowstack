@@ -49,6 +49,7 @@ export default function TagsManager() {
   const [autoTagScope, setAutoTagScope] = useState('untagged'); // 'all' | 'untagged'
   const [showQuotaError, setShowQuotaError] = useState(false);
   const [quotaErrorMessage, setQuotaErrorMessage] = useState('');
+  const [quotaErrorProvider, setQuotaErrorProvider] = useState('openai');
 
   // Batch progress
   const [batchProgress, setBatchProgress] = useState(null); // { processed, total, tagged, newTags }
@@ -363,8 +364,9 @@ export default function TagsManager() {
         setShowSuggestions(true);
       }
     } catch (err) {
-      if (err.code === 'openai_insufficient_quota') {
+      if (err.code === 'ai_insufficient_quota') {
         setQuotaErrorMessage(err.message);
+        setQuotaErrorProvider(err.data?.provider || 'openai');
         setShowQuotaError(true);
       } else {
         setError('AI auto-tagging failed: ' + err.message);
@@ -1107,14 +1109,19 @@ export default function TagsManager() {
         </div>
       )}
 
-      {/* OpenAI Insufficient Quota Modal */}
-      {showQuotaError && (
+      {/* AI Provider Insufficient Quota Modal */}
+      {showQuotaError && (() => {
+        const providerMeta = {
+          openai: { name: 'OpenAI', billingUrl: 'https://platform.openai.com/account/billing', billingLabel: 'platform.openai.com/account/billing' },
+          anthropic: { name: 'Anthropic', billingUrl: 'https://console.anthropic.com/settings/billing', billingLabel: 'console.anthropic.com/settings/billing' },
+        }[quotaErrorProvider] || { name: 'your AI provider', billingUrl: '#', billingLabel: 'your provider\'s billing page' };
+        return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowQuotaError(false)}>
           <div className="bg-white rounded-2xl max-w-md w-full shadow-xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between p-5 border-b">
               <h3 className="font-semibold text-surface-900 flex items-center gap-2">
                 <CreditCard className="w-5 h-5 text-red-500" />
-                Insufficient OpenAI Credits
+                Insufficient {providerMeta.name} Credits
               </h3>
               <button onClick={() => setShowQuotaError(false)} className="p-1.5 rounded-lg hover:bg-surface-100">
                 <X className="w-5 h-5 text-surface-400" />
@@ -1122,18 +1129,18 @@ export default function TagsManager() {
             </div>
             <div className="p-5 space-y-4">
               <p className="text-sm text-surface-700">
-                The OpenAI API returned an insufficient quota error. This means your account doesn't have enough credits to process the request.
+                The {providerMeta.name} API returned an insufficient quota error. This means your account doesn't have enough credits to process the request.
               </p>
 
               <div className="bg-red-50 rounded-xl p-4 space-y-2">
-                <p className="text-xs font-medium text-red-700">Error from OpenAI:</p>
+                <p className="text-xs font-medium text-red-700">Error from {providerMeta.name}:</p>
                 <p className="text-xs text-red-600">{quotaErrorMessage}</p>
               </div>
 
               <div className="bg-surface-50 rounded-xl p-4 space-y-2">
                 <p className="text-sm font-medium text-surface-800">How to fix this:</p>
                 <ol className="text-sm text-surface-600 space-y-1.5 list-decimal list-inside">
-                  <li>Go to <a href="https://platform.openai.com/account/billing" target="_blank" rel="noopener noreferrer" className="text-brand-600 underline hover:text-brand-700">platform.openai.com/account/billing</a></li>
+                  <li>Go to <a href={providerMeta.billingUrl} target="_blank" rel="noopener noreferrer" className="text-brand-600 underline hover:text-brand-700">{providerMeta.billingLabel}</a></li>
                   <li>Add a payment method or load prepaid credits</li>
                   <li>Even $5 in credits is enough to tag thousands of images</li>
                   <li>Come back and try AI Auto-Tag again</li>
@@ -1149,7 +1156,8 @@ export default function TagsManager() {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* AI Auto-Tag Confirmation Modal */}
       {showAutoTagConfirm && (() => {
@@ -1218,7 +1226,7 @@ export default function TagsManager() {
 
               <p className="text-sm text-surface-700">
                 This will analyze <span className="font-semibold">{scopeCount.toLocaleString()}</span> asset{scopeCount !== 1 ? 's' : ''} using
-                OpenAI Vision and apply matching tags from your tag library.
+                your connected Media Analysis AI (set up in Integrations) and apply matching tags from your tag library.
                 {videoCount > 0 && (
                   <span className="text-surface-500"> Videos are analyzed using all their scene thumbnails for more accurate tagging.</span>
                 )}

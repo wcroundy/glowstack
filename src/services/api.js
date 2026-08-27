@@ -79,6 +79,12 @@ export const api = {
   createCalendarEvent: (data) => request('/calendar', { method: 'POST', body: JSON.stringify(data) }),
   updateCalendarEvent: (id, data) => request(`/calendar/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 
+  // AI Providers (bring-your-own-key: Chat AI + Media Analysis AI)
+  aiProviderStatus: () => request('/ai-providers/status'),
+  aiProviderConnect: (platform, apiToken) => request(`/ai-providers/${platform}/connect`, { method: 'POST', body: JSON.stringify({ apiToken }) }),
+  aiProviderDisconnect: (platform) => request(`/ai-providers/${platform}/disconnect`, { method: 'POST' }),
+  updateAiSettings: (data) => request('/ai-providers/settings', { method: 'PUT', body: JSON.stringify(data) }),
+
   // Content Drafts
   getContentDrafts: () => request('/content-drafts'),
   getContentDraft: (id) => request(`/content-drafts/${id}`),
