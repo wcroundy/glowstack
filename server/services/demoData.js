@@ -305,6 +305,9 @@ export const demoDashboardWidgets = [
   { id: 'w9', widget_type: 'ai_insights', title: 'AI Insights', config: {} },
 ];
 
+// ── Content Drafts (mutable — populated as the demo user saves drafts) ──
+export const demoContentDrafts = [];
+
 // ── AI Insights ───────────────────────────────────────────────
 export const demoInsights = [
   {

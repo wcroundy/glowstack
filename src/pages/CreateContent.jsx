@@ -1,10 +1,12 @@
-import React, { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
   Lightbulb, Camera, Scissors, Link2, Send, CalendarCheck,
   Check, ArrowLeft, ArrowRight, Loader2, PartyPopper, Sparkles,
+  FolderOpen, Plus, Trash2, Save,
 } from 'lucide-react';
 import { api } from '../services/api';
+import { useUnsavedChanges } from '../contexts/UnsavedChangesContext';
 
 // Mirrors the stages from Brooklyn's posting-process diagram (Generate Ideas ->
 // Gather & Shoot -> Edit -> Links -> Post), plus a final scheduling step that
@@ -90,23 +92,21 @@ const STEPS = [
   },
 ];
 
+const FINALIZABLE_STEPS = STEPS.slice(0, 5);
 const PLATFORM_OPTIONS = ['Instagram', 'Facebook', 'LTK', 'ShopMy', 'Amazon', 'Walmart'];
 
-function StepDots({ steps, current, furthest, onJump }) {
+const EMPTY_FORM = { ideaNotes: '', shootNotes: '', editNotes: '', linkNotes: '', platforms: [], title: '', date: '', time: '10:00' };
+
+function StepDots({ steps, current, completed, onJump }) {
   return (
     <div className="flex items-center w-full mb-8 overflow-x-auto pb-2">
       {steps.map((s, i) => {
         const Icon = s.icon;
-        const done = i < furthest;
+        const done = completed.includes(s.key);
         const active = i === current;
-        const reachable = i <= furthest;
         return (
           <React.Fragment key={s.key}>
-            <button
-              onClick={() => reachable && onJump(i)}
-              disabled={!reachable}
-              className={`flex flex-col items-center gap-1.5 shrink-0 ${reachable ? 'cursor-pointer' : 'cursor-not-allowed opacity-40'}`}
-            >
+            <button onClick={() => onJump(i)} className="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer">
               <div
                 className="w-10 h-10 rounded-full flex items-center justify-center transition-all"
                 style={{
@@ -122,7 +122,7 @@ function StepDots({ steps, current, furthest, onJump }) {
               </span>
             </button>
             {i < steps.length - 1 && (
-              <div className="flex-1 h-0.5 mx-2 min-w-[24px]" style={{ backgroundColor: i < furthest ? s.color : 'var(--surface-200, #e5e7eb)' }} />
+              <div className="flex-1 h-0.5 mx-2 min-w-[24px]" style={{ backgroundColor: done ? s.color : 'var(--surface-200, #e5e7eb)' }} />
             )}
           </React.Fragment>
         );
@@ -131,31 +131,118 @@ function StepDots({ steps, current, furthest, onJump }) {
   );
 }
 
+function DraftCard({ draft, onResume, onDelete }) {
+  const label = draft.title || draft.idea_notes || 'Untitled idea';
+  const completed = draft.completed_steps || [];
+  return (
+    <div className="card p-5 flex flex-col gap-3">
+      <div className="flex items-start justify-between gap-2">
+        <h3 className="text-sm font-semibold text-surface-800 line-clamp-2">{label}</h3>
+        <button onClick={onDelete} className="text-surface-300 hover:text-red-500 transition-colors shrink-0">
+          <Trash2 className="w-4 h-4" />
+        </button>
+      </div>
+      <div className="flex items-center gap-1.5">
+        {FINALIZABLE_STEPS.map((s) => (
+          <div
+            key={s.key}
+            className="w-2 h-2 rounded-full"
+            style={{ backgroundColor: completed.includes(s.key) ? s.color : 'var(--surface-200, #e5e7eb)' }}
+            title={s.title}
+          />
+        ))}
+      </div>
+      <p className="text-[11px] text-surface-400">
+        Updated {new Date(draft.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+      </p>
+      <button className="btn-secondary text-xs self-start" onClick={onResume}>Resume</button>
+    </div>
+  );
+}
+
 export default function CreateContent() {
   const navigate = useNavigate();
+  const { draftId } = useParams();
+  const { setDirty, confirmLeave } = useUnsavedChanges();
+
+  const [view, setView] = useState(draftId ? 'wizard' : 'list');
+  const [drafts, setDrafts] = useState([]);
+  const [draftsLoading, setDraftsLoading] = useState(true);
+  const [listError, setListError] = useState(null);
+
   const [stepIndex, setStepIndex] = useState(0);
-  const [furthest, setFurthest] = useState(0);
-  const [form, setForm] = useState({
-    ideaNotes: '', shootNotes: '', editNotes: '', linkNotes: '',
-    platforms: [], title: '', date: '', time: '10:00',
-  });
-  const [saving, setSaving] = useState(false);
+  const [completedSteps, setCompletedSteps] = useState([]);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [currentDraftId, setCurrentDraftId] = useState(draftId || null);
+
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [saveMessage, setSaveMessage] = useState('');
+  const [pinning, setPinning] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState(null);
 
+  const skipNextLoadRef = useRef(!!draftId); // avoid double-fetching what we already have on first mount
+  const justHydratedRef = useRef(true); // suppress the dirty-flag right after a programmatic load/reset
+
   const step = STEPS[stepIndex];
+
+  const loadDrafts = useCallback(() => {
+    setDraftsLoading(true);
+    api.getContentDrafts()
+      .then((r) => setDrafts(r.data || []))
+      .catch(() => setListError('Could not load your drafts.'))
+      .finally(() => setDraftsLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (view === 'list') loadDrafts();
+  }, [view, loadDrafts]);
+
+  // Load a specific draft when arriving at /posting/create/:draftId
+  useEffect(() => {
+    if (!draftId) return;
+    if (skipNextLoadRef.current) { skipNextLoadRef.current = false; return; }
+    api.getContentDraft(draftId).then((d) => {
+      justHydratedRef.current = true;
+      setForm({
+        ideaNotes: d.idea_notes || '', shootNotes: d.shoot_notes || '', editNotes: d.edit_notes || '',
+        linkNotes: d.link_notes || '', platforms: d.platforms || [], title: d.title || '', date: '', time: '10:00',
+      });
+      const done = d.completed_steps || [];
+      setCompletedSteps(done);
+      setCurrentDraftId(d.id);
+      const firstIncomplete = FINALIZABLE_STEPS.findIndex((s) => !done.includes(s.key));
+      setStepIndex(firstIncomplete === -1 ? 5 : firstIncomplete);
+      setView('wizard');
+    }).catch(() => {
+      setError('Could not load that draft.');
+      navigate('/posting/create', { replace: true });
+      setView('list');
+    });
+  }, [draftId, navigate]);
+
+  // Anything the user changes after a load/reset marks the wizard dirty,
+  // so the sidebar + browser tab can warn before it's lost.
+  useEffect(() => {
+    if (justHydratedRef.current) { justHydratedRef.current = false; return; }
+    setDirty(true);
+  }, [form, completedSteps, setDirty]);
 
   const suggestedTitle = useMemo(() => {
     if (form.title) return form.title;
     return form.ideaNotes.trim();
   }, [form.ideaNotes, form.title]);
 
-  const goTo = (i) => {
-    setStepIndex(i);
-    setFurthest((f) => Math.max(f, i));
+  const markStepComplete = (key) => {
+    setCompletedSteps((prev) => (prev.includes(key) ? prev : [...prev, key]));
   };
-  const next = () => goTo(Math.min(stepIndex + 1, STEPS.length - 1));
-  const back = () => goTo(Math.max(stepIndex - 1, 0));
+
+  const finalizeStep = () => {
+    markStepComplete(step.key);
+    setStepIndex((i) => Math.min(i + 1, STEPS.length - 1));
+  };
+  const back = () => setStepIndex((i) => Math.max(i - 1, 0));
+  const jumpTo = (i) => setStepIndex(i);
 
   const togglePlatform = (p) => {
     setForm((f) => ({
@@ -173,9 +260,36 @@ export default function CreateContent() {
     return parts.join('\n\n');
   };
 
+  const draftPayload = () => ({
+    title: suggestedTitle,
+    idea_notes: form.ideaNotes, shoot_notes: form.shootNotes, edit_notes: form.editNotes, link_notes: form.linkNotes,
+    platforms: form.platforms, completed_steps: completedSteps,
+  });
+
+  const handleSaveDraft = async () => {
+    setSavingDraft(true);
+    setError(null);
+    try {
+      if (currentDraftId) {
+        await api.updateContentDraft(currentDraftId, draftPayload());
+      } else {
+        const created = await api.createContentDraft(draftPayload());
+        setCurrentDraftId(created.id);
+        skipNextLoadRef.current = true;
+        navigate(`/posting/create/${created.id}`, { replace: true });
+      }
+      setDirty(false);
+      setSaveMessage('Saved as draft');
+      setTimeout(() => setSaveMessage(''), 2500);
+    } catch (e) {
+      setError(e.message || 'Could not save the draft. Try again.');
+    }
+    setSavingDraft(false);
+  };
+
   const handlePin = async () => {
     if (!form.date) { setError('Pick a date first.'); return; }
-    setSaving(true);
+    setPinning(true);
     setError(null);
     try {
       const start_at = new Date(`${form.date}T${form.time || '10:00'}`).toISOString();
@@ -189,21 +303,95 @@ export default function CreateContent() {
         color: '#7c6af7',
         status: 'planned',
       });
+      if (currentDraftId) {
+        await api.deleteContentDraft(currentDraftId).catch(() => {});
+      }
+      setDirty(false);
       setSaved(true);
     } catch (e) {
       setError(e.message || 'Could not save to the calendar. Try again.');
     }
-    setSaving(false);
+    setPinning(false);
+  };
+
+  const resetToBlank = () => {
+    justHydratedRef.current = true;
+    setForm(EMPTY_FORM);
+    setCompletedSteps([]);
+    setCurrentDraftId(null);
+    setStepIndex(0);
+    setSaved(false);
+    setError(null);
+    setDirty(false);
+  };
+
+  const handleStartNew = () => {
+    resetToBlank();
+    setView('wizard');
+    if (draftId) navigate('/posting/create', { replace: true });
+  };
+
+  const handleResumeDraft = (id) => {
+    navigate(`/posting/create/${id}`);
+  };
+
+  const handleDeleteDraft = async (id) => {
+    if (!window.confirm('Delete this draft? This cannot be undone.')) return;
+    try {
+      await api.deleteContentDraft(id);
+      setDrafts((prev) => prev.filter((d) => d.id !== id));
+    } catch (e) {
+      setListError('Could not delete that draft.');
+    }
+  };
+
+  const handleBackToList = () => {
+    if (!confirmLeave()) return;
+    setDirty(false);
+    if (draftId) navigate('/posting/create');
+    else setView('list');
   };
 
   const startOver = () => {
-    setForm({ ideaNotes: '', shootNotes: '', editNotes: '', linkNotes: '', platforms: [], title: '', date: '', time: '10:00' });
-    setStepIndex(0);
-    setFurthest(0);
-    setSaved(false);
-    setError(null);
+    resetToBlank();
+    if (draftId) navigate('/posting/create', { replace: true });
   };
 
+  // ── Drafts list (landing view) ──────────────────────────────
+  if (view === 'list') {
+    return (
+      <div className="p-4 lg:p-8 max-w-5xl mx-auto">
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-surface-900">Create Content</h1>
+            <p className="text-sm text-surface-500 mt-0.5">Start a new piece of content, or pick up a saved draft.</p>
+          </div>
+          <button className="btn-primary text-sm" onClick={handleStartNew}>
+            <Plus className="w-4 h-4" /> Start New
+          </button>
+        </div>
+
+        {listError && <p className="text-xs text-red-500 mb-4">{listError}</p>}
+
+        {draftsLoading ? (
+          <p className="text-sm text-surface-400">Loading drafts...</p>
+        ) : drafts.length === 0 ? (
+          <div className="card p-10 text-center">
+            <FolderOpen className="w-8 h-8 text-surface-300 mx-auto mb-3" />
+            <p className="text-sm text-surface-500">No saved drafts yet. Start a new one whenever you're ready.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {drafts.map((d) => (
+              <DraftCard key={d.id} draft={d} onResume={() => handleResumeDraft(d.id)} onDelete={() => handleDeleteDraft(d.id)} />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Success screen ──────────────────────────────────────────
   if (saved) {
     return (
       <div className="p-4 lg:p-8 max-w-2xl mx-auto">
@@ -224,14 +412,30 @@ export default function CreateContent() {
     );
   }
 
+  // ── Wizard ───────────────────────────────────────────────────
+  const isFinalizable = stepIndex < 5;
+  const stepAlreadyDone = completedSteps.includes(step.key);
+
   return (
     <div className="p-4 lg:p-8 max-w-3xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-surface-900">Create Content</h1>
-        <p className="text-sm text-surface-500 mt-0.5">Walk through each step, then pin the finished plan to a day.</p>
+      <div className="flex items-start justify-between gap-4 mb-6">
+        <div>
+          <button onClick={handleBackToList} className="text-xs text-surface-400 hover:text-surface-600 flex items-center gap-1 mb-1">
+            <ArrowLeft className="w-3 h-3" /> Drafts
+          </button>
+          <h1 className="text-2xl font-bold text-surface-900">Create Content</h1>
+          <p className="text-sm text-surface-500 mt-0.5">Walk through each step, then pin the finished plan to a day.</p>
+        </div>
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <button className="btn-secondary text-xs" onClick={handleSaveDraft} disabled={savingDraft}>
+            {savingDraft ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            Save as Draft
+          </button>
+          {saveMessage && <span className="text-[11px] text-brand-500">{saveMessage}</span>}
+        </div>
       </div>
 
-      <StepDots steps={STEPS} current={stepIndex} furthest={furthest} onJump={goTo} />
+      <StepDots steps={STEPS} current={stepIndex} completed={completedSteps} onJump={jumpTo} />
 
       <div className="card p-6 lg:p-8">
         <div className="flex items-center gap-3 mb-1">
@@ -331,12 +535,12 @@ export default function CreateContent() {
             <ArrowLeft className="w-4 h-4" /> Back
           </button>
           {step.isScheduleStep ? (
-            <button className="btn-primary text-sm" onClick={handlePin} disabled={saving}>
-              {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Pinning...</> : <><Sparkles className="w-4 h-4" /> Pin to Calendar</>}
+            <button className="btn-primary text-sm" onClick={handlePin} disabled={pinning}>
+              {pinning ? <><Loader2 className="w-4 h-4 animate-spin" /> Pinning...</> : <><Sparkles className="w-4 h-4" /> Pin to Calendar</>}
             </button>
           ) : (
-            <button className="btn-primary text-sm" onClick={next}>
-              Next <ArrowRight className="w-4 h-4" />
+            <button className="btn-primary text-sm" onClick={finalizeStep}>
+              {stepAlreadyDone ? 'Continue' : 'Mark Complete'} <ArrowRight className="w-4 h-4" />
             </button>
           )}
         </div>

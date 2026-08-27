@@ -79,6 +79,13 @@ export const api = {
   createCalendarEvent: (data) => request('/calendar', { method: 'POST', body: JSON.stringify(data) }),
   updateCalendarEvent: (id, data) => request(`/calendar/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 
+  // Content Drafts
+  getContentDrafts: () => request('/content-drafts'),
+  getContentDraft: (id) => request(`/content-drafts/${id}`),
+  createContentDraft: (data) => request('/content-drafts', { method: 'POST', body: JSON.stringify(data) }),
+  updateContentDraft: (id, data) => request(`/content-drafts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteContentDraft: (id) => request(`/content-drafts/${id}`, { method: 'DELETE' }),
+
   // Chat
   getChatMessages: () => request('/chat/messages'),
   sendChatMessage: (message) => request('/chat/send', { method: 'POST', body: JSON.stringify({ message }) }),

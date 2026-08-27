@@ -6,6 +6,7 @@ import {
   Sun, Moon, PenSquare, Rocket,
 } from 'lucide-react';
 import { useTheme } from './contexts/ThemeContext';
+import { useUnsavedChanges } from './contexts/UnsavedChangesContext';
 import Dashboard from './pages/Dashboard';
 import MediaLibrary from './pages/MediaLibrary';
 import Analytics from './pages/Analytics';
@@ -40,6 +41,7 @@ const NAV_ITEMS = [
 ];
 
 function NavGroup({ item, currentPath, onNavigate }) {
+  const { confirmLeave } = useUnsavedChanges();
   const hasActiveChild = item.children.some(c => c.to === currentPath);
   const [open, setOpen] = useState(hasActiveChild);
 
@@ -64,7 +66,10 @@ function NavGroup({ item, currentPath, onNavigate }) {
               key={to}
               to={to}
               className={({ isActive }) => isActive ? 'sidebar-link-active' : 'sidebar-link'}
-              onClick={onNavigate}
+              onClick={(e) => {
+                if (!confirmLeave()) { e.preventDefault(); return; }
+                onNavigate();
+              }}
             >
               <Icon className="w-4 h-4" />
               {label}
@@ -82,6 +87,7 @@ export default function App() {
   const [authed, setAuthed] = useState(null); // null = checking, false = not authed, true = authed
   const location = useLocation();
   const { theme, toggleTheme } = useTheme();
+  const { confirmLeave } = useUnsavedChanges();
 
   const isChatPage = location.pathname === '/chat';
 
@@ -208,7 +214,10 @@ export default function App() {
                   to={item.to}
                   end={item.to === '/'}
                   className={({ isActive }) => isActive ? 'sidebar-link-active' : 'sidebar-link'}
-                  onClick={() => setSidebarOpen(false)}
+                  onClick={(e) => {
+                    if (!confirmLeave()) { e.preventDefault(); return; }
+                    setSidebarOpen(false);
+                  }}
                 >
                   <item.icon className="w-5 h-5" />
                   {item.label}
@@ -244,7 +253,7 @@ export default function App() {
               )}
             </button>
             <button
-              onClick={handleLogout}
+              onClick={() => { if (confirmLeave()) handleLogout(); }}
               className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-surface-500 hover:bg-surface-100 hover:text-surface-700 transition-colors"
             >
               <LogOut className="w-4 h-4" />
@@ -284,6 +293,7 @@ export default function App() {
             <Route path="/social" element={<SocialInsights />} />
             <Route path="/calendar" element={<ContentCalendar />} />
             <Route path="/posting/create" element={<CreateContent />} />
+            <Route path="/posting/create/:draftId" element={<CreateContent />} />
             <Route path="/tags" element={<TagsManager />} />
             <Route path="/chat" element={<AiChat />} />
             <Route path="/settings" element={<SetupWizard />} />

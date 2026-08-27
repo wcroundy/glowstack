@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   ChevronLeft, ChevronRight, Plus, Sparkles, Calendar as CalendarIcon,
-  Clock, MapPin, Video, Image as ImageIcon, AlertCircle
+  Clock, MapPin, Video, Image as ImageIcon, AlertCircle, FolderOpen, ArrowRight
 } from 'lucide-react';
 import { api } from '../services/api';
 import PlatformIcon from '../components/common/PlatformIcon';
@@ -23,13 +24,16 @@ function EventChip({ event }) {
 }
 
 export default function ContentCalendar() {
+  const navigate = useNavigate();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [events, setEvents] = useState([]);
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [view, setView] = useState('month'); // month, week, list
+  const [drafts, setDrafts] = useState([]);
 
   useEffect(() => {
     api.getCalendarEvents().then(r => setEvents(r.data || []));
+    api.getContentDrafts().then(r => setDrafts(r.data || [])).catch(() => {});
   }, []);
 
   const year = currentDate.getFullYear();
@@ -217,6 +221,30 @@ export default function ContentCalendar() {
               ))}
             </div>
           </div>
+
+          {/* Unscheduled Drafts */}
+          {drafts.length > 0 && (
+            <div className="card p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <FolderOpen className="w-4 h-4 text-surface-400" />
+                <h3 className="text-sm font-semibold text-surface-800">Ready to Schedule</h3>
+              </div>
+              <div className="space-y-2">
+                {drafts.slice(0, 4).map((d) => (
+                  <button
+                    key={d.id}
+                    onClick={() => navigate(`/posting/create/${d.id}`)}
+                    className="w-full flex items-center justify-between gap-2 p-2.5 rounded-lg border border-surface-100 hover:border-brand-200 hover:bg-surface-50 transition-colors text-left"
+                  >
+                    <span className="text-xs font-medium text-surface-700 truncate">
+                      {d.title || d.idea_notes || 'Untitled idea'}
+                    </span>
+                    <ArrowRight className="w-3.5 h-3.5 text-surface-300 shrink-0" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* AI Suggestions */}
           <div className="card p-5 bg-gradient-to-b from-pink-50 dark:from-green-950/30 to-white dark:to-surface-800">
