@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   Lightbulb, Camera, Scissors, Link2, Send, CalendarCheck,
   Check, ArrowLeft, ArrowRight, Loader2, PartyPopper, Sparkles,
-  FolderOpen, Plus, Trash2, Save,
+  FolderOpen, Plus, Trash2, Save, X,
 } from 'lucide-react';
 import { api } from '../services/api';
 import { useUnsavedChanges } from '../contexts/UnsavedChangesContext';
@@ -236,6 +236,9 @@ export default function CreateContent() {
   const markStepComplete = (key) => {
     setCompletedSteps((prev) => (prev.includes(key) ? prev : [...prev, key]));
   };
+  const markStepIncomplete = (key) => {
+    setCompletedSteps((prev) => prev.filter((k) => k !== key));
+  };
 
   const finalizeStep = () => {
     markStepComplete(step.key);
@@ -413,7 +416,6 @@ export default function CreateContent() {
   }
 
   // ── Wizard ───────────────────────────────────────────────────
-  const isFinalizable = stepIndex < 5;
   const stepAlreadyDone = completedSteps.includes(step.key);
 
   return (
@@ -539,9 +541,16 @@ export default function CreateContent() {
               {pinning ? <><Loader2 className="w-4 h-4 animate-spin" /> Pinning...</> : <><Sparkles className="w-4 h-4" /> Pin to Calendar</>}
             </button>
           ) : (
-            <button className="btn-primary text-sm" onClick={finalizeStep}>
-              {stepAlreadyDone ? 'Continue' : 'Mark Complete'} <ArrowRight className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-2">
+              {stepAlreadyDone && (
+                <button className="btn-ghost text-sm" onClick={() => markStepIncomplete(step.key)}>
+                  <X className="w-4 h-4" /> Mark Incomplete
+                </button>
+              )}
+              <button className="btn-primary text-sm" onClick={finalizeStep}>
+                {stepAlreadyDone ? 'Continue' : 'Mark Complete'} <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
           )}
         </div>
       </div>
