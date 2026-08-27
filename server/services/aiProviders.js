@@ -3,6 +3,11 @@ import { supabase, isSupabaseConfigured } from './supabase.js';
 // ─── Provider Config ────────────────────────────────────────────────────────
 // Each entry is a BYOK (bring-your-own-key) AI provider a user can connect.
 // Users are billed directly by the provider for tokens they use.
+//
+// modelOptions are curated presets shown in the picker — every purpose also
+// accepts an arbitrary custom model id, since model lineups and pricing shift
+// often enough that hardcoding one "the" model isn't durable. Defaults below
+// were last checked against provider pricing pages in August 2026.
 export const AI_PROVIDERS = {
   openai: {
     platform: 'openai',
@@ -10,8 +15,13 @@ export const AI_PROVIDERS = {
     docsUrl: 'https://platform.openai.com/api-keys',
     billingUrl: 'https://platform.openai.com/account/billing',
     keyPlaceholder: 'sk-...',
-    chatModel: 'gpt-4o-mini',
-    visionModel: 'gpt-4o-mini',
+    chatModel: 'gpt-5.4-nano',
+    visionModel: 'gpt-5.4-nano',
+    modelOptions: [
+      { id: 'gpt-5.4-nano', label: 'GPT-5.4 Nano', note: 'Cheapest, vision-capable' },
+      { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini', note: 'Better quality, still low-cost' },
+      { id: 'gpt-4o-mini', label: 'GPT-4o Mini', note: 'Previous default — deprecated, still works' },
+    ],
   },
   anthropic: {
     platform: 'anthropic',
@@ -21,6 +31,11 @@ export const AI_PROVIDERS = {
     keyPlaceholder: 'sk-ant-...',
     chatModel: 'claude-haiku-4-5-20251001',
     visionModel: 'claude-haiku-4-5-20251001',
+    modelOptions: [
+      { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', note: 'Cheapest Claude, vision-capable' },
+      { id: 'claude-sonnet-5', label: 'Claude Sonnet 5', note: 'Higher quality, mid-cost' },
+      { id: 'claude-opus-5', label: 'Claude Opus 5', note: 'Highest quality, most expensive' },
+    ],
   },
 };
 
@@ -104,26 +119,30 @@ export async function validateProviderToken(platform, apiToken) {
 
 // ─── Per-purpose assignment (which connected provider powers Chat vs Media Analysis) ──
 
+const EMPTY_AI_SETTINGS = { chat_provider: null, chat_model: null, vision_provider: null, vision_model: null };
+
 export async function getAiSettings(userId) {
-  if (!isSupabaseConfigured()) return { chat_provider: null, vision_provider: null };
+  if (!isSupabaseConfigured()) return { ...EMPTY_AI_SETTINGS };
   const { data } = await supabase
     .from('ai_settings')
     .select('*')
     .eq('user_id', userId)
     .single();
-  return data || { chat_provider: null, vision_provider: null };
+  return data || { ...EMPTY_AI_SETTINGS };
 }
 
-export async function saveAiSettings(userId, { chat_provider, vision_provider }) {
+// Partial update — only the keys present in `updates` are changed; everything
+// else keeps its current value (so callers can update just one purpose at a time).
+export async function saveAiSettings(userId, updates) {
   if (!isSupabaseConfigured()) return null;
+  const current = await getAiSettings(userId);
+  const merged = { user_id: userId, updated_at: new Date().toISOString() };
+  for (const key of ['chat_provider', 'chat_model', 'vision_provider', 'vision_model']) {
+    merged[key] = key in updates ? (updates[key] ?? null) : (current[key] ?? null);
+  }
   const { data, error } = await supabase
     .from('ai_settings')
-    .upsert({
-      user_id: userId,
-      chat_provider: chat_provider ?? null,
-      vision_provider: vision_provider ?? null,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'user_id' })
+    .upsert(merged, { onConflict: 'user_id' })
     .select()
     .single();
   if (error) throw error;
@@ -133,12 +152,14 @@ export async function saveAiSettings(userId, { chat_provider, vision_provider })
 async function resolveConfig(userId, purpose) {
   const settings = await getAiSettings(userId);
   const provider = purpose === 'chat' ? settings.chat_provider : settings.vision_provider;
+  const customModel = purpose === 'chat' ? settings.chat_model : settings.vision_model;
 
   if (provider) {
     const apiKey = await getProviderApiKey(userId, provider);
     if (apiKey) {
       const config = AI_PROVIDERS[provider];
-      return { provider, apiKey, model: purpose === 'chat' ? config.chatModel : config.visionModel };
+      const defaultModel = purpose === 'chat' ? config.chatModel : config.visionModel;
+      return { provider, apiKey, model: customModel || defaultModel };
     }
   }
 
@@ -153,6 +174,16 @@ async function resolveConfig(userId, purpose) {
 
 export const getChatConfig = (userId) => resolveConfig(userId, 'chat');
 export const getVisionConfig = (userId) => resolveConfig(userId, 'vision');
+
+// Anthropic's image source needs `base64` (media_type + data) for inline data: URIs —
+// its `url` source type only works for a real, publicly fetchable http(s) URL.
+function toAnthropicImageBlock(imageUrl) {
+  const dataMatch = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (dataMatch) {
+    return { type: 'image', source: { type: 'base64', media_type: dataMatch[1], data: dataMatch[2] } };
+  }
+  return { type: 'image', source: { type: 'url', url: imageUrl } };
+}
 
 async function providerError(provider, res) {
   const bodyText = await res.text();
@@ -270,7 +301,7 @@ export async function visionComplete(userId, { systemPrompt, userText, imageUrls
             role: 'user',
             content: [
               { type: 'text', text: userText },
-              ...imageUrls.map(url => ({ type: 'image', source: { type: 'url', url } })),
+              ...imageUrls.map(toAnthropicImageBlock),
             ],
           },
         ],

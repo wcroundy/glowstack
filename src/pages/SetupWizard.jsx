@@ -701,9 +701,19 @@ const AI_PURPOSES = [
 ];
 
 function AiPurposeCard({ purpose, providers, settings, onChanged }) {
+  const modelKey = purpose.key.replace('_provider', '_model');
+  const otherModelKey = purpose.otherKey.replace('_provider', '_model');
   const assignedProvider = settings?.[purpose.key] || null;
+  const currentModel = settings?.[modelKey] || null;
   const otherPurpose = AI_PURPOSES.find(p => p.key === purpose.otherKey);
   const otherAssignedProvider = settings?.[purpose.otherKey] || null;
+
+  const assignedProviderInfo = assignedProvider ? providers[assignedProvider] : null;
+  const defaultModelForAssigned = assignedProviderInfo
+    ? (purpose.key === 'chat_provider' ? assignedProviderInfo.defaultChatModel : assignedProviderInfo.defaultVisionModel)
+    : null;
+  const knownModelIds = (assignedProviderInfo?.modelOptions || []).map(m => m.id);
+  const isCustomModel = !!currentModel && !knownModelIds.includes(currentModel);
 
   const [expanded, setExpanded] = useState(false);
   const [pendingProvider, setPendingProvider] = useState(null); // provider whose key-entry form is open
@@ -712,19 +722,25 @@ function AiPurposeCard({ purpose, providers, settings, onChanged }) {
   const [shareWithOther, setShareWithOther] = useState(!otherAssignedProvider);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [customModelMode, setCustomModelMode] = useState(isCustomModel);
+  const [customModelInput, setCustomModelInput] = useState(isCustomModel ? currentModel : '');
 
   useEffect(() => {
     setShareWithOther(!otherAssignedProvider);
   }, [otherAssignedProvider]);
 
+  useEffect(() => {
+    setCustomModelMode(isCustomModel);
+    setCustomModelInput(isCustomModel ? currentModel : '');
+  }, [assignedProvider, currentModel]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const assignOnly = async (platform) => {
     setBusy(true);
     setError(null);
     try {
-      await api.updateAiSettings({
-        chat_provider: purpose.key === 'chat_provider' ? platform : settings.chat_provider,
-        vision_provider: purpose.key === 'vision_provider' ? platform : settings.vision_provider,
-      });
+      // Reset the model choice when switching providers — a model id from the
+      // old provider wouldn't mean anything for the new one.
+      await api.updateAiSettings({ [purpose.key]: platform, [modelKey]: null });
       onChanged();
     } catch (err) {
       setError(err.data?.error || err.message || 'Could not update.');
@@ -749,10 +765,12 @@ function AiPurposeCard({ purpose, providers, settings, onChanged }) {
     setError(null);
     try {
       await api.aiProviderConnect(pendingProvider, apiToken.trim());
-      await api.updateAiSettings({
-        chat_provider: purpose.key === 'chat_provider' ? pendingProvider : (shareWithOther ? pendingProvider : settings.chat_provider),
-        vision_provider: purpose.key === 'vision_provider' ? pendingProvider : (shareWithOther ? pendingProvider : settings.vision_provider),
-      });
+      const updates = { [purpose.key]: pendingProvider, [modelKey]: null };
+      if (shareWithOther) {
+        updates[purpose.otherKey] = pendingProvider;
+        updates[otherModelKey] = null;
+      }
+      await api.updateAiSettings(updates);
       setApiToken('');
       setPendingProvider(null);
       onChanged();
@@ -774,6 +792,30 @@ function AiPurposeCard({ purpose, providers, settings, onChanged }) {
     } finally {
       setBusy(false);
     }
+  };
+
+  const saveModel = async (value) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.updateAiSettings({ [modelKey]: value || null });
+      onChanged();
+    } catch (err) {
+      setError(err.data?.error || err.message || 'Could not update model.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleModelSelect = (e) => {
+    const v = e.target.value;
+    if (v === '__custom__') {
+      setCustomModelMode(true);
+      setCustomModelInput(isCustomModel ? currentModel : '');
+      return;
+    }
+    setCustomModelMode(false);
+    saveModel(v);
   };
 
   const Icon = purpose.icon;
@@ -895,6 +937,33 @@ function AiPurposeCard({ purpose, providers, settings, onChanged }) {
 
           {!pendingProvider && error && (
             <div className="p-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">{error}</div>
+          )}
+
+          {assignedProvider && !pendingProvider && (
+            <div>
+              <label className="text-xs font-medium text-surface-500 mb-1 block">Model</label>
+              <select
+                className="input text-sm"
+                value={customModelMode ? '__custom__' : (currentModel || defaultModelForAssigned || '')}
+                onChange={handleModelSelect}
+                disabled={busy}
+              >
+                {(assignedProviderInfo?.modelOptions || []).map((m) => (
+                  <option key={m.id} value={m.id}>{m.label}{m.note ? ` — ${m.note}` : ''}</option>
+                ))}
+                <option value="__custom__">Custom model ID…</option>
+              </select>
+              {customModelMode && (
+                <input
+                  className="input text-sm mt-2"
+                  placeholder="e.g. gpt-5.4-nano-preview"
+                  value={customModelInput}
+                  onChange={(e) => setCustomModelInput(e.target.value)}
+                  onBlur={() => customModelInput.trim() && saveModel(customModelInput.trim())}
+                  onKeyDown={(e) => e.key === 'Enter' && customModelInput.trim() && saveModel(customModelInput.trim())}
+                />
+              )}
+            </div>
           )}
 
           {assignedProvider && (

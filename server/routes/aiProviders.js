@@ -13,6 +13,9 @@ router.get('/status', async (req, res) => {
       providers[platform] = {
         connected: !!conn?.is_connected,
         connectedAt: conn?.connected_at || null,
+        modelOptions: ai.AI_PROVIDERS[platform].modelOptions,
+        defaultChatModel: ai.AI_PROVIDERS[platform].chatModel,
+        defaultVisionModel: ai.AI_PROVIDERS[platform].visionModel,
       };
     }
     const settings = await ai.getAiSettings(userId);
@@ -65,12 +68,12 @@ router.post('/:platform/disconnect', async (req, res) => {
 
     await ai.removeProviderConnection(userId, platform);
 
-    // Clear this provider from any purpose it was assigned to
+    // Clear this provider (and its model choice) from any purpose it was assigned to
     const settings = await ai.getAiSettings(userId);
-    const updates = { chat_provider: settings.chat_provider, vision_provider: settings.vision_provider };
-    if (updates.chat_provider === platform) updates.chat_provider = null;
-    if (updates.vision_provider === platform) updates.vision_provider = null;
-    await ai.saveAiSettings(userId, updates);
+    const updates = {};
+    if (settings.chat_provider === platform) { updates.chat_provider = null; updates.chat_model = null; }
+    if (settings.vision_provider === platform) { updates.vision_provider = null; updates.vision_model = null; }
+    if (Object.keys(updates).length > 0) await ai.saveAiSettings(userId, updates);
 
     res.json({ success: true });
   } catch (err) {
@@ -79,11 +82,12 @@ router.post('/:platform/disconnect', async (req, res) => {
   }
 });
 
-// PUT /api/ai-providers/settings — assign which connected provider powers chat/vision
+// PUT /api/ai-providers/settings — assign which connected provider (and optionally
+// which specific model) powers chat/vision. Partial: only send the keys you're changing.
 router.put('/settings', async (req, res) => {
   try {
     const userId = req.userId || 'default';
-    const { chat_provider, vision_provider } = req.body;
+    const { chat_provider, chat_model, vision_provider, vision_model } = req.body;
 
     for (const [purpose, platform] of [['chat', chat_provider], ['vision', vision_provider]]) {
       if (!platform) continue;
@@ -96,7 +100,12 @@ router.put('/settings', async (req, res) => {
       }
     }
 
-    const saved = await ai.saveAiSettings(userId, { chat_provider, vision_provider });
+    const updates = {};
+    for (const key of ['chat_provider', 'chat_model', 'vision_provider', 'vision_model']) {
+      if (key in req.body) updates[key] = req.body[key];
+    }
+
+    const saved = await ai.saveAiSettings(userId, updates);
     res.json(saved);
   } catch (err) {
     console.error('AI settings update error:', err.message);
