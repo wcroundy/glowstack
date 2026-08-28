@@ -3,12 +3,13 @@ import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Image, BarChart3, CalendarDays, MessageCircle,
   Settings, Sparkles, Menu, X, ChevronRight, ChevronDown, LogOut, Tags, TrendingUp,
-  Sun, Moon, PenSquare, Rocket,
+  Sun, Moon, PenSquare, Rocket, History,
 } from 'lucide-react';
 import { useTheme } from './contexts/ThemeContext';
 import { useUnsavedChanges } from './contexts/UnsavedChangesContext';
 import Dashboard from './pages/Dashboard';
 import MediaLibrary from './pages/MediaLibrary';
+import PostHistory from './pages/PostHistory';
 import Analytics from './pages/Analytics';
 import ContentCalendar from './pages/ContentCalendar';
 import CreateContent from './pages/CreateContent';
@@ -26,6 +27,7 @@ import { setAuthToken } from './services/api';
 const NAV_ITEMS = [
   { to: '/',           icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/media',      icon: Image,           label: 'Media Library' },
+  { to: '/post-history', icon: History,       label: 'Post History' },
   { to: '/analytics',  icon: BarChart3,       label: 'Analytics' },
   { to: '/social',     icon: TrendingUp,      label: 'Social Insights' },
   {
@@ -289,6 +291,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/media" element={<MediaLibrary />} />
+            <Route path="/post-history" element={<PostHistory />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/social" element={<SocialInsights />} />
             <Route path="/calendar" element={<ContentCalendar />} />

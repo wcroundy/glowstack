@@ -132,6 +132,7 @@ router.post('/disconnect', async (req, res) => {
 // POST /api/tiktok/sync — sync TikTok videos and stats
 router.post('/sync', async (req, res) => {
   try {
+    const userId = req.userId || 'default';
     const accessToken = await getValidToken();
 
     // Log sync start
@@ -183,6 +184,28 @@ router.post('/sync', async (req, res) => {
         .upsert(row, { onConflict: 'tiktok_video_id' });
 
       if (!error) synced++;
+
+      // Mirror into the unified posts archive (Post History)
+      const engagement = row.like_count + row.comment_count + row.share_count;
+      const { error: postErr } = await supabase
+        .from('posts')
+        .upsert({
+          platform: 'tiktok',
+          platform_post_id: row.tiktok_video_id,
+          user_id: userId,
+          post_url: row.share_url,
+          post_type: 'video',
+          caption: row.title || row.description,
+          thumbnail_url: row.cover_image_url,
+          status: 'published',
+          published_at: row.create_time,
+          likes: row.like_count,
+          comments: row.comment_count,
+          shares: row.share_count,
+          views: row.view_count,
+          engagement_rate: row.view_count ? +((engagement / row.view_count) * 100).toFixed(2) : 0,
+        }, { onConflict: 'platform,platform_post_id,user_id' });
+      if (postErr) console.error('TikTok posts-archive upsert error:', postErr.message);
     }
 
     // Update sync log

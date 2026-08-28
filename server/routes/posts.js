@@ -4,30 +4,42 @@ import { demoPosts, demoMedia } from '../services/demoData.js';
 
 const router = Router();
 
+// Columns Post History is allowed to sort by (whitelisted — sort comes from the query string)
+const SORTABLE_COLUMNS = new Set([
+  'published_at', 'scheduled_for', 'engagement_rate', 'likes', 'comments',
+  'views', 'reach', 'impressions', 'revenue', 'created_at',
+]);
+
 // GET /api/posts
 router.get('/', async (req, res) => {
   try {
+    const userId = req.userId || 'default';
+
     if (!isSupabaseConfigured()) {
-      const { platform, status, sort = 'published_at', limit = 50 } = req.query;
+      const { platform, status, sort = 'published_at', limit = 50, search } = req.query;
       let posts = [...demoPosts];
       if (platform && platform !== 'all') posts = posts.filter(p => p.platform === platform);
       if (status) posts = posts.filter(p => p.status === status);
-      posts.sort((a, b) => new Date(b[sort] || b.published_at || 0) - new Date(a[sort] || a.published_at || 0));
+      if (search) posts = posts.filter(p => (p.caption || '').toLowerCase().includes(search.toLowerCase()));
+      posts.sort((a, b) => (b[sort] ?? 0) - (a[sort] ?? 0) || new Date(b.published_at || 0) - new Date(a.published_at || 0));
       const enriched = posts.slice(0, parseInt(limit)).map(p => ({
         ...p, media: demoMedia.find(m => m.id === p.media_asset_id),
       }));
-      return res.json({ data: enriched });
+      return res.json({ data: enriched, total: posts.length });
     }
 
-    const { platform, status, sort = 'published_at', limit = 50, offset = 0 } = req.query;
+    const { platform, status, sort = 'published_at', limit = 50, offset = 0, search } = req.query;
+    const sortColumn = SORTABLE_COLUMNS.has(sort) ? sort : 'published_at';
     let query = supabase
       .from('posts')
       .select('*, media_assets(*)', { count: 'exact' })
+      .eq('user_id', userId)
       .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
 
     if (platform && platform !== 'all') query = query.eq('platform', platform);
     if (status) query = query.eq('status', status);
-    query = query.order(sort === 'scheduled_for' ? 'scheduled_for' : 'published_at', { ascending: false, nullsFirst: false });
+    if (search) query = query.ilike('caption', `%${search}%`);
+    query = query.order(sortColumn, { ascending: false, nullsFirst: false });
 
     const { data, count, error } = await query;
     if (error) throw error;
@@ -51,8 +63,9 @@ router.get('/:id', async (req, res) => {
       return res.json({ ...post, media: demoMedia.find(m => m.id === post.media_asset_id) });
     }
 
+    const userId = req.userId || 'default';
     const { data, error } = await supabase
-      .from('posts').select('*, media_assets(*)').eq('id', req.params.id).single();
+      .from('posts').select('*, media_assets(*)').eq('id', req.params.id).eq('user_id', userId).single();
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Not found' });
     res.json({ ...data, media: data.media_assets, media_assets: undefined });
@@ -69,9 +82,11 @@ router.post('/', async (req, res) => {
       return res.json({ message: 'Post created (demo mode)', id: 'post-' + Date.now() });
     }
 
+    const userId = req.userId || 'default';
     const { platform, post_type, caption, hashtags, media_asset_id, status, scheduled_for } = req.body;
     const insert = {
       platform, post_type, caption,
+      user_id: userId,
       hashtags: hashtags || [],
       media_asset_id: media_asset_id || null,
       status: status || 'draft',
@@ -92,9 +107,10 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     if (!isSupabaseConfigured()) return res.json({ message: 'Updated (demo)', id: req.params.id });
+    const userId = req.userId || 'default';
     const updates = { ...req.body, updated_at: new Date().toISOString() };
     const { data, error } = await supabase
-      .from('posts').update(updates).eq('id', req.params.id).select().single();
+      .from('posts').update(updates).eq('id', req.params.id).eq('user_id', userId).select().single();
     if (error) throw error;
     res.json(data);
   } catch (err) {
@@ -107,7 +123,8 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     if (!isSupabaseConfigured()) return res.json({ message: 'Deleted (demo)' });
-    const { error } = await supabase.from('posts').delete().eq('id', req.params.id);
+    const userId = req.userId || 'default';
+    const { error } = await supabase.from('posts').delete().eq('id', req.params.id).eq('user_id', userId);
     if (error) throw error;
     res.json({ message: 'Post deleted' });
   } catch (err) {

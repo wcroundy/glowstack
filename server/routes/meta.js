@@ -346,6 +346,34 @@ router.post('/sync/instagram', async (req, res) => {
         console.error('Instagram batch upsert error:', error.message);
       }
       console.log(`Instagram sync: saved ${synced}/${allPosts.length} posts`);
+
+      // Mirror into the unified posts archive (Post History)
+      const postRows = rows.map((r) => {
+        const engagement = (r.like_count || 0) + (r.comments_count || 0) + (r.saved || 0) + (r.shares || 0);
+        return {
+          platform: 'instagram',
+          platform_post_id: r.ig_media_id,
+          user_id: r.user_id,
+          post_url: r.permalink,
+          post_type: (r.media_product_type || r.media_type || 'post').toLowerCase(),
+          caption: r.caption,
+          thumbnail_url: r.thumbnail_url,
+          status: 'published',
+          published_at: r.timestamp,
+          likes: r.like_count || 0,
+          comments: r.comments_count || 0,
+          shares: r.shares || 0,
+          saves: r.saved || 0,
+          reach: r.reach || 0,
+          impressions: r.impressions || 0,
+          views: r.plays || 0,
+          engagement_rate: r.reach ? +((engagement / r.reach) * 100).toFixed(2) : 0,
+        };
+      });
+      const { error: postErr } = await supabase
+        .from('posts')
+        .upsert(postRows, { onConflict: 'platform,platform_post_id,user_id' });
+      if (postErr) console.error('Instagram posts-archive upsert error:', postErr.message);
     }
 
     // Update sync log
@@ -502,6 +530,32 @@ router.post('/sync/facebook', async (req, res) => {
         console.error('Facebook batch upsert error:', error.message);
       }
       console.log(`Facebook sync: saved ${synced}/${allPosts.length} posts`);
+
+      // Mirror into the unified posts archive (Post History)
+      const postRows = rows.map((r) => ({
+        platform: 'facebook',
+        platform_post_id: r.fb_post_id,
+        user_id: r.user_id,
+        post_url: r.permalink_url,
+        post_type: 'post',
+        caption: r.message,
+        thumbnail_url: r.full_picture,
+        status: 'published',
+        published_at: r.created_time,
+        likes: r.reactions_total || 0,
+        comments: r.comments_count || 0,
+        shares: r.shares_count || 0,
+        saves: 0,
+        reach: r.reach || 0,
+        impressions: r.impressions || 0,
+        views: 0,
+        clicks: r.clicks || 0,
+        engagement_rate: r.impressions ? +(((r.engagement || 0) / r.impressions) * 100).toFixed(2) : 0,
+      }));
+      const { error: postErr } = await supabase
+        .from('posts')
+        .upsert(postRows, { onConflict: 'platform,platform_post_id,user_id' });
+      if (postErr) console.error('Facebook posts-archive upsert error:', postErr.message);
     }
 
     // Update sync log
