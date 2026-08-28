@@ -190,12 +190,23 @@ export async function refreshLongLivedToken(currentToken) {
     const data = await res.json();
     return {
       access_token: data.access_token,
-      expires_in: data.expires_in,
+      // Meta's fb_exchange_token response doesn't always include expires_in —
+      // fall back to the standard 60-day long-lived token lifetime rather than
+      // letting a missing value turn into NaN further down the line.
+      expires_in: data.expires_in || 5184000,
     };
   } catch (err) {
     console.error('Token refresh error:', err.message);
     return null;
   }
+}
+
+// Like Date.prototype.toISOString(), but returns null for an invalid date
+// instead of throwing — a malformed/missing timestamp shouldn't be able to
+// crash whatever sync happened to trigger a token check.
+export function safeIso(ms) {
+  const d = new Date(ms);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
 /**
@@ -216,8 +227,10 @@ export async function checkAndRefreshToken(userId = 'default') {
   const now = Date.now();
 
   // If token expires in more than 7 days, no refresh needed
+  // (an unparseable obtainedAt makes expiresAt NaN, which fails this
+  // comparison and correctly falls through to a refresh attempt below)
   if (expiresAt - now > sevenDaysMs) {
-    return { refreshed: false, expiresAt: new Date(expiresAt).toISOString() };
+    return { refreshed: false, expiresAt: safeIso(expiresAt) };
   }
 
   console.log('Meta token expiring soon, refreshing...');
@@ -257,7 +270,7 @@ export async function checkAndRefreshToken(userId = 'default') {
 
   return {
     refreshed: true,
-    expiresAt: new Date(Date.now() + newToken.expires_in * 1000).toISOString(),
+    expiresAt: safeIso(Date.now() + (newToken.expires_in || 0) * 1000),
   };
 }
 

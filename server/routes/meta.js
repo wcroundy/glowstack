@@ -9,7 +9,7 @@ import {
   getPageInfo, getValidPageToken, getLastSyncTimestamp,
   saveConnection, checkAndRefreshToken,
   parseSignedRequest, handleDataDeletion,
-  verifyWebhookSignature, TokenExpiredError,
+  verifyWebhookSignature, TokenExpiredError, safeIso,
 } from '../services/meta.js';
 
 const router = Router();
@@ -53,7 +53,7 @@ router.get('/status', async (req, res) => {
       const expiresAt = obtainedAt + expiresIn;
       const daysLeft = Math.floor((expiresAt - Date.now()) / (24 * 60 * 60 * 1000));
       tokenStatus = {
-        expiresAt: new Date(expiresAt).toISOString(),
+        expiresAt: safeIso(expiresAt),
         daysRemaining: Math.max(0, daysLeft),
         needsReauth: metadata.needs_reauth || false,
       };
