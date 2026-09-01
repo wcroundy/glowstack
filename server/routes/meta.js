@@ -427,7 +427,9 @@ router.post('/sync/instagram', async (req, res) => {
     });
   } catch (err) {
     if (err instanceof TokenExpiredError) {
-      return res.status(401).json({ error: 'Token expired. Please reconnect your Meta account.', needsReauth: true });
+      // 400, not 401: this is Meta's token expiring, not the GlowStack session — a 401 here
+      // trips api.js's global handler and force-logs the user out of GlowStack entirely.
+      return res.status(400).json({ error: 'Token expired. Please reconnect your Meta account.', needsReauth: true });
     }
     console.error('Instagram sync error:', err.message);
     res.status(500).json({ error: err.message });
@@ -605,7 +607,8 @@ router.post('/sync/facebook', async (req, res) => {
     });
   } catch (err) {
     if (err instanceof TokenExpiredError) {
-      return res.status(401).json({ error: 'Token expired. Please reconnect your Meta account.', needsReauth: true });
+      // 400, not 401 — see identical comment on the Instagram sync handler above.
+      return res.status(400).json({ error: 'Token expired. Please reconnect your Meta account.', needsReauth: true });
     }
     console.error('Facebook sync error:', err.message);
     res.status(500).json({ error: err.message });

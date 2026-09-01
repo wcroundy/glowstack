@@ -116,7 +116,9 @@ router.get('/callback', async (req, res) => {
 router.post('/session', async (req, res) => {
   try {
     const accessToken = await getValidToken();
-    if (!accessToken) return res.status(401).json({ error: 'Google Photos not connected' });
+    // 400, not 401: this is Google Photos being unconnected, not the GlowStack session — a 401
+    // here trips api.js's global handler and force-logs the user out of GlowStack entirely.
+    if (!accessToken) return res.status(400).json({ error: 'Google Photos not connected' });
 
     const session = await createSession(accessToken);
     console.log('Picker session created:', session.id);
@@ -136,7 +138,8 @@ router.post('/session', async (req, res) => {
 router.get('/session/:id', async (req, res) => {
   try {
     const accessToken = await getValidToken();
-    if (!accessToken) return res.status(401).json({ error: 'Google Photos not connected' });
+    // 400, not 401 — see comment on the /session handler above.
+    if (!accessToken) return res.status(400).json({ error: 'Google Photos not connected' });
 
     const session = await getSession(accessToken, req.params.id);
 
@@ -155,7 +158,8 @@ router.get('/session/:id', async (req, res) => {
 router.get('/session/:id/media', async (req, res) => {
   try {
     const accessToken = await getValidToken();
-    if (!accessToken) return res.status(401).json({ error: 'Google Photos not connected' });
+    // 400, not 401 — see comment on the /session handler above.
+    if (!accessToken) return res.status(400).json({ error: 'Google Photos not connected' });
 
     const { pageToken } = req.query;
     const data = await listSessionMediaItems(accessToken, req.params.id, pageToken);
@@ -236,8 +240,9 @@ router.post('/import', async (req, res) => {
 
     // 3. Get access token for authenticated image downloads
     const accessToken = await getValidToken();
+    // 400, not 401 — see comment on the /session handler above.
     if (!accessToken) {
-      return res.status(401).json({ error: 'Google Photos not connected — cannot download images' });
+      return res.status(400).json({ error: 'Google Photos not connected — cannot download images' });
     }
 
     // 4. Download thumbnails to Supabase Storage (with auth headers)
@@ -395,8 +400,9 @@ router.post('/retry-video', async (req, res) => {
     }
 
     const accessToken = await getValidToken();
+    // 400, not 401 — see comment on the /session handler above.
     if (!accessToken) {
-      return res.status(401).json({ error: 'Google Photos not connected' });
+      return res.status(400).json({ error: 'Google Photos not connected' });
     }
 
     // Download the full video
@@ -477,7 +483,8 @@ router.post('/cleanup', async (req, res) => {
 router.post('/refresh-urls', async (req, res) => {
   try {
     const accessToken = await getValidToken();
-    if (!accessToken) return res.status(401).json({ error: 'Google Photos not connected' });
+    // 400, not 401 — see comment on the /session handler above.
+    if (!accessToken) return res.status(400).json({ error: 'Google Photos not connected' });
 
     if (!isSupabaseConfigured()) {
       return res.json({ refreshed: 0 });
@@ -516,7 +523,8 @@ router.post('/video-proxy', async (req, res) => {
     if (!baseUrl) return res.status(400).json({ error: 'baseUrl is required' });
 
     const accessToken = await getValidToken();
-    if (!accessToken) return res.status(401).json({ error: 'Google Photos not connected' });
+    // 400, not 401 — see comment on the /session handler above.
+    if (!accessToken) return res.status(400).json({ error: 'Google Photos not connected' });
 
     const videoSrc = `${baseUrl}=dv`;
     console.log('Video proxy: starting stream from Google Photos...');
