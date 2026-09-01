@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Search, RefreshCw, Loader2, ExternalLink, Heart, MessageCircle, Share2,
   Bookmark, Eye, TrendingUp, ChevronLeft, ChevronRight, Image as ImageIcon,
-  Plus, Users, Trash2, ChevronDown, ChevronUp, AlertCircle, Hash,
+  Plus, Users, Trash2, ChevronDown, ChevronUp, AlertCircle, Hash, Check,
 } from 'lucide-react';
 import { api } from '../services/api';
 import PlatformIcon from '../components/common/PlatformIcon';
@@ -344,6 +344,13 @@ function HashtagCard({ hashtag, onSync, onRemove, expanded, onToggleExpand, sync
   );
 }
 
+// Curated for beauty/fashion content, mixing broad-reach and format-specific
+// tags — last checked against current hashtag-research sources August 2026.
+const SUGGESTED_HASHTAGS = [
+  'grwm', 'getreadywithme', 'ootd', 'ootdfashion', 'outfitinspo',
+  'skincareroutine', 'makeuptutorial', 'beauty', 'fashion', 'glassskin',
+];
+
 function TrendingTab() {
   const [hashtags, setHashtags] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -360,13 +367,11 @@ function TrendingTab() {
 
   useEffect(() => { load(); }, [load]);
 
-  const handleAdd = async () => {
-    if (!hashtagInput.trim()) return;
+  const trackHashtag = async (tag) => {
     setAdding(true);
     setError(null);
     try {
-      await api.addWatchedHashtag(hashtagInput.trim());
-      setHashtagInput('');
+      await api.addWatchedHashtag(tag);
       load();
     } catch (err) {
       setError(err.data?.error || err.message || 'Could not track that hashtag.');
@@ -374,6 +379,14 @@ function TrendingTab() {
       setAdding(false);
     }
   };
+
+  const handleAdd = async () => {
+    if (!hashtagInput.trim()) return;
+    await trackHashtag(hashtagInput.trim());
+    setHashtagInput('');
+  };
+
+  const isTracked = (tag) => hashtags.some((h) => h.hashtag === tag);
 
   const handleSync = async (id) => {
     setSyncingId(id);
@@ -413,6 +426,28 @@ function TrendingTab() {
             Track
           </button>
         </div>
+
+        <div className="flex flex-wrap items-center gap-1.5 mt-3">
+          <span className="text-[11px] text-surface-400 mr-1">Suggested for beauty/fashion:</span>
+          {SUGGESTED_HASHTAGS.map((tag) => {
+            const tracked = isTracked(tag);
+            return (
+              <button
+                key={tag}
+                onClick={() => !tracked && trackHashtag(tag)}
+                disabled={adding || tracked}
+                className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
+                  tracked
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 cursor-default'
+                    : 'border-surface-200 text-surface-600 hover:border-brand-300 hover:text-brand-600 disabled:opacity-40'
+                }`}
+              >
+                {tracked && <Check className="w-3 h-3 inline mr-0.5" />}#{tag}
+              </button>
+            );
+          })}
+        </div>
+
         {error && (
           <div className="flex items-start gap-2 mt-3 p-2.5 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
