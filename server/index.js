@@ -74,6 +74,7 @@ import videoBreakdownRoutes from './routes/videoBreakdown.js';
 import contentDraftsRoutes from './routes/contentDrafts.js';
 import aiProvidersRoutes from './routes/aiProviders.js';
 import influencersRoutes from './routes/influencers.js';
+import hashtagsRoutes from './routes/hashtags.js';
 
 app.use('/api/media', mediaRoutes);
 app.use('/api/analytics', analyticsRoutes);
@@ -82,6 +83,7 @@ app.use('/api/calendar', calendarRoutes);
 app.use('/api/content-drafts', contentDraftsRoutes);
 app.use('/api/ai-providers', aiProvidersRoutes);
 app.use('/api/influencers', influencersRoutes);
+app.use('/api/hashtags', hashtagsRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/platforms', platformRoutes);
 app.use('/api/dashboard', dashboardRoutes);

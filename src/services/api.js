@@ -92,6 +92,13 @@ export const api = {
   getWatchedInfluencerPosts: (id) => request(`/influencers/${id}/posts`),
   deleteWatchedInfluencer: (id) => request(`/influencers/${id}`, { method: 'DELETE' }),
 
+  // Trending (hashtag tracking via Instagram Hashtag Search)
+  getWatchedHashtags: () => request('/hashtags'),
+  addWatchedHashtag: (hashtag) => request('/hashtags', { method: 'POST', body: JSON.stringify({ hashtag }) }),
+  syncWatchedHashtag: (id) => request(`/hashtags/${id}/sync`, { method: 'POST' }),
+  getWatchedHashtagPosts: (id) => request(`/hashtags/${id}/posts`),
+  deleteWatchedHashtag: (id) => request(`/hashtags/${id}`, { method: 'DELETE' }),
+
   // Content Drafts
   getContentDrafts: () => request('/content-drafts'),
   getContentDraft: (id) => request(`/content-drafts/${id}`),

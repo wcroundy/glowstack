@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Search, RefreshCw, Loader2, ExternalLink, Heart, MessageCircle, Share2,
   Bookmark, Eye, TrendingUp, ChevronLeft, ChevronRight, Image as ImageIcon,
-  Plus, Users, Trash2, ChevronDown, ChevronUp, AlertCircle,
+  Plus, Users, Trash2, ChevronDown, ChevronUp, AlertCircle, Hash,
 } from 'lucide-react';
 import { api } from '../services/api';
 import PlatformIcon from '../components/common/PlatformIcon';
@@ -291,6 +291,164 @@ function WatchlistTab() {
   );
 }
 
+function HashtagCard({ hashtag, onSync, onRemove, expanded, onToggleExpand, syncingId }) {
+  const syncing = syncingId === hashtag.id;
+  const [posts, setPosts] = useState(null);
+
+  useEffect(() => {
+    if (expanded && posts === null) {
+      api.getWatchedHashtagPosts(hashtag.id).then((r) => setPosts(r.data || []));
+    }
+  }, [expanded, hashtag.id, posts]);
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="flex items-center gap-3 p-4">
+        <div className="w-11 h-11 rounded-full bg-surface-100 flex items-center justify-center shrink-0">
+          <Hash className="w-5 h-5 text-surface-400" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-surface-900 truncate">#{hashtag.hashtag}</p>
+          <p className="text-xs text-surface-500">
+            {hashtag.post_count} top posts tracked
+            {hashtag.last_synced_at && ` · synced ${new Date(hashtag.last_synced_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
+          </p>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <button onClick={() => onSync(hashtag.id)} disabled={syncing} className="btn-ghost text-xs p-2" title="Sync now">
+            {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+          </button>
+          <button onClick={() => onRemove(hashtag.id)} className="btn-ghost text-xs p-2 text-red-500 hover:bg-red-50" title="Remove">
+            <Trash2 className="w-4 h-4" />
+          </button>
+          <button onClick={() => onToggleExpand(hashtag.id)} className="btn-ghost text-xs p-2" title="View posts">
+            {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="border-t px-2 pb-3 pt-2">
+          {posts === null ? (
+            <div className="flex justify-center py-6 text-surface-400"><Loader2 className="w-5 h-5 animate-spin" /></div>
+          ) : posts.length === 0 ? (
+            <p className="text-xs text-surface-400 text-center py-4">No posts synced yet — hit sync above.</p>
+          ) : (
+            <div className="max-h-[420px] overflow-y-auto divide-y divide-surface-100">
+              {posts.map((p) => <WatchedPostRow key={p.id} post={p} />)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TrendingTab() {
+  const [hashtags, setHashtags] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [hashtagInput, setHashtagInput] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
+  const [syncingId, setSyncingId] = useState(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    api.getWatchedHashtags().then((r) => setHashtags(r.data || [])).finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleAdd = async () => {
+    if (!hashtagInput.trim()) return;
+    setAdding(true);
+    setError(null);
+    try {
+      await api.addWatchedHashtag(hashtagInput.trim());
+      setHashtagInput('');
+      load();
+    } catch (err) {
+      setError(err.data?.error || err.message || 'Could not track that hashtag.');
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const handleSync = async (id) => {
+    setSyncingId(id);
+    try {
+      await api.syncWatchedHashtag(id);
+      load();
+    } catch (err) {
+      console.error('Hashtag sync error:', err);
+    } finally {
+      setSyncingId(null);
+    }
+  };
+
+  const handleRemove = async (id) => {
+    if (!window.confirm('Stop tracking this hashtag?')) return;
+    await api.deleteWatchedHashtag(id);
+    load();
+  };
+
+  return (
+    <div>
+      <div className="card p-4 mb-6">
+        <p className="text-sm font-medium text-surface-700 mb-1">Track a hashtag</p>
+        <p className="text-xs text-surface-500 mb-3">
+          Pulls Instagram's algorithmically top-performing public posts under a hashtag — a read on what's landing platform-wide, not just among accounts you follow.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input
+            className="input text-sm flex-1"
+            placeholder="#hashtag"
+            value={hashtagInput}
+            onChange={(e) => setHashtagInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+          />
+          <button onClick={handleAdd} disabled={adding || !hashtagInput.trim()} className="btn-primary text-sm shrink-0">
+            {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+            Track
+          </button>
+        </div>
+        {error && (
+          <div className="flex items-start gap-2 mt-3 p-2.5 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            {error}
+          </div>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-20 text-surface-400">
+          <Loader2 className="w-6 h-6 animate-spin" />
+        </div>
+      ) : hashtags.length === 0 ? (
+        <div className="card p-12 text-center">
+          <Hash className="w-10 h-10 text-surface-300 mx-auto mb-3" />
+          <p className="text-sm text-surface-500">No hashtags tracked yet — add one above.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {hashtags.map((h) => (
+            <HashtagCard
+              key={h.id}
+              hashtag={h}
+              syncingId={syncingId}
+              onSync={handleSync}
+              onRemove={handleRemove}
+              expanded={expandedId === h.id}
+              onToggleExpand={(id) => setExpandedId((e) => (e === id ? null : id))}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function PostHistory() {
   const [activeTab, setActiveTab] = useState('mine'); // 'mine' | 'watchlist'
   const [posts, setPosts] = useState([]);
@@ -370,7 +528,9 @@ export default function PostHistory() {
           <p className="text-sm text-surface-500 mt-0.5">
             {activeTab === 'mine'
               ? `${total.toLocaleString()} posts archived across Instagram, Facebook & TikTok`
-              : 'Track other creators\' posts and engagement alongside your own'}
+              : activeTab === 'watchlist'
+              ? 'Track other creators\' posts and engagement alongside your own'
+              : 'See what\'s landing platform-wide under hashtags in your space'}
           </p>
         </div>
         {activeTab === 'mine' && (
@@ -401,10 +561,20 @@ export default function PostHistory() {
         >
           <Users className="w-3.5 h-3.5" /> Watchlist
         </button>
+        <button
+          onClick={() => setActiveTab('trending')}
+          className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 ${
+            activeTab === 'trending' ? 'bg-white text-surface-900 shadow-sm' : 'text-surface-500 hover:text-surface-700'
+          }`}
+        >
+          <Hash className="w-3.5 h-3.5" /> Trending
+        </button>
       </div>
 
       {activeTab === 'watchlist' ? (
         <WatchlistTab />
+      ) : activeTab === 'trending' ? (
+        <TrendingTab />
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mb-4 text-xs">

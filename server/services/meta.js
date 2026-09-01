@@ -423,6 +423,37 @@ export async function getInstagramAccountInsights(igUserId, pageAccessToken, per
   return result.data;
 }
 
+/**
+ * Look up a hashtag's internal Graph API ID by name — required before fetching
+ * its media. Meta caps this specific lookup at 30 unique hashtags per 7-day
+ * rolling window per IG User ID, so the resolved ID should be cached and reused
+ * (fetching top_media/recent_media for an already-resolved hashtag does not
+ * count against that cap).
+ */
+export async function getHashtagId(igUserId, hashtagName, pageAccessToken) {
+  const url = `${GRAPH_API}/ig_hashtag_search?user_id=${igUserId}&q=${encodeURIComponent(hashtagName)}&access_token=${pageAccessToken}`;
+  const result = await metaFetch(url);
+  if (!result.ok) {
+    throw new Error(result.error?.message || `Hashtag lookup failed for #${hashtagName}`);
+  }
+  const id = result.data?.data?.[0]?.id;
+  if (!id) {
+    throw new Error(`#${hashtagName} not found.`);
+  }
+  return id;
+}
+
+/** Fetch Instagram's algorithmically top-performing public posts for a hashtag. */
+export async function getHashtagTopMedia(igUserId, hashtagId, pageAccessToken, limit = 25) {
+  const fields = 'caption,comments_count,like_count,media_type,media_product_type,permalink,timestamp';
+  const url = `${GRAPH_API}/${hashtagId}/top_media?user_id=${igUserId}&fields=${fields}&limit=${limit}&access_token=${pageAccessToken}`;
+  const result = await metaFetch(url);
+  if (!result.ok) {
+    throw new Error(result.error?.message || 'Hashtag media fetch failed');
+  }
+  return result.data.data || [];
+}
+
 /** Fetch Facebook Page posts */
 /** Fetch page-level info (fan_count / followers) */
 export async function getPageInfo(pageId, pageAccessToken) {
