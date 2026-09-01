@@ -336,9 +336,10 @@ export async function getInstagramMedia(igUserId, pageAccessToken, limit = 25, a
  * as the lookup vehicle. Returns bio/follower stats + recent media with like/comment
  * counts (their deeper insights like reach/saves stay private to them regardless).
  */
-export async function getBusinessDiscovery(igUserId, targetUsername, pageAccessToken, mediaLimit = 12) {
-  const mediaFields = 'caption,comments_count,like_count,media_type,media_product_type,media_url,permalink,thumbnail_url,timestamp';
-  const fields = `business_discovery.username(${targetUsername}){username,name,biography,profile_picture_url,followers_count,follows_count,media_count,media.limit(${mediaLimit}){${mediaFields}}}`;
+export async function getBusinessDiscovery(igUserId, targetUsername, pageAccessToken, { mediaLimit = 25, after = null } = {}) {
+  const mediaFields = 'caption,comments_count,like_count,media_type,media_product_type,media_url,permalink,timestamp';
+  const mediaEdge = after ? `media.after(${after}).limit(${mediaLimit})` : `media.limit(${mediaLimit})`;
+  const fields = `business_discovery.username(${targetUsername}){username,name,biography,profile_picture_url,followers_count,follows_count,media_count,${mediaEdge}{${mediaFields}}}`;
 
   const url = `${GRAPH_API}/${igUserId}?fields=${encodeURIComponent(fields)}&access_token=${pageAccessToken}`;
   const result = await metaFetch(url);
@@ -349,6 +350,40 @@ export async function getBusinessDiscovery(igUserId, targetUsername, pageAccessT
     throw new Error(`@${targetUsername} not found, or it isn't a Business/Creator account (Business Discovery only works on Professional accounts).`);
   }
   return result.data.business_discovery;
+}
+
+/**
+ * Pages backward through an account's media via Business Discovery until posts
+ * older than `lookbackDays` are reached (or pagination/the safety cap runs out).
+ * Returns the profile fields (from the first page) plus the accumulated media list.
+ */
+export async function getBusinessDiscoveryHistory(igUserId, targetUsername, pageAccessToken, lookbackDays = 90) {
+  const cutoff = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
+  const MAX_PAGES = 10; // safety cap: 10 * 25 = 250 posts max per sync
+
+  let profile = null;
+  let allMedia = [];
+  let after = null;
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const discovery = await getBusinessDiscovery(igUserId, targetUsername, pageAccessToken, { mediaLimit: 25, after });
+    if (!profile) profile = discovery;
+
+    const media = discovery.media?.data || [];
+    if (media.length === 0) break;
+
+    let hitCutoff = false;
+    for (const m of media) {
+      if (new Date(m.timestamp) < cutoff) { hitCutoff = true; break; }
+      allMedia.push(m);
+    }
+    if (hitCutoff) break;
+
+    after = discovery.media?.paging?.cursors?.after;
+    if (!after) break;
+  }
+
+  return { profile, media: allMedia };
 }
 
 /** Fetch insights for a single Instagram media item (requires instagram_manage_insights) */

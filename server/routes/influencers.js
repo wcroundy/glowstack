@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { supabase, isSupabaseConfigured } from '../services/supabase.js';
-import { getValidPageToken, getBusinessDiscovery } from '../services/meta.js';
+import { getValidPageToken, getBusinessDiscoveryHistory } from '../services/meta.js';
 
 const router = Router();
+const LOOKBACK_DAYS = 90; // ~3 months
 
 function mapMediaToPostRow(watchedInfluencerId, media) {
   return {
@@ -11,7 +12,7 @@ function mapMediaToPostRow(watchedInfluencerId, media) {
     post_url: media.permalink,
     caption: media.caption,
     media_type: (media.media_product_type || media.media_type || '').toLowerCase(),
-    thumbnail_url: media.thumbnail_url || media.media_url,
+    thumbnail_url: media.media_url || null,
     likes: media.like_count || 0,
     comments: media.comments_count || 0,
     published_at: media.timestamp,
@@ -61,9 +62,9 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Connect your own Instagram Business account first (Integrations) — it\'s used to look up other accounts.' });
     }
 
-    let discovery;
+    let profile, media;
     try {
-      discovery = await getBusinessDiscovery(igUserId, cleanUsername, pageAccessToken);
+      ({ profile, media } = await getBusinessDiscoveryHistory(igUserId, cleanUsername, pageAccessToken, LOOKBACK_DAYS));
     } catch (lookupErr) {
       return res.status(400).json({ error: lookupErr.message });
     }
@@ -73,13 +74,13 @@ router.post('/', async (req, res) => {
       .upsert({
         user_id: userId,
         platform: 'instagram',
-        username: discovery.username,
-        display_name: discovery.name,
-        bio: discovery.biography,
-        profile_picture_url: discovery.profile_picture_url,
-        followers_count: discovery.followers_count,
-        follows_count: discovery.follows_count,
-        media_count: discovery.media_count,
+        username: profile.username,
+        display_name: profile.name,
+        bio: profile.biography,
+        profile_picture_url: profile.profile_picture_url,
+        followers_count: profile.followers_count,
+        follows_count: profile.follows_count,
+        media_count: profile.media_count,
         notes: notes || null,
         last_synced_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -88,7 +89,6 @@ router.post('/', async (req, res) => {
       .single();
     if (error) throw error;
 
-    const media = discovery.media?.data || [];
     if (media.length > 0) {
       const rows = media.map((m) => mapMediaToPostRow(influencer.id, m));
       const { error: postErr } = await supabase
@@ -119,17 +119,17 @@ router.post('/:id/sync', async (req, res) => {
     if (findErr || !influencer) return res.status(404).json({ error: 'Not found' });
 
     const { pageAccessToken, igUserId } = await getValidPageToken(userId);
-    const discovery = await getBusinessDiscovery(igUserId, influencer.username, pageAccessToken);
+    const { profile, media } = await getBusinessDiscoveryHistory(igUserId, influencer.username, pageAccessToken, LOOKBACK_DAYS);
 
     const { data: updated, error } = await supabase
       .from('watched_influencers')
       .update({
-        display_name: discovery.name,
-        bio: discovery.biography,
-        profile_picture_url: discovery.profile_picture_url,
-        followers_count: discovery.followers_count,
-        follows_count: discovery.follows_count,
-        media_count: discovery.media_count,
+        display_name: profile.name,
+        bio: profile.biography,
+        profile_picture_url: profile.profile_picture_url,
+        followers_count: profile.followers_count,
+        follows_count: profile.follows_count,
+        media_count: profile.media_count,
         last_synced_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -138,7 +138,6 @@ router.post('/:id/sync', async (req, res) => {
       .single();
     if (error) throw error;
 
-    const media = discovery.media?.data || [];
     if (media.length > 0) {
       const rows = media.map((m) => mapMediaToPostRow(influencer.id, m));
       await supabase.from('watched_posts').upsert(rows, { onConflict: 'watched_influencer_id,platform_post_id' });

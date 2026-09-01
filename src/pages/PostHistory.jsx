@@ -87,44 +87,32 @@ function PostCard({ post }) {
   );
 }
 
-function WatchedPostCard({ post }) {
+function WatchedPostRow({ post }) {
   return (
     <a
       href={post.post_url || undefined}
       target="_blank"
       rel="noreferrer"
-      className={`card-hover group overflow-hidden flex flex-col ${!post.post_url ? 'pointer-events-none' : ''}`}
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-surface-50 transition-colors ${!post.post_url ? 'pointer-events-none' : ''}`}
     >
-      <div className="relative aspect-square bg-surface-100 overflow-hidden">
-        {post.thumbnail_url ? (
-          <img
-            src={post.thumbnail_url}
-            alt={post.caption || 'Post thumbnail'}
-            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-surface-300">
-            <ImageIcon className="w-8 h-8" />
-          </div>
-        )}
-        {post.post_url && (
-          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
-            <ExternalLink className="w-5 h-5 text-white" />
-          </div>
-        )}
-      </div>
-      <div className="p-3 flex-1 flex flex-col gap-2">
-        <p className="text-xs text-surface-700 line-clamp-2 min-h-[2rem]">
-          {post.caption || <span className="text-surface-300 italic">No caption</span>}
-        </p>
-        <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mt-auto pt-1 border-t border-surface-100">
-          <Stat icon={Heart} value={post.likes} />
-          <Stat icon={MessageCircle} value={post.comments} />
+      {post.thumbnail_url ? (
+        <img src={post.thumbnail_url} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />
+      ) : (
+        <div className="w-9 h-9 rounded-lg bg-surface-100 flex items-center justify-center shrink-0">
+          <ImageIcon className="w-4 h-4 text-surface-300" />
         </div>
-        <p className="text-[10px] text-surface-400">
-          {post.published_at ? new Date(post.published_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : ''}
-        </p>
+      )}
+      <p className="text-xs text-surface-700 line-clamp-1 flex-1 min-w-0">
+        {post.caption || <span className="text-surface-300 italic">No caption</span>}
+      </p>
+      <span className="text-[11px] text-surface-400 shrink-0 w-16 text-right">
+        {post.published_at ? new Date(post.published_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}
+      </span>
+      <div className="flex items-center gap-2 shrink-0 w-24">
+        <Stat icon={Heart} value={post.likes} />
+        <Stat icon={MessageCircle} value={post.comments} />
       </div>
+      <ExternalLink className="w-3.5 h-3.5 text-surface-300 shrink-0" />
     </a>
   );
 }
@@ -173,14 +161,14 @@ function InfluencerCard({ influencer, onSync, onRemove, expanded, onToggleExpand
       </div>
 
       {expanded && (
-        <div className="border-t px-4 pb-4 pt-4">
+        <div className="border-t px-2 pb-3 pt-2">
           {posts === null ? (
             <div className="flex justify-center py-6 text-surface-400"><Loader2 className="w-5 h-5 animate-spin" /></div>
           ) : posts.length === 0 ? (
             <p className="text-xs text-surface-400 text-center py-4">No posts synced yet — hit sync above.</p>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              {posts.map((p) => <WatchedPostCard key={p.id} post={p} />)}
+            <div className="max-h-[420px] overflow-y-auto divide-y divide-surface-100">
+              {posts.map((p) => <WatchedPostRow key={p.id} post={p} />)}
             </div>
           )}
         </div>
@@ -245,7 +233,7 @@ function WatchlistTab() {
       <div className="card p-4 mb-6">
         <p className="text-sm font-medium text-surface-700 mb-1">Track another creator</p>
         <p className="text-xs text-surface-500 mb-3">
-          Works for Instagram Business/Creator accounts — no permission needed from them, just their @handle.
+          Works for Instagram Business/Creator accounts — no permission needed from them, just their @handle. Pulls up to their last 3 months of posts.
         </p>
         <div className="flex flex-col sm:flex-row gap-2">
           <input
