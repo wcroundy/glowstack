@@ -96,8 +96,30 @@ export default function PostHistory() {
   const [page, setPage] = useState(1);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
+  const [syncLog, setSyncLog] = useState([]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  const fetchSyncLog = useCallback(() => {
+    api.metaSyncLog().then((r) => setSyncLog(r.data || [])).catch(() => {});
+  }, []);
+
+  useEffect(() => { fetchSyncLog(); }, [fetchSyncLog]);
+
+  // Most recent log entry per platform (syncLog is already newest-first)
+  const lastSyncByPlatform = {};
+  for (const entry of syncLog) {
+    if (!lastSyncByPlatform[entry.platform]) lastSyncByPlatform[entry.platform] = entry;
+  }
+
+  const formatSyncTime = (entry) => {
+    if (!entry) return 'Never synced';
+    const d = new Date(entry.completed_at || entry.started_at);
+    const label = `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+    if (entry.status === 'failed') return `${label} (failed)`;
+    if (entry.status === 'running') return `${label} (in progress)`;
+    return label;
+  };
 
   const fetchPosts = useCallback(() => {
     setLoading(true);
@@ -131,6 +153,7 @@ export default function PostHistory() {
     setSyncMessage(results.join(' · '));
     setSyncing(false);
     fetchPosts();
+    fetchSyncLog();
   };
 
   return (
@@ -149,6 +172,16 @@ export default function PostHistory() {
           </button>
           {syncMessage && <span className="text-[11px] text-surface-400 max-w-xs text-right">{syncMessage}</span>}
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mb-4 text-xs">
+        <span className="font-medium text-surface-500">Last synced:</span>
+        {['instagram', 'facebook', 'tiktok'].map((p) => (
+          <span key={p} className="flex items-center gap-1.5 text-surface-400">
+            <PlatformIcon platform={p} size="sm" />
+            {formatSyncTime(lastSyncByPlatform[p])}
+          </span>
+        ))}
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 mb-6">
