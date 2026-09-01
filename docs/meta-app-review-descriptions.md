@@ -46,3 +46,14 @@ GlowStack uses instagram_manage_insights to fetch detailed per-post performance 
 These metrics are displayed alongside each post in our Social Insights dashboard's Instagram tab, giving creators a comprehensive view of how their content performs beyond just likes and comments. We also aggregate these metrics into summary cards showing total impressions, reach, saves, shares, and plays across all content, plus an average engagement rate calculation.
 
 This data helps beauty and fashion creators understand which types of content (outfit posts, tutorials, product reviews, etc.) drive the most engagement, informing their content strategy and brand partnership decisions. The insights data is only accessible to the authenticated account owner and is not shared with any third parties.
+
+
+## 5. Instagram Public Content Access
+
+GlowStack uses Instagram Public Content Access to power a "Trending" feature that helps beauty and fashion creators keep a pulse on what's performing well platform-wide, beyond just their own account or accounts they already follow.
+
+A creator enters a hashtag relevant to their niche (e.g. "grwm," "skincareroutine," "ootd"). We resolve it via the /ig_hashtag_search endpoint using the creator's own connected Instagram Business account, then call /{hashtag-id}/top_media to retrieve Instagram's algorithmically top-performing public posts tagged with that hashtag, including caption, media type, like count, comment count, timestamp, and permalink.
+
+This data is displayed in GlowStack's Trending tab as a scrollable list — each entry links directly back to the original public post on Instagram — so creators can study what formats and topics are currently resonating in their content category and inform their own posting strategy. We resolve each hashtag only once and cache its ID to stay well within the 30-unique-hashtags-per-7-days limit on ig_hashtag_search; subsequent refreshes reuse the cached ID and only call top_media.
+
+This data is only accessible to the authenticated account owner within GlowStack and is not shared, sold, or transferred to any third parties. We also use the related Business Discovery feature (business_discovery field on the Instagram Business/Creator Graph API node) for a companion "Watchlist" feature, letting a creator track a handful of other public creators' accounts and recent post performance for competitive/inspirational reference — this reads only public profile and media fields already exposed by that endpoint and requires no permission grant from the tracked account.
