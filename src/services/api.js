@@ -85,6 +85,13 @@ export const api = {
   aiProviderDisconnect: (platform) => request(`/ai-providers/${platform}/disconnect`, { method: 'POST' }),
   updateAiSettings: (data) => request('/ai-providers/settings', { method: 'PUT', body: JSON.stringify(data) }),
 
+  // Watchlist (other influencers, via Instagram Business Discovery)
+  getWatchedInfluencers: () => request('/influencers'),
+  addWatchedInfluencer: (username, notes) => request('/influencers', { method: 'POST', body: JSON.stringify({ username, notes }) }),
+  syncWatchedInfluencer: (id) => request(`/influencers/${id}/sync`, { method: 'POST' }),
+  getWatchedInfluencerPosts: (id) => request(`/influencers/${id}/posts`),
+  deleteWatchedInfluencer: (id) => request(`/influencers/${id}`, { method: 'DELETE' }),
+
   // Content Drafts
   getContentDrafts: () => request('/content-drafts'),
   getContentDraft: (id) => request(`/content-drafts/${id}`),

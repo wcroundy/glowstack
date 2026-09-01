@@ -329,6 +329,28 @@ export async function getInstagramMedia(igUserId, pageAccessToken, limit = 25, a
   return result.data;
 }
 
+/**
+ * Look up ANY public Instagram Business/Creator account by username via Business
+ * Discovery — no permission or connection from that account is needed, only that
+ * it's a Professional (Business/Creator) profile. Uses our own IG Business Account
+ * as the lookup vehicle. Returns bio/follower stats + recent media with like/comment
+ * counts (their deeper insights like reach/saves stay private to them regardless).
+ */
+export async function getBusinessDiscovery(igUserId, targetUsername, pageAccessToken, mediaLimit = 12) {
+  const mediaFields = 'caption,comments_count,like_count,media_type,media_product_type,media_url,permalink,thumbnail_url,timestamp';
+  const fields = `business_discovery.username(${targetUsername}){username,name,biography,profile_picture_url,followers_count,follows_count,media_count,media.limit(${mediaLimit}){${mediaFields}}}`;
+
+  const url = `${GRAPH_API}/${igUserId}?fields=${encodeURIComponent(fields)}&access_token=${pageAccessToken}`;
+  const result = await metaFetch(url);
+  if (!result.ok) {
+    throw new Error(result.error?.message || 'Business Discovery lookup failed');
+  }
+  if (!result.data.business_discovery) {
+    throw new Error(`@${targetUsername} not found, or it isn't a Business/Creator account (Business Discovery only works on Professional accounts).`);
+  }
+  return result.data.business_discovery;
+}
+
 /** Fetch insights for a single Instagram media item (requires instagram_manage_insights) */
 export async function getInstagramMediaInsights(mediaId, mediaType, pageAccessToken) {
   let metrics;
