@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { supabase, isSupabaseConfigured } from '../services/supabase.js';
 import { demoCalendarEvents } from '../services/demoData.js';
+import { readLocal, updateLocal } from '../services/contentKnowledge.js';
+import { randomUUID } from 'node:crypto';
 
 const router = Router();
 
@@ -9,7 +11,7 @@ router.get('/', async (req, res) => {
   try {
     if (!isSupabaseConfigured()) {
       const { start, end, platform, event_type } = req.query;
-      let events = [...demoCalendarEvents];
+      let events = [...demoCalendarEvents, ...await readLocal(req.userId, 'calendar')];
       if (platform) events = events.filter(e => e.platform === platform);
       if (event_type) events = events.filter(e => e.event_type === event_type);
       if (start) events = events.filter(e => new Date(e.start_at) >= new Date(start));
@@ -42,7 +44,9 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     if (!isSupabaseConfigured()) {
-      return res.json({ message: 'Event created (demo)', id: 'cal-' + Date.now() });
+      const event = { id: randomUUID(), ...Object.fromEntries(['title','description','event_type','platform','start_at','end_at','all_day','color','status'].filter(k => k in req.body).map(k => [k, req.body[k]])) };
+      await updateLocal(req.userId, 'calendar', rows => [...rows, event]);
+      return res.json(event);
     }
 
     const { title, description, event_type, platform, start_at, end_at, all_day, color, status } = req.body;
@@ -67,7 +71,14 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     if (!isSupabaseConfigured()) {
-      return res.json({ message: 'Event updated (demo)', id: req.params.id });
+      let updated;
+      await updateLocal(req.userId, 'calendar', rows => rows.map(row => {
+        if (row.id !== req.params.id) return row;
+        updated = { ...row, ...Object.fromEntries(['title','description','event_type','platform','start_at','end_at','all_day','color','status'].filter(k => k in req.body).map(k => [k, req.body[k]])) };
+        return updated;
+      }));
+      if (!updated) return res.status(404).json({ message: 'Local calendar event not found.' });
+      return res.json(updated);
     }
 
     const updates = { ...req.body, updated_at: new Date().toISOString() };

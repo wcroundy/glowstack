@@ -1,3 +1,4 @@
+import { generateContentIdeas } from './contentKnowledge.js';
 import { Router } from 'express';
 import { supabase, isSupabaseConfigured } from '../services/supabase.js';
 import { demoMedia, demoInsights } from '../services/demoData.js';
@@ -105,17 +106,7 @@ router.get('/insights', (req, res) => {
 });
 
 // POST /api/ai/content-ideas
-router.post('/content-ideas', (req, res) => {
-  res.json({
-    ideas: [
-      { title: 'Spring Transition GRWM', type: 'reel', confidence: 0.94, reason: 'GRWM is your top format + seasonal transitions trending' },
-      { title: '5 Drugstore Dupes for Luxury Products', type: 'carousel', confidence: 0.88, reason: 'Dupe content gets 2.5x saves, high affiliate potential' },
-      { title: 'My Honest Review: [Trending Product]', type: 'video', confidence: 0.85, reason: 'Reviews build trust and drive affiliate revenue' },
-      { title: 'Day in My Life — Content Creator Edition', type: 'vlog', confidence: 0.82, reason: 'BTS content increases follower loyalty by 35%' },
-      { title: 'Outfit Styling: 1 Piece, 5 Ways', type: 'carousel', confidence: 0.90, reason: 'Multi-look posts are your highest-saved content on IG' },
-    ],
-  });
-});
+router.post('/content-ideas', generateContentIdeas);
 
 // POST /api/ai/auto-tag — AI auto-tag assets using managed tags
 // Analyzes each asset and assigns matching tags from the tag manager

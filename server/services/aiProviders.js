@@ -206,7 +206,7 @@ async function providerError(provider, res) {
  * messages: [{ role: 'system'|'user'|'assistant', content: string }]
  * Returns the assistant's text reply, or null if no chat provider is configured.
  */
-export async function chatComplete(userId, messages) {
+export async function chatComplete(userId, messages, { maxTokens = 800 } = {}) {
   const config = await getChatConfig(userId);
   if (!config) return null;
 
@@ -214,7 +214,7 @@ export async function chatComplete(userId, messages) {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: config.model, messages, max_tokens: 800, temperature: 0.6 }),
+        body: JSON.stringify({ model: config.model, messages, max_tokens: maxTokens, temperature: 0.6 }),
     });
     if (!res.ok) throw await providerError('openai', res);
     const result = await res.json();
@@ -231,7 +231,7 @@ export async function chatComplete(userId, messages) {
         'anthropic-version': '2023-06-01',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ model: config.model, max_tokens: 800, system: systemMsg, messages: turns }),
+      body: JSON.stringify({ model: config.model, max_tokens: maxTokens, system: systemMsg, messages: turns }),
     });
     if (!res.ok) throw await providerError('anthropic', res);
     const result = await res.json();

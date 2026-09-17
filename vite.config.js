@@ -5,6 +5,10 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    fs: {
+      // The knowledge import and local draft store contain private business data.
+      deny: ['.env', '.env.*', '*.{crt,pem}', '**/.git/**', '**/.local/**'],
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:3001',

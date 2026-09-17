@@ -124,7 +124,10 @@ export const api = {
   aiTagMedia: (mediaId) => request('/ai/tag-media', { method: 'POST', body: JSON.stringify({ media_id: mediaId }) }),
   aiGenerateCaptions: (mediaId, platform) => request('/ai/generate-captions', { method: 'POST', body: JSON.stringify({ media_id: mediaId, platform }) }),
   aiSuggestPostTime: (platform) => request('/ai/suggest-posting-time', { method: 'POST', body: JSON.stringify({ platform }) }),
-  aiContentIdeas: () => request('/ai/content-ideas', { method: 'POST', body: JSON.stringify({}) }),
+  aiContentIdeas: (focus = '', refresh = true) => request('/ai/content-ideas', { method: 'POST', body: JSON.stringify({ focus, refresh }) }),
+  getContentKnowledge: () => request('/content-knowledge'),
+  getContentSource: (id) => request(`/content-knowledge/${id}`),
+  importContentKnowledge: (documents) => request('/content-knowledge/import', { method: 'POST', body: JSON.stringify({ documents }) }),
 
   // Tags
   getTags: (params) => request(`/tags?${new URLSearchParams(params || {})}`),

@@ -1,6 +1,9 @@
 import { Router } from 'express';
 import { supabase, isSupabaseConfigured } from '../services/supabase.js';
-import { demoContentDrafts } from '../services/demoData.js';
+import { readLocal, updateLocal } from '../services/contentKnowledge.js';
+import { randomUUID } from 'node:crypto';
+const draftKeys = ['title', 'idea_notes', 'shoot_notes', 'edit_notes', 'link_notes', 'platforms', 'completed_steps', 'content_plan'];
+const clean = body => Object.fromEntries(draftKeys.filter(k => k in body).map(k => [k, body[k]]));
 
 const router = Router();
 
@@ -10,7 +13,7 @@ router.get('/', async (req, res) => {
     const userId = req.userId || 'default';
 
     if (!isSupabaseConfigured()) {
-      const drafts = demoContentDrafts.filter(d => d.user_id === userId && d.status === 'draft');
+      const drafts = (await readLocal(userId, 'drafts')).filter(d => d.user_id === userId && d.status === 'draft');
       return res.json({ data: drafts });
     }
 
@@ -34,7 +37,7 @@ router.get('/:id', async (req, res) => {
     const userId = req.userId || 'default';
 
     if (!isSupabaseConfigured()) {
-      const draft = demoContentDrafts.find(d => d.id === req.params.id && d.user_id === userId);
+      const draft = (await readLocal(userId, 'drafts')).find(d => d.id === req.params.id && d.user_id === userId);
       if (!draft) return res.status(404).json({ error: 'Draft not found' });
       return res.json(draft);
     }
@@ -57,18 +60,18 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     const userId = req.userId || 'default';
-    const { title, idea_notes, shoot_notes, edit_notes, link_notes, platforms, completed_steps } = req.body;
+    const { title, idea_notes, shoot_notes, edit_notes, link_notes, platforms, completed_steps, content_plan } = req.body;
 
     if (!isSupabaseConfigured()) {
       const draft = {
-        id: 'draft-' + Date.now(),
+        id: randomUUID(),
         user_id: userId,
-        title, idea_notes, shoot_notes, edit_notes, link_notes,
+        title, idea_notes, shoot_notes, edit_notes, link_notes, content_plan,
         platforms: platforms || [], completed_steps: completed_steps || [],
         status: 'draft', calendar_event_id: null,
         created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
       };
-      demoContentDrafts.push(draft);
+      await updateLocal(userId, 'drafts', rows => [...rows, draft]);
       return res.json(draft);
     }
 
@@ -76,7 +79,7 @@ router.post('/', async (req, res) => {
       .from('content_drafts')
       .insert({
         user_id: userId,
-        title, idea_notes, shoot_notes, edit_notes, link_notes,
+        title, idea_notes, shoot_notes, edit_notes, link_notes, content_plan,
         platforms: platforms || [], completed_steps: completed_steps || [],
       })
       .select()
@@ -95,13 +98,14 @@ router.put('/:id', async (req, res) => {
     const userId = req.userId || 'default';
 
     if (!isSupabaseConfigured()) {
-      const draft = demoContentDrafts.find(d => d.id === req.params.id && d.user_id === userId);
+      const draft = (await readLocal(userId, 'drafts')).find(d => d.id === req.params.id && d.user_id === userId);
       if (!draft) return res.status(404).json({ error: 'Draft not found' });
-      Object.assign(draft, req.body, { updated_at: new Date().toISOString() });
+      Object.assign(draft, clean(req.body), { updated_at: new Date().toISOString() });
+      await updateLocal(userId, 'drafts', rows => rows.map(d => d.id === draft.id ? draft : d));
       return res.json(draft);
     }
 
-    const updates = { ...req.body, updated_at: new Date().toISOString() };
+    const updates = { ...clean(req.body), updated_at: new Date().toISOString() };
     const { data, error } = await supabase
       .from('content_drafts')
       .update(updates)
@@ -123,8 +127,7 @@ router.delete('/:id', async (req, res) => {
     const userId = req.userId || 'default';
 
     if (!isSupabaseConfigured()) {
-      const idx = demoContentDrafts.findIndex(d => d.id === req.params.id && d.user_id === userId);
-      if (idx !== -1) demoContentDrafts.splice(idx, 1);
+      await updateLocal(userId, 'drafts', rows => rows.filter(d => d.id !== req.params.id));
       return res.json({ message: 'Draft deleted' });
     }
 

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { api } from '../services/api';
 import { useUnsavedChanges } from '../contexts/UnsavedChangesContext';
+import ContentIdeas from '../components/ContentIdeas';
 
 // Mirrors the stages from Brooklyn's posting-process diagram (Generate Ideas ->
 // Gather & Shoot -> Edit -> Links -> Post), plus a final scheduling step that
@@ -95,7 +96,7 @@ const STEPS = [
 const FINALIZABLE_STEPS = STEPS.slice(0, 5);
 const PLATFORM_OPTIONS = ['Instagram', 'Facebook', 'LTK', 'ShopMy', 'Amazon', 'Walmart'];
 
-const EMPTY_FORM = { ideaNotes: '', shootNotes: '', editNotes: '', linkNotes: '', platforms: [], title: '', date: '', time: '10:00' };
+const EMPTY_FORM = { ideaNotes: '', shootNotes: '', editNotes: '', linkNotes: '', platforms: [], title: '', date: '', time: '10:00', contentPlan: null };
 
 function StepDots({ steps, current, completed, onJump }) {
   return (
@@ -181,10 +182,28 @@ export default function CreateContent() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState(null);
 
-  const skipNextLoadRef = useRef(!!draftId); // avoid double-fetching what we already have on first mount
+  const skipNextLoadRef = useRef(false);
   const justHydratedRef = useRef(true); // suppress the dirty-flag right after a programmatic load/reset
 
-  const step = STEPS[stepIndex];
+  const baseStep = STEPS[stepIndex];
+  const formats = [...new Set(form.contentPlan?.pieces?.map(p => p.format) || [])];
+  const step = form.contentPlan && ['shoot', 'edit'].includes(baseStep.key) ? {
+    ...baseStep,
+    blurb: `Prepare your ${formats.join(', ')} plan.`,
+    checklist: baseStep.key === 'shoot' ? [
+      'Confirm the exact products and existing assets in the saved brief',
+      ...(formats.includes('Reel') ? ['Recover approved footage or capture the hook and demonstration'] : []),
+      ...(formats.includes('Carousel') ? ['Select photos that support each slide in the sequence'] : []),
+      ...(formats.includes('Stories') ? ['Gather the demonstration and supporting Story frames'] : []),
+      ...(formats.includes('Shopping post') ? ['Prepare the product images or shopping video'] : []),
+    ] : [
+      ...(formats.includes('Reel') ? ['Review the first-frame hook, pacing, captions and cover'] : []),
+      ...(formats.includes('Carousel') ? ['Review the slide sequence, text hierarchy and final CTA'] : []),
+      ...(formats.includes('Stories') ? ['Review frame order and prepare polls or link-sticker instructions'] : []),
+      ...(formats.includes('Shopping post') ? ['Review shopping copy and exact product tags'] : []),
+      'Review each channel version before marking this step complete',
+    ],
+  } : baseStep;
 
   const loadDrafts = useCallback(() => {
     setDraftsLoading(true);
@@ -206,7 +225,7 @@ export default function CreateContent() {
       justHydratedRef.current = true;
       setForm({
         ideaNotes: d.idea_notes || '', shootNotes: d.shoot_notes || '', editNotes: d.edit_notes || '',
-        linkNotes: d.link_notes || '', platforms: d.platforms || [], title: d.title || '', date: '', time: '10:00',
+        linkNotes: d.link_notes || '', platforms: d.platforms || [], title: d.title || '', date: '', time: '10:00', contentPlan: d.content_plan || null,
       });
       const done = d.completed_steps || [];
       setCompletedSteps(done);
@@ -260,14 +279,34 @@ export default function CreateContent() {
     if (form.shootNotes) parts.push(`Shoot: ${form.shootNotes}`);
     if (form.editNotes) parts.push(`Edit: ${form.editNotes}`);
     if (form.linkNotes) parts.push(`Links: ${form.linkNotes}`);
+    if (form.contentPlan) parts.push(`Channel plan:\n${form.contentPlan.pieces.map(p => `${p.channel} / ${p.format}: ${p.purpose} — ${p.status}, ${p.date || 'date undecided'} ${p.time || ''}`).join('\n')}`);
     return parts.join('\n\n');
   };
 
   const draftPayload = () => ({
     title: suggestedTitle,
     idea_notes: form.ideaNotes, shoot_notes: form.shootNotes, edit_notes: form.editNotes, link_notes: form.linkNotes,
-    platforms: form.platforms, completed_steps: completedSteps,
+    platforms: form.platforms, completed_steps: completedSteps, content_plan: form.contentPlan,
   });
+
+  const useIdea = async (idea) => {
+    if ((form.ideaNotes || form.shootNotes || form.editNotes || form.linkNotes) && !window.confirm('Replace this draft’s notes and production plan with the selected idea?')) return;
+    setSavingDraft(true); setError(null);
+    const notes = `${idea.hook}\n\nWhy now: ${idea.why_now}\nGoal: ${idea.goal}\nTiming proposal: ${idea.timing}\nMeasure: ${idea.measurement}\n\nUnknowns: ${idea.unknowns.join('; ')}\n\nEvidence:\n${idea.evidence.map(e => `${e.title} (${e.captured_at}): ${e.quote}`).join('\n')}`;
+    const next = { ...EMPTY_FORM, title: idea.title, ideaNotes: notes, shootNotes: idea.shoot_notes, editNotes: idea.edit_notes, linkNotes: idea.link_notes,
+      platforms: [...new Set(idea.pieces.map(p => p.channel))], contentPlan: idea };
+    try {
+      const payload = { title: next.title, idea_notes: notes, shoot_notes: next.shootNotes, edit_notes: next.editNotes, link_notes: next.linkNotes,
+        platforms: next.platforms, completed_steps: [], content_plan: idea };
+      const savedDraft = currentDraftId ? await api.updateContentDraft(currentDraftId, payload) : await api.createContentDraft(payload);
+      justHydratedRef.current = true; setForm(next); setCompletedSteps([]); setCurrentDraftId(savedDraft.id); setDirty(false);
+      if (!currentDraftId) { skipNextLoadRef.current = true; navigate(`/posting/create/${savedDraft.id}`, { replace: true }); }
+      setSaveMessage('Idea saved. Production steps are ready for your review.');
+    } catch (e) { setError(e.message); }
+    finally { setSavingDraft(false); }
+  };
+
+  const updatePiece = (id, changes) => setForm(f => ({ ...f, contentPlan: { ...f.contentPlan, pieces: f.contentPlan.pieces.map(p => p.id === id ? { ...p, ...changes } : p) } }));
 
   const handleSaveDraft = async () => {
     setSavingDraft(true);
@@ -296,6 +335,8 @@ export default function CreateContent() {
     setError(null);
     try {
       const start_at = new Date(`${form.date}T${form.time || '10:00'}`).toISOString();
+      // Persist the current plan before scheduling; a failed save creates no event.
+      if (currentDraftId) await api.updateContentDraft(currentDraftId, draftPayload());
       await api.createCalendarEvent({
         title: suggestedTitle || 'New content',
         description: summaryDescription(),
@@ -306,9 +347,7 @@ export default function CreateContent() {
         color: '#7c6af7',
         status: 'planned',
       });
-      if (currentDraftId) {
-        await api.deleteContentDraft(currentDraftId).catch(() => {});
-      }
+      // Keep the evidence-backed draft: scheduling must not destroy its source lineage.
       setDirty(false);
       setSaved(true);
     } catch (e) {
@@ -439,6 +478,21 @@ export default function CreateContent() {
 
       <StepDots steps={STEPS} current={stepIndex} completed={completedSteps} onJump={jumpTo} />
 
+      {error && <p role="alert" className="text-sm text-red-600 mb-4">{error}</p>}
+
+      {form.contentPlan && <div className="card p-4 mb-4 space-y-3">
+        <h3 className="font-semibold">{form.contentPlan.title}</h3>
+        <p className="text-xs text-surface-500">{form.contentPlan.mode} · Proposed content plan. Track each piece separately; dates below are draft plans, not published posts.</p>
+        {form.contentPlan.pieces.map(p => <div key={p.id} className="border-t border-surface-100 pt-3 space-y-2">
+          <p className="text-sm font-medium">{p.channel} · {p.format}</p><p className="text-xs text-surface-500">{p.purpose}</p>
+          <div className="flex flex-wrap gap-2">
+            <select className="input w-auto" aria-label={`${p.channel} ${p.format} progress`} value={p.status} onChange={e => updatePiece(p.id, { status: e.target.value })}><option value="planned">Planned</option><option value="producing">Producing</option><option value="review">For review</option></select>
+            <input className="input w-auto" type="date" aria-label={`${p.channel} ${p.format} date`} value={p.date} onChange={e => updatePiece(p.id, { date: e.target.value })} />
+            <input className="input w-auto" type="time" aria-label={`${p.channel} ${p.format} time`} value={p.time} onChange={e => updatePiece(p.id, { time: e.target.value })} />
+          </div>
+        </div>)}
+      </div>}
+
       <div className="card p-6 lg:p-8">
         <div className="flex items-center gap-3 mb-1">
           <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: step.color }}>
@@ -460,6 +514,8 @@ export default function CreateContent() {
             ))}
           </ul>
         )}
+
+        {step.key === 'idea' && <ContentIdeas onUse={useIdea} disabled={savingDraft} />}
 
         {!step.isPlatformStep && !step.isScheduleStep && (
           <textarea
