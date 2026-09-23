@@ -636,6 +636,9 @@ router.post('/process', async (req, res) => {
       if (aiErr.code === 'ai_insufficient_quota') {
         return res.status(402).json({ error: 'ai_insufficient_quota', message: aiErr.message, provider: aiErr.provider });
       }
+      if (aiErr.code === 'ai_rate_limited') {
+        return res.status(429).json({ error: 'ai_rate_limited', message: aiErr.message, provider: aiErr.provider });
+      }
       res.status(500).json({ error: aiErr.message });
     }
 

@@ -295,6 +295,16 @@ Be generous with existing tag matching. For suggested tags, focus on specific, r
               totalAssetsProcessed: 0,
             });
           }
+          // Temporary rate limit — also stop early rather than hammering every remaining
+          // asset into the same limit; this clears on its own, no billing action needed.
+          if (aiErr.code === 'ai_rate_limited') {
+            return res.status(429).json({
+              error: 'ai_rate_limited',
+              message: aiErr.message,
+              provider: aiErr.provider,
+              totalAssetsProcessed: 0,
+            });
+          }
           // ai_not_configured or a one-off provider error: fall through to keyword matching below
         }
       }

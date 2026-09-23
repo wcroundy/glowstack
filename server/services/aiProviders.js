@@ -190,13 +190,20 @@ async function providerError(provider, res) {
   let detail = bodyText;
   try { detail = JSON.parse(bodyText).error?.message || detail; } catch (_) {}
 
-  const isQuota = res.status === 429 || res.status === 402
-    || /insufficient_quota|billing|credit balance/i.test(bodyText);
+  // Both a billing/quota exhaustion and a temporary rate limit surface as HTTP 429 on
+  // OpenAI, and Anthropic's rate limiter is also 429 while its credit error is a 400 —
+  // status code alone can't tell them apart. Quota/billing errors carry their own
+  // keywords in the body (OpenAI's error.code/type literally is "insufficient_quota";
+  // Anthropic's message says "credit balance"); a bare 429 with none of those is a
+  // genuine, temporary rate limit that will clear on its own.
+  const isQuota = res.status === 402
+    || /insufficient_quota|exceeded your current quota|credit balance|no credits remaining/i.test(bodyText);
+  const isRateLimit = !isQuota && (res.status === 429 || /rate_limit_exceeded|rate limit reached/i.test(bodyText));
 
   const err = new Error(detail || `${provider} returned ${res.status}`);
   err.status = res.status;
   err.provider = provider;
-  err.code = isQuota ? 'ai_insufficient_quota' : 'ai_provider_error';
+  err.code = isQuota ? 'ai_insufficient_quota' : isRateLimit ? 'ai_rate_limited' : 'ai_provider_error';
   return err;
 }
 
