@@ -126,6 +126,12 @@ export const api = {
   aiSuggestPostTime: (platform) => request('/ai/suggest-posting-time', { method: 'POST', body: JSON.stringify({ platform }) }),
   aiContentIdeas: (focus = '', refresh = true) => request('/ai/content-ideas', { method: 'POST', body: JSON.stringify({ focus, refresh }) }),
   getContentKnowledge: () => request('/content-knowledge'),
+  getContentTrends: () => request('/content-trends'),
+  getTrendProviders: () => request('/trend-providers'),
+  saveTrendProvider: (provider, body) => request(`/trend-providers/${provider}`, { method:'PUT', body:JSON.stringify(body) }),
+  disconnectTrendProvider: provider => request(`/trend-providers/${provider}`, { method:'DELETE' }),
+  refreshTrendProvider: provider => request(`/trend-providers/${provider}/refresh`, { method:'POST' }),
+  saveTrendReference: (reference) => request('/content-trends/references', { method: 'POST', body: JSON.stringify(reference) }),
   getContentSource: (id) => request(`/content-knowledge/${id}`),
   importContentKnowledge: (documents) => request('/content-knowledge/import', { method: 'POST', body: JSON.stringify({ documents }) }),
 

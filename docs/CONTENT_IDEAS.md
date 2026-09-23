@@ -19,9 +19,27 @@ Create Content → Start New → Generate Ideas now uses an authenticated knowle
 - Existing app authentication is single-tenant (`default` user). Knowledge queries are scoped by the authenticated server user; this feature does not introduce multi-user login.
 - Source text is untrusted model input. The prompt prohibits embedded instructions; exact citation validation rejects invented source IDs/quotes. Human review is still required for unsupported inferences.
 
+## Outside inspiration
+
+Generate Ideas includes stored Instagram creator and hashtag examples from the existing Post History Watchlist and Trending tabs. Configure and refresh those sources there, then generate recommendations. Generation refreshes only the owner's posts; outside watchlists require their existing manual sync. Up to six creators and six hashtags are sampled, with up to 40 recent stored rows per source. Selection requires a post from the past 14 days, observed within 7 days, and a valid HTTPS permalink. It prioritizes focus matches and recency, deduplicates platform IDs, and supplies at most two examples per source and 12 total. No images are passed to the recommendation service. Missing timestamps, stale rows, read failures and source limits are visible.
+
+The Create Content outside-inspiration panel accepts a title, HTTPS link, observation date and notes from any platform. These are owner-saved knowledge documents, not automatically fetched posts. Reusing a URL updates its snapshot. Retrieval reserves up to three saved references (ranked by focus then date); old references are inspiration requiring freshness checks. Clickable source links survive in recommendation citations. Own results, sales and strategy remain primary; outside snapshots cannot establish sales, trend acceleration or equal-age creator performance. No general social-web monitoring or automatic publication is added.
+
+This uses existing migrations 017/018 for watchlists and 019 for saved knowledge; no additional migration is needed. Live Meta permissions and AI output still need production testing. Run the full local suite with `node --test tests/*.test.js`.
+
+## General trend providers
+
+Integrations → Trends & Content Research contains separate SocialCrawl and TrendsAPI.ai connection cards. Create Content links to this section at /settings#trend-integrations. Apply `020_trend_providers.sql` on production, then enter each service's API key in the authenticated panel. Service accounts/API keys are required; social profile passwords are not. Keys and snapshots use a separate server-only table with RLS and browser-role privileges revoked. Local development uses the ignored, web-denied `.local` directory. Keys are never returned in status or passed to Chat AI. Save stores a key; only a successful Refresh verifies access to the selected endpoint. Disconnect removes the key and snapshot.
+
+SocialCrawl supports one TikTok topic-search request or one regional local popular-feed request. TrendsAPI.ai supports an allowlisted general feed (top ten) or keyword growth over 7 and 30 days. Broad feeds are not category-specific. Each refresh is explicit and may consume provider credits; no purchase, recurring polling or automatic API calls on generation are added. Results are reused for six hours; unsuccessful attempts have a five-minute cooldown. Concurrent mutations are blocked per user/provider within a process (not a distributed lock). Changed settings/key invalidate the old snapshot. HTTP requests have a 55-second timeout and no automatic retries; TrendsAPI's application-level status envelope is checked even on HTTP 200.
+
+Normalized text, links and numeric metrics are retained, not media. Provider cache flags, dropped rows and warnings remain visible. Failed refreshes preserve previous evidence; snapshots fetched more than seven days ago are excluded from recommendations. Retrieval time is distinct from the provider's measurement dates and post publication dates. Saved general evidence is appended separately from the knowledge category selection, so importing more documents does not displace it. Exact quotations still undergo normal citation validation.
+
+Contracts checked against https://www.socialcrawl.dev/docs/tiktok.md, https://www.socialcrawl.dev/docs/response-schema.md and https://trendsapi.ai/docs on 2026-09-17. Live credentials were not available for end-to-end provider verification. Migration 020 has not been applied by the local build.
+
 ## Verification
 
-`node --test tests/contentIdeas.test.js tests/postEvidence.test.js tests/targetedRefresh.test.js` and `npm run build`.
+`node --test tests/*.test.js` and `npm run build`.
 No live provider, production migration or public deployment is required for unit tests.
 
 ## Production rollout

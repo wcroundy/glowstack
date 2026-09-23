@@ -1,5 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
+import OutsideSignals, { OutsideExamples } from './OutsideSignals';
+import { Link } from 'react-router-dom';
+
+function CitationLink({ evidence, onOpen }) {
+  let url;
+  try { const parsed = new URL(evidence.source); if (parsed.protocol === 'https:' && !parsed.username && !parsed.password) url = parsed.href; } catch {}
+  return url ? <a className="underline mt-1 inline-block" href={url} target="_blank" rel="noopener noreferrer">{evidence.title}</a> : <button className="underline mt-1" onClick={() => onOpen(evidence.source_id)}>{evidence.title}</button>;
+}
 
 export default function ContentIdeas({ onUse, disabled }) {
   const [library, setLibrary] = useState(null);
@@ -49,6 +57,12 @@ export default function ContentIdeas({ onUse, disabled }) {
       <button className="btn-primary" disabled={busy || disabled || !library?.ai_ready || !library.documents.length} onClick={generate}>{busy ? 'Preparing evidence and recommendations…' : 'Generate recommendations'}</button>
       <p className="text-xs text-surface-500">Generation sends selected source excerpts to your configured AI provider. Recommendations remain proposals for your review.</p>
     </div>
+    <OutsideSignals disabled={busy || disabled} onSaved={async () => { setResult(null); await load(); }} />
+    <div className="rounded-xl border border-surface-200 p-4 space-y-2">
+      <h3 className="text-sm font-medium">General trends</h3>
+      <p className="text-xs text-surface-600">Connect SocialCrawl and TrendsAPI.ai and refresh their data in Integrations. Generate recommendations includes saved trend evidence from the last seven days alongside your own results.</p>
+      <Link className="text-sm underline text-brand-600" to="/settings#trend-integrations">Manage trend integrations</Link>
+    </div>
     {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
     {!library && error && <button className="btn-secondary text-sm" onClick={load}>Retry loading sources</button>}
     <details open={source ? true : undefined} className="rounded-xl border border-surface-200 p-4">
@@ -74,6 +88,7 @@ export default function ContentIdeas({ onUse, disabled }) {
         <p>{c.stale_posts} older than 48 hours · {c.unknown_refresh} unknown refresh times · {c.missing_detailed_metrics} without verified detailed insights.</p>
       </div>)}
     </details>}
+    {result?.external_examples?.length > 0 && <details className="border border-surface-200 rounded-xl p-4"><summary className="text-sm font-medium cursor-pointer">Outside examples supplied to this recommendation ({result.external_examples.length})</summary><div className="mt-3"><OutsideExamples examples={result.external_examples} /></div></details>}
     {result?.data_gaps?.map(g => <p key={g} className="text-xs text-amber-700">{g}</p>)}
     {result?.refresh && <p className="text-xs text-surface-600">Refresh: {result.refresh.status}{result.refresh.reused ? ' (recent refresh receipt reused)' : ''}. {result.refresh.refreshed !== undefined ? `${result.refresh.refreshed} posts updated; ${result.refresh.failed} unavailable; ${result.refresh.not_refreshed} selected posts left unchanged (fresh or outside this batch). ${result.refresh.discovered} recent post records examined for discovery.` : ''}</p>}
     {result?.ideas.map(idea => <article key={idea.id} className="rounded-xl border border-surface-200 p-5 space-y-3">
@@ -84,7 +99,7 @@ export default function ContentIdeas({ onUse, disabled }) {
       <ul className="text-sm space-y-1">{idea.pieces.map(p => <li key={p.id}>{p.channel} · {p.format}: {p.purpose}</li>)}</ul>
       <p className="text-sm"><strong>Timing:</strong> {idea.timing}</p>
       <details><summary className="text-sm cursor-pointer">Production & measurement plan</summary><div className="text-sm space-y-2 mt-2"><p>{idea.shoot_notes}</p><p>{idea.edit_notes}</p><p>{idea.link_notes}</p><p><strong>Measure:</strong> {idea.measurement}</p></div></details>
-      <details><summary className="text-sm cursor-pointer">Evidence & gaps</summary><div className="space-y-3 mt-2">{idea.evidence.map((e, i) => <blockquote key={i} className="border-l-2 border-brand-200 pl-3 text-xs"><p>{e.quote}</p><button className="underline mt-1" onClick={() => openSource(e.source_id)}>{e.title}</button><p>{e.freshness ? `Metrics refreshed: ${e.metrics_refreshed_at ? new Date(e.metrics_refreshed_at).toLocaleString() : 'unknown'} (${e.freshness})` : `Snapshot: ${new Date(e.captured_at).toLocaleDateString()}`}</p></blockquote>)}<ul className="text-xs text-amber-700 space-y-1">{idea.unknowns.map((u,i) => <li key={i}>{u}</li>)}</ul></div></details>
+      <details><summary className="text-sm cursor-pointer">Evidence & gaps</summary><div className="space-y-3 mt-2">{idea.evidence.map((e, i) => <blockquote key={i} className="border-l-2 border-brand-200 pl-3 text-xs"><p>{e.quote}</p><CitationLink evidence={e} onOpen={openSource} /><p>{e.freshness ? `Metrics refreshed: ${e.metrics_refreshed_at ? new Date(e.metrics_refreshed_at).toLocaleString() : 'unknown'} (${e.freshness})` : `Snapshot: ${new Date(e.captured_at).toLocaleDateString()}`}</p></blockquote>)}<ul className="text-xs text-amber-700 space-y-1">{idea.unknowns.map((u,i) => <li key={i}>{u}</li>)}</ul></div></details>
       <button disabled={disabled || busy} className="btn-primary text-sm" onClick={() => onUse(idea)}>Use this idea</button>
     </article>)}
   </section>;

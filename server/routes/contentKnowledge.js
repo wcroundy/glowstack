@@ -3,6 +3,7 @@ import { getKnowledge, importKnowledge, getAppEvidence, CATEGORIES } from '../se
 import { selectEvidence, parseIdeas, IDEA_PROMPT } from '../services/contentIdeas.js';
 import { getChatConfig, chatComplete } from '../services/aiProviders.js';
 import { refreshForIdeas } from '../services/targetedRefresh.js';
+import { generalTrendEvidence } from '../services/trendProviders.js';
 const router = Router();
 router.get('/', async (req, res) => {
   try {
@@ -33,10 +34,13 @@ export async function generateContentIdeas(req, res) {
     if (!await getChatConfig(req.userId)) return res.status(409).json({ message: 'Connect a Chat AI provider in Integrations to generate ideas. Your imported evidence is saved and available to review.' });
     const refresh = req.body.refresh === false ? { status:'skipped', gaps:[] } : await refreshForIdeas(req.userId,focus);
     const app = await getAppEvidence(req.userId, focus);
+    const general = await generalTrendEvidence(req.userId);
+    app.documents.push(...general.documents);
+    app.gaps.push(...general.gaps);
     app.gaps.push(...refresh.gaps);
     const evidence = [...selectEvidence(documents, focus), ...app.documents.map(d => ({ ...d, content: d.content.slice(0, 12000), excerpted: d.content.length > 12000 }))];
     const text = await chatComplete(req.userId, [{ role: 'system', content: IDEA_PROMPT }, { role: 'user', content: JSON.stringify({ today: new Date().toISOString(), focus, missing_categories: CATEGORIES.filter(c => !documents.some(d => d.category === c)), data_gaps: app.gaps, refresh_receipt: refresh, evidence }) }], { maxTokens: 4000 });
-    res.json({ ideas: parseIdeas(text || '', evidence), refresh, post_coverage: app.coverage, data_gaps: app.gaps, reviewed_sources: evidence.length, total_sources: documents.length + app.documents.length, excerpted_sources: evidence.filter(e => e.excerpted).length, snapshot: true });
+    res.json({ ideas: parseIdeas(text || '', evidence), refresh, post_coverage: app.coverage, external_coverage:app.external_coverage || [], external_examples:app.documents.filter(d=>d.external).map(({content,...d})=>d), data_gaps: app.gaps, reviewed_sources: evidence.length, total_sources: documents.length + app.documents.length, excerpted_sources: evidence.filter(e => e.excerpted).length, snapshot: true });
   } catch (e) { res.status(502).json({ message: e.message || 'Idea generation failed. Your draft is unchanged.' }); }
 }
 export default router;

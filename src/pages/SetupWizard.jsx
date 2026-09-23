@@ -4,9 +4,10 @@ import {
   RefreshCw, Unplug, Sparkles, Shield, Instagram, Facebook, Link2, Loader2, Music2, Camera,
   MessageSquare, Eye, EyeOff, Key,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../services/api';
 import PlatformIcon from '../components/common/PlatformIcon';
+import TrendProviders from '../components/TrendProviders';
 
 const PLATFORM_DESCRIPTIONS = {
   instagram: 'Connect your Instagram Business account to pull post analytics, engagement data, audience demographics, and sync media.',
@@ -1220,8 +1221,15 @@ function ManyChatCard() {
 }
 
 export default function SetupWizard() {
+  const location = useLocation();
   const [platforms, setPlatforms] = useState([]);
   const [expanded, setExpanded] = useState(null);
+
+  useEffect(() => {
+    if (location.hash === '#trend-integrations') {
+      document.getElementById('trend-integrations')?.scrollIntoView({ block: 'start' });
+    }
+  }, [location.hash, platforms.length]);
 
   useEffect(() => {
     api.getPlatforms().then(r => setPlatforms(r.data || []));
@@ -1269,6 +1277,10 @@ export default function SetupWizard() {
         {/* AI Providers */}
         <h2 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mt-6 mb-2">AI Providers</h2>
         <AiProvidersSection />
+
+        {/* General trend data */}
+        <h2 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mt-6 mb-2">Trends & Content Research</h2>
+        <TrendProviders />
 
         {/* Messaging & Automation */}
         <h2 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mt-6 mb-2">Messaging & Automation</h2>

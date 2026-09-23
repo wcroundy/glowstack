@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { supabase, isSupabaseConfigured } from './supabase.js';
 import { collectPostEvidence } from './postEvidence.js';
+import { collectExternalEvidence } from './externalEvidence.js';
 
 export const CATEGORIES = ['strategy', 'performance', 'sales', 'reuse', 'products', 'schedule', 'opportunities', 'coverage'];
 const root = join(process.cwd(), '.local', 'content');
@@ -76,6 +77,9 @@ export async function getAppEvidence(userId, focus = '') {
     ['calendar_events', 'schedule', 'Upcoming content commitments', 'id,title,description,platform,start_at,status', 'start_at'],
   ];
   const { documents, gaps, coverage } = await collectPostEvidence(supabase, userId, focus);
+  const outside = await collectExternalEvidence(supabase,userId,focus);
+  documents.push(...outside.documents);
+  gaps.push(...outside.gaps);
   for (const [table, category, title, columns, order] of specs) {
     let query = supabase.from(table).select(columns).eq('user_id', userId);
     if (table === 'media_assets') query = query.eq('is_archived', false);
@@ -85,5 +89,5 @@ export async function getAppEvidence(userId, focus = '') {
     documents.push({ id: `app-${table}`, title, source: `Glowstack/${table}`, category, captured_at: new Date().toISOString(),
       content: 'Stored database snapshot, up to 15 rows. Capture time is query time, not a platform refresh. Zero defaults may be unmeasured. Revenue field definitions and attribution require verification.\n' + JSON.stringify(data) });
   }
-  return { documents, gaps, coverage };
+  return { documents, gaps, coverage, external_coverage:outside.coverage };
 }
