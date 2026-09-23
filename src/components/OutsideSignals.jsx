@@ -30,7 +30,7 @@ export default function OutsideSignals({ disabled, onSaved }) {
     finally { setBusy(false); }
   }
   const field = key => ({value:reference[key],onChange:e=>{setSaved(false);setReference(r=>({...r,[key]:e.target.value}));}});
-  return <details className="rounded-xl border border-surface-200 p-4 space-y-3">
+  return <details className="rounded-xl border border-surface-300 shadow-sm p-4 space-y-3">
     <summary className="cursor-pointer font-medium text-sm">Outside inspiration & reference links</summary>
     <p className="text-xs text-surface-600">Recent examples from your Instagram creator and hashtag watchlists are included automatically when you generate recommendations. Your own performance, sales and strategy remain the primary evidence.</p>
     <p className="text-xs text-surface-500">Add fashion/beauty creators and topics, or refresh them, in <a className="underline" href="/post-history">Post History → Watchlist / Trending</a>. This uses saved observations; generating ideas does not refresh these watchlists or scan all social media.</p>

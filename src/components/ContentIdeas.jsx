@@ -43,7 +43,7 @@ export default function ContentIdeas({ onUse, disabled }) {
     try { setSource(await api.getContentSource(id)); } catch (e) { setError(e.message); }
   }
   return <section className="mt-6 space-y-4" aria-label="Evidence-backed ideas">
-    <div className="rounded-xl bg-brand-50 border border-brand-100 p-4 space-y-3">
+    <div className="rounded-xl bg-brand-50 border border-brand-200 p-4 space-y-3">
       <h3 className="font-semibold text-surface-900">Your next content decision</h3>
       <p className="text-sm text-surface-600">One recommendation and one alternative, informed by your strategy, content results, sales, reusable assets, channel coverage and sale opportunities.</p>
       <p className="text-xs text-surface-500">{library ? `${library.documents.length} saved sources · Dated snapshots, not live monitoring` : 'Loading sources…'}</p>
@@ -58,14 +58,14 @@ export default function ContentIdeas({ onUse, disabled }) {
       <p className="text-xs text-surface-500">Generation sends selected source excerpts to your configured AI provider. Recommendations remain proposals for your review.</p>
     </div>
     <OutsideSignals disabled={busy || disabled} onSaved={async () => { setResult(null); await load(); }} />
-    <div className="rounded-xl border border-surface-200 p-4 space-y-2">
+    <div className="rounded-xl border border-surface-300 shadow-sm p-4 space-y-2">
       <h3 className="text-sm font-medium">General trends</h3>
       <p className="text-xs text-surface-600">Connect SocialCrawl and TrendsAPI.ai and refresh their data in Integrations. Generate recommendations includes saved trend evidence from the last seven days alongside your own results.</p>
       <Link className="text-sm underline text-brand-600" to="/settings#trend-integrations">Manage trend integrations</Link>
     </div>
     {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
     {!library && error && <button className="btn-secondary text-sm" onClick={load}>Retry loading sources</button>}
-    <details open={source ? true : undefined} className="rounded-xl border border-surface-200 p-4">
+    <details open={source ? true : undefined} className="rounded-xl border border-surface-300 shadow-sm p-4">
       <summary className="cursor-pointer font-medium text-sm">Knowledge & measurement sources</summary>
       <p className="text-xs text-surface-500 my-3">Imports preserve source names and capture dates. Reimporting the same source updates its snapshot. No automatic chat sync or sale tracking is running.</p>
       <label className="block text-sm">Import knowledge JSON <input className="block my-2 text-xs max-w-full" type="file" accept="application/json,.json" disabled={busy} onChange={importFile} /></label>
@@ -78,7 +78,7 @@ export default function ContentIdeas({ onUse, disabled }) {
       {source && <div className="border-t mt-3 pt-3"><button className="btn-ghost text-xs" onClick={() => setSource(null)}>Close source</button><h4 className="font-medium">{source.title}</h4><p className="text-xs text-surface-500 break-all">{source.source}</p><pre className="whitespace-pre-wrap break-words text-xs max-h-80 overflow-auto mt-2">{source.content}</pre></div>}
     </details>
     {result && <p className="text-xs text-surface-500">Reviewed excerpts from {result.reviewed_sources} of {result.total_sources} sources. This is a selected evidence review, not a complete historical audit.</p>}
-    {result?.post_coverage?.length > 0 && <details className="border border-surface-200 rounded-xl p-4" open>
+    {result?.post_coverage?.length > 0 && <details className="border border-surface-300 shadow-sm rounded-xl p-4" open>
       <summary className="text-sm font-medium cursor-pointer">Instagram & Facebook evidence reviewed</summary>
       <p className="text-xs text-surface-500 mt-2">Historical totals identify candidates for reuse, not equal-age winners. Caption matches need format and topic review.</p>
       {result.post_coverage.map(c => <div key={c.platform} className="mt-3 text-xs space-y-1">
@@ -88,10 +88,10 @@ export default function ContentIdeas({ onUse, disabled }) {
         <p>{c.stale_posts} older than 48 hours · {c.unknown_refresh} unknown refresh times · {c.missing_detailed_metrics} without verified detailed insights.</p>
       </div>)}
     </details>}
-    {result?.external_examples?.length > 0 && <details className="border border-surface-200 rounded-xl p-4"><summary className="text-sm font-medium cursor-pointer">Outside examples supplied to this recommendation ({result.external_examples.length})</summary><div className="mt-3"><OutsideExamples examples={result.external_examples} /></div></details>}
+    {result?.external_examples?.length > 0 && <details className="border border-surface-300 shadow-sm rounded-xl p-4"><summary className="text-sm font-medium cursor-pointer">Outside examples supplied to this recommendation ({result.external_examples.length})</summary><div className="mt-3"><OutsideExamples examples={result.external_examples} /></div></details>}
     {result?.data_gaps?.map(g => <p key={g} className="text-xs text-amber-700">{g}</p>)}
     {result?.refresh && <p className="text-xs text-surface-600">Refresh: {result.refresh.status}{result.refresh.reused ? ' (recent refresh receipt reused)' : ''}. {result.refresh.refreshed !== undefined ? `${result.refresh.refreshed} posts updated; ${result.refresh.failed} unavailable; ${result.refresh.not_refreshed} selected posts left unchanged (fresh or outside this batch). ${result.refresh.discovered} recent post records examined for discovery.` : ''}</p>}
-    {result?.ideas.map(idea => <article key={idea.id} className="rounded-xl border border-surface-200 p-5 space-y-3">
+    {result?.ideas.map(idea => <article key={idea.id} className="rounded-xl border border-surface-300 shadow-sm p-5 space-y-3">
       <p className="text-xs font-semibold text-brand-600">{idea.role} · {idea.mode} · Proposed</p>
       <h3 className="text-lg font-semibold">{idea.title}</h3><p className="text-sm italic">{idea.hook}</p>
       <p className="text-sm"><strong>Why now:</strong> {idea.why_now}</p><p className="text-sm"><strong>Goal:</strong> {idea.goal}</p>
