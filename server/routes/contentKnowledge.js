@@ -30,7 +30,6 @@ export async function generateContentIdeas(req, res) {
     const focus = req.body.focus || '';
     if (typeof focus !== 'string' || focus.length > 1500) return res.status(400).json({ message: 'Keep your focus under 1,500 characters.' });
     const documents = await getKnowledge(req.userId);
-    if (!documents.length) return res.status(409).json({ message: 'Import your strategy and measurement sources first.' });
     if (!await getChatConfig(req.userId)) return res.status(409).json({ message: 'Connect a Chat AI provider in Integrations to generate ideas. Your imported evidence is saved and available to review.' });
     const refresh = req.body.refresh === false ? { status:'skipped', gaps:[] } : await refreshForIdeas(req.userId,focus);
     const app = await getAppEvidence(req.userId, focus);

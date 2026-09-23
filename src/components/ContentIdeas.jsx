@@ -54,7 +54,7 @@ export default function ContentIdeas({ onUse, disabled }) {
       </label>
       <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={refresh} disabled={busy} onChange={e=>setRefresh(e.target.checked)} /> Refresh recent Instagram/Facebook results and stale reuse candidates first</label>
       <p className="text-xs text-surface-500">A targeted refresh fetches text, post links and metrics only. It may take about a minute; unavailable results stay flagged. Turn it off to use saved data.</p>
-      <button className="btn-primary" disabled={busy || disabled || !library?.ai_ready || !library.documents.length} onClick={generate}>{busy ? 'Preparing evidence and recommendations…' : 'Generate recommendations'}</button>
+      <button className="btn-primary" disabled={busy || disabled || !library?.ai_ready} onClick={generate}>{busy ? 'Preparing evidence and recommendations…' : 'Generate recommendations'}</button>
       <p className="text-xs text-surface-500">Generation sends selected source excerpts to your configured AI provider. Recommendations remain proposals for your review.</p>
     </div>
     <OutsideSignals disabled={busy || disabled} onSaved={async () => { setResult(null); await load(); }} />
