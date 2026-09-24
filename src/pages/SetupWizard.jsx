@@ -8,6 +8,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../services/api';
 import PlatformIcon from '../components/common/PlatformIcon';
 import TrendProviders from '../components/TrendProviders';
+import AiBridgeSetup from '../components/AiBridgeSetup';
+import { AI_TASK_MODELS } from '../../shared/aiModelPolicy';
 
 const PLATFORM_DESCRIPTIONS = {
   instagram: 'Connect your Instagram Business account to pull post analytics, engagement data, audience demographics, and sync media.',
@@ -697,11 +699,12 @@ const AI_PURPOSES = [
     icon: Camera,
     gradient: 'from-purple-500 to-fuchsia-600',
     description: 'Powers AI auto-tagging in the Media Library and scene detection in Video Breakdown.',
-    note: 'ChatGPT (OpenAI) is often the cheaper choice for media analysis tasks.',
   },
 ];
 
-function AiPurposeCard({ purpose, providers, settings, onChanged }) {
+function AiPurposeCard({ purpose, providers, settings, bridge, onChanged }) {
+  const transportKey = purpose.key.replace('_provider', '_transport');
+  const transport = settings?.[transportKey] || 'api';
   const modelKey = purpose.key.replace('_provider', '_model');
   const otherModelKey = purpose.otherKey.replace('_provider', '_model');
   const assignedProvider = settings?.[purpose.key] || null;
@@ -833,7 +836,9 @@ function AiPurposeCard({ purpose, providers, settings, onChanged }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <h3 className="font-semibold text-surface-900">{purpose.title}</h3>
-            {assignedProvider ? (
+            {transport === 'mcp' ? (
+              <span className="badge bg-purple-100 text-purple-700 text-[10px]">MCP · {bridge?.online ? 'Online' : 'Offline'}</span>
+            ) : assignedProvider ? (
               <span className="badge bg-emerald-100 text-emerald-700 text-[10px]">
                 <Check className="w-3 h-3 mr-0.5" /> {AI_PROVIDER_META[assignedProvider].displayName}
               </span>
@@ -848,6 +853,30 @@ function AiPurposeCard({ purpose, providers, settings, onChanged }) {
 
       {expanded && (
         <div className="border-t px-4 pb-4 pt-4 space-y-4">
+          <div>
+            <label className="text-xs font-medium text-surface-500 mb-1 block" htmlFor={transportKey}>Connection method</label>
+            <select id={transportKey} className="input text-sm" value={transport} disabled={busy} onChange={async e => {
+              setBusy(true); setError(null); setPendingProvider(null);
+              try { await api.updateAiSettings({ [transportKey]: e.target.value }); onChanged(); }
+              catch (err) { setError(err.data?.error || err.message); }
+              finally { setBusy(false); }
+            }}>
+              <option value="api">API — billed by the selected provider</option>
+              <option value="mcp" disabled={!bridge?.paired}>MCP — connected Codex worker</option>
+            </select>
+            {!bridge?.paired && <p className="text-xs text-surface-500 mt-1">Pair the MCP worker above to enable that option.</p>}
+          </div>
+          {transport === 'mcp' && <div className="text-sm text-surface-600 space-y-2">
+            <p>{bridge?.online ? `Using the connected Codex worker (${bridge.model}).` : 'The worker is offline. Start it before requesting AI processing.'}</p>
+            <p>Your existing prompts and processing rules are retained. Model results may differ. No paid API fallback is used.</p>
+            <ul className="text-xs space-y-1">
+              {Object.values(AI_TASK_MODELS).filter(p => p.kind === (purpose.key === 'chat_provider' ? 'chat' : 'vision')).map(p => (
+                <li key={p.label}>{p.label}: {p.model} · {p.effort} reasoning · standard speed</li>
+              ))}
+            </ul>
+            {error && <p role="alert" className="text-red-700">{error}</p>}
+          </div>}
+          {transport === 'api' && <>
           {purpose.note && (
             <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200">
               <Sparkles className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
@@ -984,6 +1013,7 @@ function AiPurposeCard({ purpose, providers, settings, onChanged }) {
               </button>
             </div>
           )}
+          </>}
         </div>
       )}
     </div>
@@ -1004,12 +1034,14 @@ function AiProvidersSection() {
 
   return (
     <div className="space-y-3">
+      <AiBridgeSetup bridge={status.bridge} onChanged={load} />
       {AI_PURPOSES.map((purpose) => (
         <AiPurposeCard
           key={purpose.key}
           purpose={purpose}
           providers={status.providers}
           settings={status.settings}
+          bridge={status.bridge}
           onChanged={load}
         />
       ))}

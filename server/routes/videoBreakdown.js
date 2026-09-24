@@ -256,6 +256,7 @@ router.post('/extract-and-process', async (req, res) => {
     let content, usage;
     try {
       ({ text: content, usage } = await aiProviders.visionComplete(userId, {
+        task: 'video_scenes',
         systemPrompt: scenePrompt,
         userText: `Analyze these ${frames.length} frames from a video (timestamps: ${frames.map(f => f.timestamp + 's').join(', ')}). Identify which frames show unique outfits, products, or looks. Return JSON array.`,
         imageUrls: frames.map(f => f.dataUrl),
@@ -514,6 +515,7 @@ router.post('/process', async (req, res) => {
 
     try {
       const { text: content, usage } = await aiProviders.visionComplete(userId, {
+        task: 'video_scenes',
         systemPrompt: scenePrompt,
         userText: `Analyze these ${frames.length} frames from a video (timestamps: ${frames.map(f => f.timestamp + 's').join(', ')}). Identify which frames show unique outfits, products, or looks. Return JSON array.`,
         imageUrls: frames.map(f => f.dataUrl),

@@ -112,6 +112,7 @@ router.post('/send', async (req, res) => {
       const aiText = await generateAiResponse(userId, message, history);
       if (aiText) aiResponse = { content: aiText };
     } catch (err) {
+      if (err.code?.startsWith('ai_mcp_')) return res.status(503).json({ error: err.code, message: err.message });
       console.error('AI chat error, falling back to canned response:', err.message);
     }
 

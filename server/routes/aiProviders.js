@@ -1,7 +1,16 @@
 import { Router } from 'express';
 import * as ai from '../services/aiProviders.js';
+import { bridgeStatus, pairBridge, disconnectBridge } from '../services/aiBridge.js';
 
 const router = Router();
+router.post('/bridge/pair', async (req, res) => {
+  try { res.json(await pairBridge(req.userId)); }
+  catch (err) { res.status(503).json({ error: err.message }); }
+});
+router.post('/bridge/disconnect', async (req, res) => {
+  try { await disconnectBridge(req.userId); res.json({ success: true }); }
+  catch (err) { res.status(503).json({ error: err.message }); }
+});
 
 // GET /api/ai-providers/status — connection state for every known provider + current assignments
 router.get('/status', async (req, res) => {
@@ -19,7 +28,10 @@ router.get('/status', async (req, res) => {
       };
     }
     const settings = await ai.getAiSettings(userId);
-    res.json({ providers, settings });
+    let bridge;
+    try { bridge = await bridgeStatus(userId); }
+    catch (err) { bridge = { paired: false, online: false, error: err.message }; }
+    res.json({ providers, settings, bridge });
   } catch (err) {
     console.error('AI providers status error:', err.message);
     res.status(500).json({ error: err.message });
@@ -88,6 +100,13 @@ router.put('/settings', async (req, res) => {
   try {
     const userId = req.userId || 'default';
     const { chat_provider, chat_model, vision_provider, vision_model } = req.body;
+    for (const purpose of ['chat', 'vision']) {
+      const mode = req.body[`${purpose}_transport`];
+      if (mode !== undefined && !['api', 'mcp'].includes(mode)) return res.status(400).json({ error: 'Choose API or MCP.' });
+      if (mode === 'mcp' && !(await bridgeStatus(userId)).paired) return res.status(400).json({ error: 'Pair an MCP worker first.' });
+      const model = req.body[`${purpose}_model`];
+      if (model != null && (typeof model !== 'string' || model.length > 150)) return res.status(400).json({ error: 'Invalid model ID.' });
+    }
 
     for (const [purpose, platform] of [['chat', chat_provider], ['vision', vision_provider]]) {
       if (!platform) continue;
@@ -101,11 +120,11 @@ router.put('/settings', async (req, res) => {
     }
 
     const updates = {};
-    for (const key of ['chat_provider', 'chat_model', 'vision_provider', 'vision_model']) {
+    for (const key of ['chat_provider', 'chat_model', 'vision_provider', 'vision_model', 'chat_transport', 'vision_transport']) {
       if (key in req.body) updates[key] = req.body[key];
     }
 
-    const saved = await ai.saveAiSettings(userId, updates);
+const saved = await ai.saveAiSettings(userId, updates);
     res.json(saved);
   } catch (err) {
     console.error('AI settings update error:', err.message);

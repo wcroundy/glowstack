@@ -81,6 +81,8 @@ export const api = {
 
   // AI Providers (bring-your-own-key: Chat AI + Media Analysis AI)
   aiProviderStatus: () => request('/ai-providers/status'),
+  pairAiBridge: () => request('/ai-providers/bridge/pair', { method: 'POST' }),
+  disconnectAiBridge: () => request('/ai-providers/bridge/disconnect', { method: 'POST' }),
   aiProviderConnect: (platform, apiToken) => request(`/ai-providers/${platform}/connect`, { method: 'POST', body: JSON.stringify({ apiToken }) }),
   aiProviderDisconnect: (platform) => request(`/ai-providers/${platform}/disconnect`, { method: 'POST' }),
   updateAiSettings: (data) => request('/ai-providers/settings', { method: 'PUT', body: JSON.stringify(data) }),

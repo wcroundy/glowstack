@@ -324,7 +324,7 @@ export default function TagsManager() {
         if (result.batchComplete || result.totalAssetsProcessed === 0) {
           done = true;
         } else {
-          offset = result.nextOffset || (offset + BATCH_SIZE);
+          offset = result.nextOffset ?? (offset + BATCH_SIZE);
         }
       }
 

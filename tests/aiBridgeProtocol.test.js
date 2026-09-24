@@ -1,0 +1,31 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import express from 'express';
+import { randomUUID } from 'node:crypto';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import bridgeRouter from '../server/routes/aiBridge.js';
+import { pairBridge, bridgeStatus, disconnectBridge } from '../server/services/aiBridge.js';
+import { isSupabaseConfigured } from '../server/services/supabase.js';
+
+test('real MCP SDK client handshakes, lists tools, authenticates and sends heartbeat over HTTP', { skip: isSupabaseConfigured() }, async t => {
+  const user = `test-protocol-${randomUUID()}`;
+  const { token } = await pairBridge(user);
+  const app = express(); app.use(express.json()); app.use('/mcp', bridgeRouter);
+  const listener = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => listener.once('listening', resolve));
+  const url = new URL(`http://127.0.0.1:${listener.address().port}/mcp`);
+  const client = new Client({ name: 'test-client', version: '1' });
+  t.after(async () => { await client.close(); await new Promise(resolve => listener.close(resolve)); await disconnectBridge(user); });
+  const forbidden = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  assert.equal(forbidden.status, 401);
+  await client.connect(new StreamableHTTPClientTransport(url, { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+  assert.deepEqual((await client.listTools()).tools.map(x => x.name).sort(), ['claim_ai_job','finish_ai_job','worker_heartbeat']);
+  const result = await client.callTool({ name: 'worker_heartbeat', arguments: { model: 'test-model' } });
+  assert.equal(result.isError, undefined);
+  assert.equal((await bridgeStatus(user)).online, true);
+  const job = await client.callTool({ name: 'claim_ai_job', arguments: {} });
+  assert.equal(JSON.parse(job.content[0].text), null);
+  await disconnectBridge(user);
+  await assert.rejects(client.callTool({ name: 'claim_ai_job', arguments: {} }));
+});

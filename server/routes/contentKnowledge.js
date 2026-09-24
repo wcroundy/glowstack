@@ -38,7 +38,7 @@ export async function generateContentIdeas(req, res) {
     app.gaps.push(...general.gaps);
     app.gaps.push(...refresh.gaps);
     const evidence = [...selectEvidence(documents, focus), ...app.documents.map(d => ({ ...d, content: d.content.slice(0, 12000), excerpted: d.content.length > 12000 }))];
-    const text = await chatComplete(req.userId, [{ role: 'system', content: IDEA_PROMPT }, { role: 'user', content: JSON.stringify({ today: new Date().toISOString(), focus, missing_categories: CATEGORIES.filter(c => !documents.some(d => d.category === c)), data_gaps: app.gaps, refresh_receipt: refresh, evidence }) }], { maxTokens: 4000 });
+    const text = await chatComplete(req.userId, [{ role: 'system', content: IDEA_PROMPT }, { role: 'user', content: JSON.stringify({ today: new Date().toISOString(), focus, missing_categories: CATEGORIES.filter(c => !documents.some(d => d.category === c)), data_gaps: app.gaps, refresh_receipt: refresh, evidence }) }], { maxTokens: 4000, task: 'recommendations' });
     res.json({ ideas: parseIdeas(text || '', evidence), refresh, post_coverage: app.coverage, external_coverage:app.external_coverage || [], external_examples:app.documents.filter(d=>d.external).map(({content,...d})=>d), data_gaps: app.gaps, reviewed_sources: evidence.length, total_sources: documents.length + app.documents.length, excerpted_sources: evidence.filter(e => e.excerpted).length, snapshot: true });
   } catch (e) {
     if (e.code === 'ai_insufficient_quota') return res.status(402).json({ error: 'ai_insufficient_quota', message: e.message, provider: e.provider });

@@ -120,7 +120,7 @@ router.post('/auto-tag', async (req, res) => {
     const visionConfig = await aiProviders.getVisionConfig(userId);
 
     const { assetIds, untaggedOnly, limit = 50, offset = 0 } = req.body; // optional filters
-    const batchLimit = Math.min(parseInt(limit) || 50, 100); // cap at 100 per batch
+    const batchLimit = Math.min(parseInt(limit) || 50, visionConfig?.transport === 'mcp' ? 1 : 100);
     const batchOffset = parseInt(offset) || 0;
 
     // 1. Get all managed tags
@@ -285,6 +285,9 @@ Be generous with existing tag matching. For suggested tags, focus on specific, r
           }
         } catch (aiErr) {
           console.error('AI vision error for asset', asset.id, ':', aiErr.message);
+          if (aiErr.code?.startsWith('ai_mcp_')) {
+            return res.status(503).json({ error: aiErr.code, message: aiErr.message, totalAssetsProcessed: 0 });
+          }
 
           // Insufficient quota/billing — stop the whole batch early
           if (aiErr.code === 'ai_insufficient_quota') {
@@ -383,7 +386,8 @@ Be generous with existing tag matching. For suggested tags, focus on specific, r
       aiPowered: !!visionConfig,
       suggestedTags: suggestions,
       batchComplete,
-      nextOffset: batchOffset + assets.length,
+      // Tagged rows leave the untagged result set; don't skip the rows that shift up.
+      nextOffset: batchOffset + assets.length - (untaggedOnly ? totalTagged : 0),
       message: visionConfig
         ? `AI analyzed ${assets.length} assets (${totalImagesAnalyzed} images) and applied ${totalNewTags} tags to ${totalTagged} assets`
         : `Keyword matching applied ${totalNewTags} tags to ${totalTagged} assets. Connect an AI vision provider in Integrations for AI-powered visual tagging.`,

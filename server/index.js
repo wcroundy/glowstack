@@ -47,6 +47,8 @@ import tiktokRoutes from './routes/tiktok.js';
 app.use('/api/auth/tiktok', tiktokRoutes); // callback route
 
 // Protect all other API routes
+import aiBridgeRoutes from './routes/aiBridge.js';
+app.use('/api/ai-bridge/mcp', aiBridgeRoutes);
 app.use('/api', requireAuth);
 
 // Google Photos API routes (protected)

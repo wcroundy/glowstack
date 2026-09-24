@@ -1,4 +1,6 @@
 import { supabase, isSupabaseConfigured } from './supabase.js';
+import { readLocal, updateLocal } from './contentKnowledge.js';
+import { bridgeComplete } from './aiBridge.js';
 
 // ─── Provider Config ────────────────────────────────────────────────────────
 // Each entry is a BYOK (bring-your-own-key) AI provider a user can connect.
@@ -119,26 +121,31 @@ export async function validateProviderToken(platform, apiToken) {
 
 // ─── Per-purpose assignment (which connected provider powers Chat vs Media Analysis) ──
 
-const EMPTY_AI_SETTINGS = { chat_provider: null, chat_model: null, vision_provider: null, vision_model: null };
+const EMPTY_AI_SETTINGS = { chat_provider: null, chat_model: null, vision_provider: null, vision_model: null, chat_transport: 'api', vision_transport: 'api' };
 
 export async function getAiSettings(userId) {
-  if (!isSupabaseConfigured()) return { ...EMPTY_AI_SETTINGS };
-  const { data } = await supabase
+  if (!isSupabaseConfigured()) return { ...EMPTY_AI_SETTINGS, ...(await readLocal(userId, 'ai-settings'))[0] };
+  const { data, error } = await supabase
     .from('ai_settings')
     .select('*')
     .eq('user_id', userId)
     .single();
-  return data || { ...EMPTY_AI_SETTINGS };
+  if (error && error.code !== 'PGRST116') throw new Error('AI settings unavailable. Check database configuration.');
+  return { ...EMPTY_AI_SETTINGS, ...data };
 }
 
 // Partial update — only the keys present in `updates` are changed; everything
 // else keeps its current value (so callers can update just one purpose at a time).
 export async function saveAiSettings(userId, updates) {
-  if (!isSupabaseConfigured()) return null;
   const current = await getAiSettings(userId);
   const merged = { user_id: userId, updated_at: new Date().toISOString() };
-  for (const key of ['chat_provider', 'chat_model', 'vision_provider', 'vision_model']) {
+  for (const key of ['chat_provider', 'chat_model', 'vision_provider', 'vision_model', 'chat_transport', 'vision_transport']) {
     merged[key] = key in updates ? (updates[key] ?? null) : (current[key] ?? null);
+  }
+  if (!isSupabaseConfigured()) {
+    if (process.env.VERCEL || process.env.NODE_ENV === 'production') throw new Error('Configure Supabase before saving AI settings.');
+    await updateLocal(userId, 'ai-settings', () => [merged]);
+    return merged;
   }
   const { data, error } = await supabase
     .from('ai_settings')
@@ -151,6 +158,7 @@ export async function saveAiSettings(userId, updates) {
 
 async function resolveConfig(userId, purpose) {
   const settings = await getAiSettings(userId);
+  if (settings[`${purpose}_transport`] === 'mcp') return { provider: 'codex', transport: 'mcp' };
   const provider = purpose === 'chat' ? settings.chat_provider : settings.vision_provider;
   const customModel = purpose === 'chat' ? settings.chat_model : settings.vision_model;
 
@@ -213,9 +221,10 @@ async function providerError(provider, res) {
  * messages: [{ role: 'system'|'user'|'assistant', content: string }]
  * Returns the assistant's text reply, or null if no chat provider is configured.
  */
-export async function chatComplete(userId, messages, { maxTokens = 800 } = {}) {
+export async function chatComplete(userId, messages, { maxTokens = 800, task = 'chat' } = {}) {
   const config = await getChatConfig(userId);
   if (!config) return null;
+  if (config.transport === 'mcp') return (await bridgeComplete(userId, { kind: 'chat', task, messages, maxTokens, temperature: 0.6 })).text;
 
   if (config.provider === 'openai') {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -255,13 +264,14 @@ export async function chatComplete(userId, messages, { maxTokens = 800 } = {}) {
  * Returns { text, usage: { totalTokens } }. Throws (err.code === 'ai_not_configured'
  * or 'ai_insufficient_quota') if no vision provider is connected or the call fails.
  */
-export async function visionComplete(userId, { systemPrompt, userText, imageUrls, maxTokens = 1000, temperature = 0.3 }) {
+export async function visionComplete(userId, { systemPrompt, userText, imageUrls, maxTokens = 1000, temperature = 0.3, task = 'auto_tag' }) {
   const config = await getVisionConfig(userId);
   if (!config) {
     const err = new Error('No AI vision provider connected. Add one in Integrations.');
     err.code = 'ai_not_configured';
     throw err;
   }
+  if (config.transport === 'mcp') return bridgeComplete(userId, { kind: 'vision', task, systemPrompt, userText, imageUrls, maxTokens, temperature });
 
   if (config.provider === 'openai') {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
