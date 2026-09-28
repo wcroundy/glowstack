@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { supabase, isSupabaseConfigured } from '../services/supabase.js';
 import { demoMedia, demoInsights } from '../services/demoData.js';
 import * as aiProviders from '../services/aiProviders.js';
+import { incrementTagUsage } from '../services/tagUsage.js';
 
 const router = Router();
 
@@ -364,9 +365,7 @@ Be generous with existing tag matching. For suggested tags, focus on specific, r
         }
 
         // Update tag usage counts
-        for (const tagId of matchedTagIds) {
-          await supabase.rpc('increment_tag_usage', { tag_uuid: tagId }).catch(() => {});
-        }
+        await incrementTagUsage(supabase, matchedTagIds);
       }
     }
 

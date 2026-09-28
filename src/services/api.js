@@ -25,7 +25,7 @@ async function request(path, options = {}) {
     // Try to parse error body for structured error info
     let errorData;
     try { errorData = await res.json(); } catch (_) {}
-    const err = new Error(errorData?.message || `API error: ${res.status}`);
+    const err = new Error(errorData?.message || (typeof errorData?.error === 'string' ? errorData.error : null) || `API error: ${res.status}`);
     err.status = res.status;
     err.code = errorData?.error;
     err.data = errorData;
