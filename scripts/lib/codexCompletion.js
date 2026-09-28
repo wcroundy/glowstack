@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import { AI_TASK_MODELS, taskModel, validateTaskModel } from '../../shared/aiModelPolicy.js';
+import { inlineWorkerImage } from './workerImages.js';
 
 // The content prompts remain owned by Glowstack. No skills or project instructions
 // are needed for these inference-only requests.
@@ -72,9 +73,13 @@ export class CodexCompletion {
   }
   async checkAllowance() {
     const limits = await this.request('account/rateLimits/read', {});
-    if (limits.ordinaryUsageAllowed !== true) throw new Error('Included Codex usage limit reached or unavailable. No paid fallback is allowed.');
     const core = limits.rateLimitsByLimitId?.codex || limits.rateLimits;
-    if (core?.spendControlReached || [core?.primary, core?.secondary].some(w => w?.usedPercent >= 100)) throw new Error('Included Codex usage limit reached. No paid fallback is allowed.');
+    if (limits.ordinaryUsageAllowed === false || core?.spendControlReached || [core?.primary, core?.secondary].some(w => w?.usedPercent >= 100)) {
+      throw Object.assign(new Error('Included Codex usage is unavailable or exhausted. No paid fallback is allowed.'), { code: 'INCLUDED_USAGE_EXHAUSTED' });
+    }
+    if (limits.ordinaryUsageAllowed !== true) {
+      throw Object.assign(new Error('Could not verify included Codex allowance. No paid fallback is allowed.'), { code: 'ALLOWANCE_UNVERIFIED' });
+    }
   }
   fail(error) {
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(error); }
@@ -108,7 +113,7 @@ export class CodexCompletion {
         } else {
           const imageUrl = new URL(url);
           if (imageUrl.protocol !== 'https:' || imageUrl.username || imageUrl.password) throw new Error('MCP media inputs require HTTPS image URLs or inline image data.');
-          input.push({ type: 'image', url });
+          input.push({ type: 'image', url: await inlineWorkerImage(url) });
         }
       }
       const started = await this.request('thread/start', {

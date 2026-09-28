@@ -69,6 +69,8 @@ by Codex. Compare actual tagging/scene output before switching large workloads.
 
 5. Run `npm run ai:worker`. Keep the process running and the computer awake.
    Refresh status in Integrations, then choose MCP for either or both engines.
+   For hidden automatic startup/restarts on a personal Windows machine, use
+   [Windows worker setup](WINDOWS_WORKER_SETUP.md) instead of starting it manually.
 6. Test one image, a short video, a chat reply, and a recommendation. Switch back to
    API explicitly whenever needed. Never paste ChatGPT session tokens into Glowstack.
 

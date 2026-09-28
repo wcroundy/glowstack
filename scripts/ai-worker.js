@@ -4,6 +4,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { CodexCompletion } from './lib/codexCompletion.js';
 import { taskModel } from '../shared/aiModelPolicy.js';
+import { workerErrorMessage } from './lib/workerErrors.js';
 
 const base = new URL(process.env.GLOWSTACK_URL || 'http://localhost:3001');
 if (base.protocol !== 'https:' && !(base.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(base.hostname))) throw new Error('Use HTTPS for a hosted Glowstack worker connection.');
@@ -44,9 +45,15 @@ try {
       await call('finish_ai_job', { id: job.id, claimToken: job.claimToken, ...result });
       console.log(`Completed job ${job.id}.`);
     } catch (err) {
+      // Redact remote URLs and credentials before recording the diagnostic locally.
+      const diagnostic = String(err.message || 'Unknown failure')
+        .replace(/https?:\/\/[^\s"'<>]+/gi, '[URL]')
+        .replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]')
+        .replace(/\b(?:sk-|eyJ)[A-Za-z0-9_.-]+/g, '[REDACTED]')
+        .slice(0, 1000);
+      console.error(`Worker diagnostic (${policy.task}): ${diagnostic}`);
       // Keep provider errors local and do not return potentially sensitive raw responses.
-      const limit = /usage.?limit|rate.?limit|quota/i.test(err.message);
-      const error = limit ? 'Codex usage limit reached. Wait for the allowance to reset or explicitly switch to API in Integrations.' : 'MCP analysis failed. Check the worker connection, Codex login, model access, and input images. No API fallback was used.';
+      const error = workerErrorMessage(err);
       await call('finish_ai_job', { id: job.id, claimToken: job.claimToken, error }).catch(() => {});
       console.error(error);
       // Stop on failures instead of repeatedly consuming allowance on a bad job.

@@ -11,7 +11,8 @@ test('unknown tasks, incompatible modalities and unavailable models cannot silen
   assert.throws(() => validateTaskModel(AI_TASK_MODELS.auto_tag, [{ ...catalog[0], inputModalities: ['text'] }]), /incompatible/);
   assert.throws(() => validateTaskModel(AI_TASK_MODELS.recommendations, [{ ...catalog[1], supportedReasoningEfforts: [] }]), /incompatible/);
 });
-test('each task reaches Codex with its pinned model, effort and standard speed while preserving prompts', async () => {
+test('each task reaches Codex with its pinned model, effort and standard speed while preserving prompts', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/png' } }));
   for (const [task, policy] of Object.entries(AI_TASK_MODELS)) {
     const worker = new CodexCompletion({ model: 'expensive-override-is-ignored' });
     worker.catalog = catalog; worker.config = {}; worker.directory = process.cwd();
@@ -31,12 +32,12 @@ test('each task reaches Codex with its pinned model, effort and standard speed w
     };
     const payload = policy.kind === 'chat'
       ? { kind: 'chat', task, messages: [{ role: 'system', content: 'Original prompt' }, { role: 'user', content: 'Original question' }] }
-      : { kind: 'vision', task, systemPrompt: 'Original prompt', userText: 'Original question', imageUrls: ['https://example.com/image.png'] };
+      : { kind: 'vision', task, systemPrompt: 'Original prompt', userText: 'Original question', imageUrls: ['https://example.supabase.co/storage/v1/object/public/thumbnails/image.png'] };
     assert.equal((await worker.complete(payload)).text, 'unchanged result');
     const start = calls.find(c => c.method === 'thread/start').params;
     const turn = calls.find(c => c.method === 'turn/start').params;
     assert.equal(start.model, policy.model); assert.equal(start.baseInstructions, 'Original prompt');
     assert.equal(turn.model, policy.model); assert.equal(turn.effort, policy.effort); assert.equal(turn.serviceTierForTurn, 'default');
-    if (policy.kind === 'vision') assert.deepEqual(turn.input, [{ type: 'text', text: 'Original question' }, { type: 'image', url: 'https://example.com/image.png' }]);
+    if (policy.kind === 'vision') assert.deepEqual(turn.input, [{ type: 'text', text: 'Original question' }, { type: 'image', url: 'data:image/png;base64,AQID' }]);
   }
 });
