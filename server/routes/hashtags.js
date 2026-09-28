@@ -96,6 +96,26 @@ router.post('/', async (req, res) => {
   }
 });
 
+// Shared by the route below and the Generate Ideas targeted refresh
+// (server/services/targetedRefresh.js) — takes an already-fetched row so callers
+// that already have it (e.g. a bounded refresh loop) don't re-query it.
+export async function syncHashtagRow(userId, watched) {
+  const { pageAccessToken, igUserId } = await getValidPageToken(userId);
+  const media = await getHashtagTopMedia(igUserId, watched.hashtag_id, pageAccessToken);
+
+  await supabase
+    .from('watched_hashtags')
+    .update({ last_synced_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq('id', watched.id);
+
+  if (media.length > 0) {
+    const rows = media.map((m) => mapMediaToHashtagPostRow(watched.id, m));
+    await supabase.from('hashtag_posts').upsert(rows, { onConflict: 'watched_hashtag_id,platform_post_id' });
+  }
+
+  return { post_count: media.length };
+}
+
 // POST /api/hashtags/:id/sync — refresh top media for one hashtag (reuses cached hashtag_id)
 router.post('/:id/sync', async (req, res) => {
   try {
@@ -110,20 +130,8 @@ router.post('/:id/sync', async (req, res) => {
       .single();
     if (findErr || !watched) return res.status(404).json({ error: 'Not found' });
 
-    const { pageAccessToken, igUserId } = await getValidPageToken(userId);
-    const media = await getHashtagTopMedia(igUserId, watched.hashtag_id, pageAccessToken);
-
-    await supabase
-      .from('watched_hashtags')
-      .update({ last_synced_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-      .eq('id', watched.id);
-
-    if (media.length > 0) {
-      const rows = media.map((m) => mapMediaToHashtagPostRow(watched.id, m));
-      await supabase.from('hashtag_posts').upsert(rows, { onConflict: 'watched_hashtag_id,platform_post_id' });
-    }
-
-    res.json({ ...watched, post_count: media.length });
+    const { post_count } = await syncHashtagRow(userId, watched);
+    res.json({ ...watched, post_count });
   } catch (err) {
     console.error('Hashtag sync error:', err.message);
     res.status(500).json({ error: err.message });

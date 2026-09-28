@@ -1,10 +1,14 @@
 import { supabase, isSupabaseConfigured } from './supabase.js';
 import { getStoredConnection } from './meta.js';
 import { collectPostEvidence } from './postEvidence.js';
+import { syncInfluencerRow } from '../routes/influencers.js';
+import { syncHashtagRow } from '../routes/hashtags.js';
 
 const GRAPH = 'https://graph.facebook.com/v22.0';
 const active = new Map();
 const recent = new Map();
+const watchlistActive = new Map();
+const watchlistRecent = new Map();
 const METRICS = {
   instagram: { views: 'views', reach: 'reach', saved: 'saves', shares: 'shares', likes: 'likes', comments: 'comments' },
   facebook: { post_media_view: 'views', post_clicks: 'clicks' },
@@ -133,4 +137,66 @@ export async function refreshForIdeas(userId,focus='') {
   active.set(userId,work);
   try { const result=await work; recent.set(userId,{time:Date.now(),focus,result}); return result; }
   finally {active.delete(userId);}
+}
+
+// Same freshness window used elsewhere in this file for "recent" post metrics.
+const WATCHLIST_FRESH_MS = 6 * 3600000;
+
+// Pure selection: which watchlist rows are stale enough to re-sync right now.
+// Same bounded set (top 6 each) already used for Generate's evidence, so refresh
+// never does more work than what actually feeds the recommendation.
+export function chooseWatchlistRefresh(influencers, hashtags, now = Date.now()) {
+  const isStale = row => { const last = Date.parse(row.last_synced_at); return !Number.isFinite(last) || now - last >= WATCHLIST_FRESH_MS; };
+  return {
+    jobs: [...influencers.filter(isStale).map(row => ({ kind: 'creator', row })), ...hashtags.filter(isStale).map(row => ({ kind: 'hashtag', row }))],
+    skipped_fresh: influencers.filter(r => !isStale(r)).length + hashtags.filter(r => !isStale(r)).length,
+  };
+}
+
+export async function runWatchlistRefresh({ db, userId, now = Date.now(), syncInfluencer = syncInfluencerRow, syncHashtag = syncHashtagRow }) {
+  const report = { refreshed: 0, skipped_fresh: 0, failed: 0, gaps: [] };
+  const [{ data: influencers, error: infErr }, { data: hashtags, error: hashErr }] = await Promise.all([
+    db.from('watched_influencers').select('*').eq('user_id', userId).order('last_synced_at', { ascending: true, nullsFirst: true }).limit(6),
+    db.from('watched_hashtags').select('*').eq('user_id', userId).order('last_synced_at', { ascending: true, nullsFirst: true }).limit(6),
+  ]);
+  if (infErr) report.gaps.push('Watchlist creators unavailable; saved evidence will be used.');
+  if (hashErr) report.gaps.push('Trending hashtags unavailable; saved evidence will be used.');
+  const { jobs, skipped_fresh } = chooseWatchlistRefresh(influencers || [], hashtags || [], now);
+  report.skipped_fresh = skipped_fresh;
+  // Three bounded workers, same pattern as the owner-post refresh above.
+  let index = 0;
+  await Promise.all(Array.from({ length: 3 }, async () => {
+    while (index < jobs.length) {
+      const { kind, row } = jobs[index++];
+      try {
+        if (kind === 'creator') await syncInfluencer(userId, row); else await syncHashtag(userId, row);
+        report.refreshed++;
+      } catch (e) {
+        // A single stale/broken watchlist row never blocks the rest of the batch or the recommendation itself.
+        report.failed++;
+        report.gaps.push(`${kind === 'creator' ? '@' + row.username : '#' + row.hashtag}: ${e.message}`);
+      }
+    }
+  }));
+  report.status = report.gaps.length ? 'partial' : 'completed';
+  return report;
+}
+
+// Bounded live re-sync of the owner's Watchlist creators + Trending hashtags, so
+// "researching other influencers" actually happens on every Generate click instead
+// of only whenever someone remembers to hit sync in Post History. Re-syncing an
+// existing hashtag's top_media reuses its already-cached hashtag_id and does not
+// spend the 30-unique-hashtags/7-day ig_hashtag_search cap (server/services/meta.js) —
+// that cap is only spent resolving a brand-new hashtag name, which happens once at
+// "track" time in Post History, not here.
+export async function refreshWatchlistForIdeas(userId) {
+  if (!isSupabaseConfigured()) return {status:'unavailable',refreshed:0,skipped_fresh:0,failed:0,gaps:['Live database is not configured; no Watchlist/Trending refresh ran.']};
+  if(watchlistActive.has(userId)) return watchlistActive.get(userId);
+  const cached=watchlistRecent.get(userId);
+  if(cached && Date.now()-cached.time<5*60000) return {...cached.result,reused:true};
+  const work=runWatchlistRefresh({db:supabase,userId})
+    .catch(()=>({status:'unavailable',refreshed:0,skipped_fresh:0,failed:0,gaps:['Watchlist/Trending refresh could not complete; saved evidence will be used.']}));
+  watchlistActive.set(userId,work);
+  try { const result=await work; watchlistRecent.set(userId,{time:Date.now(),result}); return result; }
+  finally {watchlistActive.delete(userId);}
 }

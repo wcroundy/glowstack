@@ -104,6 +104,38 @@ router.post('/', async (req, res) => {
   }
 });
 
+// Shared by the route below and the Generate Ideas targeted refresh
+// (server/services/targetedRefresh.js) — takes an already-fetched row so callers
+// that already have it (e.g. a bounded refresh loop) don't re-query it.
+export async function syncInfluencerRow(userId, influencer) {
+  const { pageAccessToken, igUserId } = await getValidPageToken(userId);
+  const { profile, media } = await getBusinessDiscoveryHistory(igUserId, influencer.username, pageAccessToken, LOOKBACK_DAYS);
+
+  const { data: updated, error } = await supabase
+    .from('watched_influencers')
+    .update({
+      display_name: profile.name,
+      bio: profile.biography,
+      profile_picture_url: profile.profile_picture_url,
+      followers_count: profile.followers_count,
+      follows_count: profile.follows_count,
+      media_count: profile.media_count,
+      last_synced_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', influencer.id)
+    .select()
+    .single();
+  if (error) throw error;
+
+  if (media.length > 0) {
+    const rows = media.map((m) => mapMediaToPostRow(influencer.id, m));
+    await supabase.from('watched_posts').upsert(rows, { onConflict: 'watched_influencer_id,platform_post_id' });
+  }
+
+  return { updated, post_count: media.length };
+}
+
 // POST /api/influencers/:id/sync — refresh one influencer's stats + recent posts
 router.post('/:id/sync', async (req, res) => {
   try {
@@ -118,32 +150,8 @@ router.post('/:id/sync', async (req, res) => {
       .single();
     if (findErr || !influencer) return res.status(404).json({ error: 'Not found' });
 
-    const { pageAccessToken, igUserId } = await getValidPageToken(userId);
-    const { profile, media } = await getBusinessDiscoveryHistory(igUserId, influencer.username, pageAccessToken, LOOKBACK_DAYS);
-
-    const { data: updated, error } = await supabase
-      .from('watched_influencers')
-      .update({
-        display_name: profile.name,
-        bio: profile.biography,
-        profile_picture_url: profile.profile_picture_url,
-        followers_count: profile.followers_count,
-        follows_count: profile.follows_count,
-        media_count: profile.media_count,
-        last_synced_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', influencer.id)
-      .select()
-      .single();
-    if (error) throw error;
-
-    if (media.length > 0) {
-      const rows = media.map((m) => mapMediaToPostRow(influencer.id, m));
-      await supabase.from('watched_posts').upsert(rows, { onConflict: 'watched_influencer_id,platform_post_id' });
-    }
-
-    res.json({ ...updated, post_count: media.length });
+    const { updated, post_count } = await syncInfluencerRow(userId, influencer);
+    res.json({ ...updated, post_count });
   } catch (err) {
     console.error('Influencer sync error:', err.message);
     res.status(500).json({ error: err.message });

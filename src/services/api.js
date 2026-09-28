@@ -136,6 +136,22 @@ export const api = {
   saveTrendReference: (reference) => request('/content-trends/references', { method: 'POST', body: JSON.stringify(reference) }),
   getContentSource: (id) => request(`/content-knowledge/${id}`),
   importContentKnowledge: (documents) => request('/content-knowledge/import', { method: 'POST', body: JSON.stringify({ documents }) }),
+  uploadContentDocument: async (file, category, title) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('category', category);
+    if (title) formData.append('title', title);
+    const headers = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    // Don't set Content-Type — browser sets it with boundary for multipart
+    const res = await fetch(`${API_BASE}/content-knowledge/upload-document`, { method: 'POST', headers, body: formData });
+    if (!res.ok) {
+      let errorData;
+      try { errorData = await res.json(); } catch (_) {}
+      throw new Error(errorData?.message || `Upload failed: ${res.status}`);
+    }
+    return res.json();
+  },
 
   // Tags
   getTags: (params) => request(`/tags?${new URLSearchParams(params || {})}`),

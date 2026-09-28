@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chooseRefresh, metricPatch, createGraphReader, runTargetedRefresh } from '../server/services/targetedRefresh.js';
+import { chooseRefresh, metricPatch, createGraphReader, runTargetedRefresh, chooseWatchlistRefresh, runWatchlistRefresh } from '../server/services/targetedRefresh.js';
 const now=Date.parse('2026-09-20T12:00:00Z');
 const post=(id,extra={})=>({id,platform:'instagram',platform_post_id:id,user_id:'u',published_at:'2026-09-19T00:00:00Z',reach:100,saves:20,...extra});
 test('refresh selects stale recent and old candidates with separate quotas',()=>{
@@ -54,4 +54,46 @@ test('discovery is capped, requests no media fields, and never overwrites saved 
     pages++;assert.ok(!/thumbnail|media_url|picture/.test(params.fields));return {data:[{id:'123',timestamp:'2026-09-19',like_count:0}],paging:{next:'ignored-untrusted-url',cursors:{after:'cursor'}}};
   }});
   assert.equal(pages,2);assert.equal(rows[0].reach,100);assert.equal(receipt.platforms[0].limited,true);
+});
+
+// ── Watchlist/Trending auto-refresh (Generate Ideas) ──────────────────────────
+function mockWatchlistDb({ influencers = [], hashtags = [] } = {}) {
+  return { from(table) {
+    const rows = table === 'watched_influencers' ? influencers : hashtags;
+    const q = { select(){return q;}, eq(){return q;}, order(){return q;}, limit(n){return Promise.resolve({data: rows.slice(0,n), error: null});} };
+    return q;
+  }};
+}
+test('watchlist refresh skips recently-synced rows and includes stale/never-synced ones', () => {
+  const fresh = { username: 'fresh', last_synced_at: '2026-09-20T09:00:00Z' }; // 3h old
+  const stale = { username: 'stale', last_synced_at: '2026-09-20T00:00:00Z' }; // 12h old
+  const never = { hashtag: 'never', last_synced_at: null };
+  const { jobs, skipped_fresh } = chooseWatchlistRefresh([fresh, stale], [never], now);
+  assert.equal(skipped_fresh, 1);
+  assert.deepEqual(jobs.map(j => j.kind), ['creator', 'hashtag']);
+  assert.deepEqual(jobs.map(j => j.row), [stale, never]);
+});
+test('watchlist refresh bounds to top 6 per kind and never throws on a bad row', async () => {
+  const influencers = Array.from({ length: 8 }, (_, i) => ({ username: `c${i}` }));
+  const hashtags = [{ hashtag: 'ok' }, { hashtag: 'broken' }];
+  const db = mockWatchlistDb({ influencers, hashtags });
+  const synced = [];
+  const report = await runWatchlistRefresh({
+    db, userId: 'u', now,
+    syncInfluencer: async (userId, row) => { synced.push(row.username); },
+    syncHashtag: async (userId, row) => { if (row.hashtag === 'broken') throw new Error('Meta request unavailable (4).'); synced.push(row.hashtag); },
+  });
+  assert.equal(synced.length, 7); // 6 influencers (bounded) + 1 working hashtag
+  assert.equal(report.refreshed, 7);
+  assert.equal(report.failed, 1);
+  assert.ok(report.gaps.some(g => g.includes('#broken')));
+  assert.equal(report.status, 'partial');
+});
+test('watchlist refresh reports a clean status when nothing needs syncing', async () => {
+  const fresh = { username: 'fresh', last_synced_at: new Date(now).toISOString() };
+  const db = mockWatchlistDb({ influencers: [fresh], hashtags: [] });
+  const report = await runWatchlistRefresh({ db, userId: 'u', now, syncInfluencer: async () => { throw new Error('should not be called'); }, syncHashtag: async () => {} });
+  assert.equal(report.refreshed, 0);
+  assert.equal(report.skipped_fresh, 1);
+  assert.equal(report.status, 'completed');
 });
