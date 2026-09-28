@@ -92,7 +92,10 @@ worker returns text/usage over MCP -> original Glowstack code parses and saves i
 - Pairing secrets are randomly generated and stored only as hashes. Re-pairing or
   disconnecting revokes old credentials. Atomic status/claim-token updates prevent
   duplicate claims/results; jobs are scoped to the authenticated user and pairing.
-- Requests expire after 90 seconds; worker inference is limited to 80 seconds.
+- Requests expire after 240 seconds; worker processing is limited to 220 seconds
+  or the remaining request lifetime, whichever is shorter. Preparation time reduces
+  the time left for inference. Thumbnail download timeouts retry once before analysis;
+  AI inference itself is not automatically retried.
   Serialized inputs are capped at 4 MB to fit hosted HTTP response limits when
   the worker claims a job. Oversized video-frame sets fail with an actionable error.
   Auto-tagging uses one asset per HTTP batch in MCP mode to fit Vercel request limits.
