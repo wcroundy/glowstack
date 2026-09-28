@@ -87,7 +87,7 @@ export async function finishBridgeJob(c, { id, claimToken, text, error, totalTok
   if (!changed) throw bridgeError('Job already finished or claimed by another worker.');
   return { ok: true };
 }
-export async function bridgeComplete(userId, payload, { timeoutMs = 90000, pollMs = 1000 } = {}) {
+export async function bridgeComplete(userId, payload, { timeoutMs = 240000, pollMs = 1000 } = {}) {
   const c = await connection(userId);
   if (!c?.last_seen || Date.now() - Date.parse(c.last_seen) > 45000) throw bridgeError('MCP worker is offline. Start the paired worker or switch this engine to API in Integrations.');
   if (Buffer.byteLength(JSON.stringify(payload)) > 4000000) throw bridgeError('Media request is too large for the MCP worker (4 MB maximum). Use fewer video frames or switch Media Processing to API.');

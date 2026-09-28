@@ -3,6 +3,19 @@ import assert from 'node:assert/strict';
 import { inlineWorkerImage } from '../scripts/lib/workerImages.js';
 
 const url = 'https://example.supabase.co/storage/v1/object/public/thumbnails/test.jpg';
+test('thumbnail timeouts retry once and then report a specific failure', async () => {
+  let calls = 0;
+  const timeout = () => new DOMException('Timed out', 'TimeoutError');
+  const recovered = await inlineWorkerImage(url, async () => {
+    if (++calls === 1) throw timeout();
+    return new Response(new Uint8Array([1]), { headers: { 'content-type': 'image/png' } });
+  });
+  assert.equal(calls, 2);
+  assert.equal(recovered, 'data:image/png;base64,AQ==');
+  calls = 0;
+  await assert.rejects(inlineWorkerImage(url, async () => { calls++; throw timeout(); }), e => e.code === 'IMAGE_DOWNLOAD_TIMEOUT');
+  assert.equal(calls, 2);
+});
 test('public thumbnails become inline image data without credentials or redirects', async () => {
   const result = await inlineWorkerImage(url, async (address, options) => {
     assert.equal(address.href, url);

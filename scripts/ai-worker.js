@@ -40,7 +40,7 @@ try {
     try {
       const remaining = Date.parse(job.expiresAt) - Date.now() - 5000;
       if (remaining < 5000) throw new Error('Job expired before processing.');
-      const result = await codex.complete(job.payload, Math.min(80000, remaining));
+      const result = await codex.complete(job.payload, Math.min(220000, remaining));
       if (heartbeatFailed) throw new Error('Worker connection was interrupted.');
       await call('finish_ai_job', { id: job.id, claimToken: job.claimToken, ...result });
       console.log(`Completed job ${job.id}.`);

@@ -93,7 +93,8 @@ export class CodexCompletion {
       this.child.stdin.write(JSON.stringify({ id, method, params }) + '\n');
     });
   }
-  async complete(payload, timeoutMs = 80000) {
+  async complete(payload, timeoutMs = 220000) {
+    const deadline = Date.now() + timeoutMs;
     const policy = taskModel(payload);
     validateTaskModel(policy, this.catalog);
     await this.checkAuth();
@@ -104,6 +105,7 @@ export class CodexCompletion {
     try {
       const input = [{ type: 'text', text: prepared.text }];
       for (const [index, url] of prepared.images.entries()) {
+        if (Date.now() >= deadline) throw new Error('Codex analysis timed out while preparing images.');
         if (typeof url !== 'string') throw new Error('Invalid image input.');
         const inline = url.match(/^data:image\/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/=\r\n]+)$/);
         if (inline) {
@@ -116,6 +118,7 @@ export class CodexCompletion {
           input.push({ type: 'image', url: await inlineWorkerImage(url) });
         }
       }
+      if (Date.now() >= deadline) throw new Error('Codex analysis timed out while preparing images.');
       const started = await this.request('thread/start', {
         model: policy.model, modelProvider: 'openai', cwd: this.directory, approvalPolicy: 'never', sandbox: 'read-only', ephemeral: true,
         config: this.config, baseInstructions: prepared.instructions,
@@ -125,7 +128,7 @@ export class CodexCompletion {
       let finalText = '', lastText = '', totalTokens = 0;
       const completed = new Promise((resolve, reject) => {
         this.failTurn = reject;
-        timer = setTimeout(() => reject(new Error('Codex analysis timed out.')), timeoutMs);
+        timer = setTimeout(() => reject(new Error('Codex analysis timed out.')), Math.max(1, deadline - Date.now()));
         this.onEvent = ({ method, params }) => {
           if (params?.threadId !== threadId) return;
           if (method === 'item/completed' && params.item?.type === 'agentMessage') {

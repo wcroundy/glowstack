@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { workerErrorMessage } from '../scripts/lib/workerErrors.js';
 import { CodexCompletion } from '../scripts/lib/codexCompletion.js';
+test('download and inference timeouts have distinct messages', () => {
+  assert.match(workerErrorMessage({ code: 'IMAGE_DOWNLOAD_TIMEOUT' }), /thumbnail download timed out/);
+  assert.match(workerErrorMessage(new Error('Codex analysis timed out.')), /AI analysis took too long/);
+});
 
 test('temporary throttling and image failures are not reported as exhausted allowance', () => {
   assert.match(workerErrorMessage(new Error('429 rate limit')), /temporarily rate-limited/);

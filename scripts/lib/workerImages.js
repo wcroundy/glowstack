@@ -3,6 +3,18 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 // Only fetch public media storage hosts. Never fetch arbitrary/internal URLs or
 // forward credentials; private Google Photos URLs must be imported first.
 export async function inlineWorkerImage(value, fetchImpl = fetch) {
+  // Retry only a download timeout, before inference. Never resubmit an AI job.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return await downloadWorkerImage(value, fetchImpl);
+    } catch (error) {
+      if (error?.name !== 'TimeoutError' && error?.name !== 'AbortError') throw error;
+      if (attempt === 1) throw Object.assign(new Error('Image download timed out after two attempts. Try again when the storage connection recovers.'), { code: 'IMAGE_DOWNLOAD_TIMEOUT' });
+    }
+  }
+}
+
+async function downloadWorkerImage(value, fetchImpl) {
   const url = new URL(value);
   const publicStorage = /^[a-z0-9-]+\.supabase\.co$/i.test(url.hostname)
     && url.pathname.startsWith('/storage/v1/object/public/');

@@ -1,6 +1,12 @@
 // Return only fixed messages to Glowstack; provider errors can contain private URLs.
 export function workerErrorMessage(error) {
   const message = String(error?.message || '');
+  if (error?.code === 'IMAGE_DOWNLOAD_TIMEOUT') {
+    return 'The thumbnail download timed out after two attempts. Previously saved tags are retained. Please retry when the connection recovers. No API fallback was used.';
+  }
+  if (/Codex analysis timed out/i.test(message)) {
+    return 'AI analysis took too long for this item. Previously saved tags are retained. Retry Untagged only to continue. No API fallback was used.';
+  }
   if (error?.code === 'INCLUDED_USAGE_EXHAUSTED') {
     return 'Codex included usage is unavailable or exhausted. Check your Codex allowance before retrying. No API fallback was used.';
   }
