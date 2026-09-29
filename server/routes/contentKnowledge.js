@@ -6,7 +6,7 @@ import { extractText } from '../services/documentExtract.js';
 import { selectEvidence, parseIdeas, IDEA_PROMPT } from '../services/contentIdeas.js';
 import { getChatConfig, chatComplete } from '../services/aiProviders.js';
 import { refreshForIdeas, refreshWatchlistForIdeas } from '../services/targetedRefresh.js';
-import { generalTrendEvidence } from '../services/trendProviders.js';
+import { generalTrendEvidence, refreshGeneralTrendsForIdeas } from '../services/trendProviders.js';
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } }); // 15MB — plenty for a text/PDF/docx source doc
 
@@ -74,11 +74,12 @@ export async function generateContentIdeas(req, res) {
     const documents = await getKnowledge(req.userId);
     if (!await getChatConfig(req.userId)) return res.status(409).json({ message: 'Connect a Chat AI provider in Integrations to generate ideas. Your imported evidence is saved and available to review.' });
     const shouldRefresh = req.body.refresh !== false;
-    // Run both bounded refreshes in parallel, then collect evidence so the freshly-synced
-    // Watchlist/Trending rows are actually reflected below, not just the owner's own posts.
-    const [refresh, watchlistRefresh] = await Promise.all([
+    // Run all three bounded refreshes in parallel, then collect evidence so the freshly-synced
+    // Watchlist/Trending/general-trend data is actually reflected below, not just the owner's own posts.
+    const [refresh, watchlistRefresh, generalTrendsRefresh] = await Promise.all([
       shouldRefresh ? refreshForIdeas(req.userId, focus) : Promise.resolve({ status: 'skipped', gaps: [] }),
       shouldRefresh ? refreshWatchlistForIdeas(req.userId) : Promise.resolve({ status: 'skipped', refreshed: 0, skipped_fresh: 0, failed: 0, gaps: [] }),
+      shouldRefresh ? refreshGeneralTrendsForIdeas(req.userId) : Promise.resolve({ status: 'skipped', refreshed: 0, skipped_fresh: 0, failed: 0, gaps: [] }),
     ]);
     const app = await getAppEvidence(req.userId, focus);
     const general = await generalTrendEvidence(req.userId);
@@ -86,9 +87,10 @@ export async function generateContentIdeas(req, res) {
     app.gaps.push(...general.gaps);
     app.gaps.push(...refresh.gaps);
     app.gaps.push(...watchlistRefresh.gaps);
+    app.gaps.push(...generalTrendsRefresh.gaps);
     const evidence = [...selectEvidence(documents, focus), ...app.documents.map(d => ({ ...d, content: d.content.slice(0, 12000), excerpted: d.content.length > 12000 }))];
-    const text = await chatComplete(req.userId, [{ role: 'system', content: IDEA_PROMPT }, { role: 'user', content: JSON.stringify({ today: new Date().toISOString(), focus, missing_categories: CATEGORIES.filter(c => !documents.some(d => d.category === c)), data_gaps: app.gaps, refresh_receipt: refresh, watchlist_refresh_receipt: watchlistRefresh, evidence }) }], { maxTokens: 4000, task: 'recommendations' });
-    res.json({ ideas: parseIdeas(text || '', evidence), refresh, watchlist_refresh: watchlistRefresh, post_coverage: app.coverage, external_coverage:app.external_coverage || [], external_examples:app.documents.filter(d=>d.external).map(({content,...d})=>d), data_gaps: app.gaps, reviewed_sources: evidence.length, total_sources: documents.length + app.documents.length, excerpted_sources: evidence.filter(e => e.excerpted).length, snapshot: true });
+    const text = await chatComplete(req.userId, [{ role: 'system', content: IDEA_PROMPT }, { role: 'user', content: JSON.stringify({ today: new Date().toISOString(), focus, missing_categories: CATEGORIES.filter(c => !documents.some(d => d.category === c)), data_gaps: app.gaps, refresh_receipt: refresh, watchlist_refresh_receipt: watchlistRefresh, general_trends_refresh_receipt: generalTrendsRefresh, evidence }) }], { maxTokens: 4000, task: 'recommendations' });
+    res.json({ ideas: parseIdeas(text || '', evidence), refresh, watchlist_refresh: watchlistRefresh, general_trends_refresh: generalTrendsRefresh, post_coverage: app.coverage, external_coverage:app.external_coverage || [], external_examples:app.documents.filter(d=>d.external).map(({content,...d})=>d), data_gaps: app.gaps, reviewed_sources: evidence.length, total_sources: documents.length + app.documents.length, excerpted_sources: evidence.filter(e => e.excerpted).length, snapshot: true });
   } catch (e) {
     if (e.code === 'ai_insufficient_quota') return res.status(402).json({ error: 'ai_insufficient_quota', message: e.message, provider: e.provider });
     if (e.code === 'ai_rate_limited') return res.status(429).json({ error: 'ai_rate_limited', message: `Your AI provider is rate-limiting requests right now, not out of credits. ${e.message} Wait a moment and try again.`, provider: e.provider });

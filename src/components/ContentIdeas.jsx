@@ -149,7 +149,7 @@ export default function ContentIdeas({ onUse, disabled }) {
         <OutsideSignals disabled={busy || disabled} onSaved={async () => { setResult(null); await load(); }} />
         <div className="rounded-xl border border-surface-300 p-4 space-y-2">
           <h3 className="text-sm font-medium">General trends</h3>
-          <p className="text-xs text-surface-600">Connect SocialCrawl and TrendsAPI.ai and refresh their data in Integrations. Generate recommendations includes saved trend evidence from the last seven days alongside your own results.</p>
+          <p className="text-xs text-surface-600">Connect SocialCrawl and TrendsAPI.ai in Integrations with an API key. Once connected, they're checked and refreshed automatically before every recommendation — no manual refresh needed.</p>
           <Link className="text-sm underline text-brand-600" to="/settings#trend-integrations">Manage trend integrations</Link>
         </div>
       </div>
@@ -184,7 +184,8 @@ export default function ContentIdeas({ onUse, disabled }) {
     {result?.external_examples?.length > 0 && <details className="border border-surface-300 shadow-sm rounded-xl p-4"><summary className="text-sm font-medium cursor-pointer">Outside examples supplied to this recommendation ({result.external_examples.length})</summary><div className="mt-3"><OutsideExamples examples={result.external_examples} /></div></details>}
     {result?.data_gaps?.map(g => <p key={g} className="text-xs text-amber-700">{g}</p>)}
     {result?.refresh && <p className="text-xs text-surface-600">Your posts refresh: {result.refresh.status}{result.refresh.reused ? ' (recent refresh receipt reused)' : ''}. {result.refresh.refreshed !== undefined ? `${result.refresh.refreshed} posts updated; ${result.refresh.failed} unavailable; ${result.refresh.not_refreshed} selected posts left unchanged (fresh or outside this batch). ${result.refresh.discovered} recent post records examined for discovery.` : ''}</p>}
-    {result?.watchlist_refresh && <p className="text-xs text-surface-600">Watchlist/Trending refresh: {result.watchlist_refresh.status}{result.watchlist_refresh.reused ? ' (recent refresh receipt reused)' : ''}. {result.watchlist_refresh.refreshed !== undefined ? `${result.watchlist_refresh.refreshed} sources re-researched; ${result.watchlist_refresh.skipped_fresh} already fresh; ${result.watchlist_refresh.failed} unavailable.` : ''}</p>}
+    {result?.watchlist_refresh && <p className="text-xs text-surface-600">Watchlist &amp; hashtag refresh: {result.watchlist_refresh.status}{result.watchlist_refresh.reused ? ' (recent refresh receipt reused)' : ''}. {result.watchlist_refresh.refreshed !== undefined ? `${result.watchlist_refresh.refreshed} sources re-researched; ${result.watchlist_refresh.skipped_fresh} already fresh; ${result.watchlist_refresh.failed} unavailable.` : ''}</p>}
+    {result?.general_trends_refresh && <p className="text-xs text-surface-600">General trends refresh: {result.general_trends_refresh.status}. {result.general_trends_refresh.refreshed !== undefined ? `${result.general_trends_refresh.refreshed} provider${result.general_trends_refresh.refreshed === 1 ? '' : 's'} refreshed; ${result.general_trends_refresh.skipped_fresh} already fresh; ${result.general_trends_refresh.failed} unavailable.` : ''}</p>}
     {result?.ideas.map(idea => <article key={idea.id} className="rounded-xl border border-surface-300 shadow-sm p-5 space-y-3">
       <p className="text-xs font-semibold text-brand-600">{idea.role} · {idea.mode} · Proposed</p>
       <h3 className="text-lg font-semibold">{idea.title}</h3><p className="text-sm italic">{idea.hook}</p>

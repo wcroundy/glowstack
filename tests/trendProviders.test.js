@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { normalizeTrendResponse, trendRequest, validateTrendSettings, publicTrendState, saveTrendSettings, refreshTrend, trendStatus, disconnectTrend, generalTrendEvidence } from '../server/services/trendProviders.js';
+import { normalizeTrendResponse, trendRequest, validateTrendSettings, publicTrendState, saveTrendSettings, refreshTrend, trendStatus, disconnectTrend, generalTrendEvidence, refreshGeneralTrendsForIdeas } from '../server/services/trendProviders.js';
 import { updateLocal } from '../server/services/contentKnowledge.js';
 import { isSupabaseConfigured } from '../server/services/supabase.js';
 
@@ -60,4 +60,51 @@ test('refresh persists evidence, caches calls, retains failures and isolates use
     await disconnectTrend(user,'trendsapi');
     assert.equal((await generalTrendEvidence(user,now)).documents.length,0);
   }finally{await updateLocal(user,'trend-providers',()=>[]);}
+});
+
+// ── Auto-refresh on Generate Ideas ─────────────────────────────────────────────
+test('unconfigured providers are skipped; a fresh snapshot is reused, not re-fetched', {skip:isSupabaseConfigured()}, async () => {
+  const user=`trend-autorefresh-${randomUUID()}`;
+  const key='test-key-not-a-live-credential';
+  let calls=0;
+  const fetcher=async()=>{calls++;return response({statusCode:200,body:JSON.stringify(feed)});};
+  try {
+    // Nothing connected yet — should be a clean no-op, not an error.
+    const nothingConfigured=await refreshGeneralTrendsForIdeas(user,now);
+    assert.equal(nothingConfigured.status,'completed');
+    assert.equal(nothingConfigured.refreshed,0);
+    assert.equal(nothingConfigured.failed,0);
+
+    await saveTrendSettings(user,'trendsapi',{settings,apiKey:key});
+    // trendsapi's own fetcher isn't injectable through this path, so point global fetch
+    // at our fake response for the duration of this call only.
+    const realFetch=globalThis.fetch;
+    globalThis.fetch=fetcher;
+    let first;
+    try { first=await refreshGeneralTrendsForIdeas(user,now); } finally { globalThis.fetch=realFetch; }
+    assert.equal(first.refreshed,1);
+    assert.equal(calls,1);
+
+    // Same 6-hour window as the post/Watchlist refresh — a call moments later must reuse, not re-fetch.
+    globalThis.fetch=fetcher;
+    let second;
+    try { second=await refreshGeneralTrendsForIdeas(user,now+1000); } finally { globalThis.fetch=realFetch; }
+    assert.equal(second.skipped_fresh,1);
+    assert.equal(second.refreshed,0);
+    assert.equal(calls,1);
+  } finally { await updateLocal(user,'trend-providers',()=>[]); }
+});
+test('a failing provider becomes a gap, never throws out of the batch', {skip:isSupabaseConfigured()}, async () => {
+  const user=`trend-autorefresh-fail-${randomUUID()}`;
+  const key='test-key-not-a-live-credential';
+  try {
+    await saveTrendSettings(user,'socialcrawl',{settings:{mode:'search',topic:'fashion',region:'US'},apiKey:key});
+    const realFetch=globalThis.fetch;
+    globalThis.fetch=async()=>({ok:false,text:async()=>'error'});
+    let report;
+    try { report=await refreshGeneralTrendsForIdeas(user,now); } finally { globalThis.fetch=realFetch; }
+    assert.equal(report.failed,1);
+    assert.equal(report.status,'partial');
+    assert.ok(report.gaps[0].includes('SocialCrawl'));
+  } finally { await updateLocal(user,'trend-providers',()=>[]); }
 });

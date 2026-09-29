@@ -141,6 +141,30 @@ export async function refreshTrend(userId,provider,fetcher=fetch,now=Date.now())
     return publicTrendState(provider,next);
   });
 }
+// Bounded live check-and-refresh for Generate Ideas, mirroring the Watchlist/post
+// refresh pattern in targetedRefresh.js. refreshTrend already reuses any snapshot
+// under 6 hours old without a network call, so calling it here on every Generate is
+// safe — it never spends provider credits more than once per 6-hour window, and a
+// failing/busy provider becomes a gap rather than aborting the recommendation.
+export async function refreshGeneralTrendsForIdeas(userId, now = Date.now()) {
+  const report = { refreshed: 0, skipped_fresh: 0, failed: 0, gaps: [] };
+  let states;
+  try { states = await trendStatus(userId); }
+  catch { report.status = 'unavailable'; report.gaps.push('General trend provider storage unavailable; refresh skipped.'); return report; }
+  for (const state of states) {
+    if (!state.configured) continue; // no API key saved for this provider — nothing to refresh
+    try {
+      const result = await refreshTrend(userId, state.provider, fetch, now);
+      if (result.reused) report.skipped_fresh++; else report.refreshed++;
+    } catch (e) {
+      report.failed++;
+      report.gaps.push(`${state.name}: ${e.message}`);
+    }
+  }
+  report.status = report.gaps.length ? 'partial' : 'completed';
+  return report;
+}
+
 export async function generalTrendEvidence(userId,now=Date.now()) {
   const documents=[],gaps=[];
   let states;
