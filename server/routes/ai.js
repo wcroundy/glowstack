@@ -203,7 +203,9 @@ router.post('/auto-tag', async (req, res) => {
     const suggestedNewTags = {};
 
     // 3. Process each asset
+    let assetsAttempted = 0;
     for (const asset of assets) {
+      assetsAttempted++;
       let matchedTagIds = [];
       let assetSuggestedNew = [];
 
@@ -286,8 +288,13 @@ Be generous with existing tag matching. For suggested tags, focus on specific, r
           }
         } catch (aiErr) {
           console.error('AI vision error for asset', asset.id, ':', aiErr.message);
+          // Tags for every asset before this one are already committed to the database
+          // (each asset upserts its own media_tags row as it's processed below), so
+          // report real progress here instead of 0 — the client retries this same
+          // offset, and an accurate nextOffset means it resumes at the right spot.
+          const partialNextOffset = batchOffset + assetsAttempted - 1 - (untaggedOnly ? totalTagged : 0);
           if (aiErr.code?.startsWith('ai_mcp_')) {
-            return res.status(503).json({ error: aiErr.code, message: aiErr.message, totalAssetsProcessed: 0 });
+            return res.status(503).json({ error: aiErr.code, message: aiErr.message, totalAssetsProcessed: assetsAttempted - 1, tagged: totalTagged, totalNewTags, nextOffset: partialNextOffset });
           }
 
           // Insufficient quota/billing — stop the whole batch early
@@ -296,7 +303,10 @@ Be generous with existing tag matching. For suggested tags, focus on specific, r
               error: 'ai_insufficient_quota',
               message: aiErr.message,
               provider: aiErr.provider,
-              totalAssetsProcessed: 0,
+              totalAssetsProcessed: assetsAttempted - 1,
+              tagged: totalTagged,
+              totalNewTags,
+              nextOffset: partialNextOffset,
             });
           }
           // Temporary rate limit — also stop early rather than hammering every remaining
@@ -306,7 +316,10 @@ Be generous with existing tag matching. For suggested tags, focus on specific, r
               error: 'ai_rate_limited',
               message: aiErr.message,
               provider: aiErr.provider,
-              totalAssetsProcessed: 0,
+              totalAssetsProcessed: assetsAttempted - 1,
+              tagged: totalTagged,
+              totalNewTags,
+              nextOffset: partialNextOffset,
             });
           }
           // ai_not_configured or a one-off provider error: fall through to keyword matching below

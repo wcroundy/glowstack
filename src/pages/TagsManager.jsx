@@ -53,6 +53,7 @@ export default function TagsManager() {
 
   // Batch progress
   const [batchProgress, setBatchProgress] = useState(null); // { processed, total, tagged, newTags }
+  const [retryNotice, setRetryNotice] = useState('');
 
   // Tag suggestions review
   const [suggestedTags, setSuggestedTags] = useState([]); // from AI response
@@ -269,6 +270,12 @@ export default function TagsManager() {
   };
 
   const BATCH_SIZE = 50; // images per API call — keeps each request under Vercel's 60s timeout
+  // Tags are written to the database per-asset as a batch runs, so a batch that fails
+  // partway through never loses work — it just needs to be asked again. Retry with
+  // backoff rather than giving up on the first hiccup (rate limits, worker timeouts,
+  // and queue-full errors are all expected to clear on their own).
+  const MAX_CONSECUTIVE_BATCH_FAILURES = 8;
+  const RETRY_DELAYS_MS = [5000, 10000, 15000, 30000, 30000, 30000, 60000, 60000];
 
   const handleAutoTag = async () => {
     setShowAutoTagConfirm(false);
@@ -276,6 +283,7 @@ export default function TagsManager() {
     setAutoTagResult(null);
     setSuggestedTags([]);
     setError('');
+    setRetryNotice('');
 
     const scopeCount = autoTagScope === 'untagged' ? untaggedCount : assetCount;
     let totalProcessed = 0;
@@ -284,6 +292,7 @@ export default function TagsManager() {
     let allSuggestions = {}; // aggregate suggestions across batches by lowercase name
     let offset = 0;
     let done = false;
+    let consecutiveFailures = 0;
 
     // Create a run record
     let runId = null;
@@ -296,11 +305,34 @@ export default function TagsManager() {
 
     try {
       while (!done) {
-        const result = await api.aiAutoTag({
-          untaggedOnly: autoTagScope === 'untagged',
-          limit: BATCH_SIZE,
-          offset,
-        });
+        let result;
+        try {
+          result = await api.aiAutoTag({
+            untaggedOnly: autoTagScope === 'untagged',
+            limit: BATCH_SIZE,
+            offset,
+          });
+        } catch (batchErr) {
+          // The server already tagged everything before the asset that failed — count that
+          // real progress now, whether or not this particular failure is retryable.
+          const partial = batchErr.data || {};
+          totalProcessed += partial.totalAssetsProcessed || 0;
+          totalTagged += partial.tagged || 0;
+          totalNewTags += partial.totalNewTags || 0;
+          if (typeof partial.nextOffset === 'number') offset = partial.nextOffset;
+          setBatchProgress({ processed: totalProcessed, total: scopeCount, tagged: totalTagged, newTags: totalNewTags });
+
+          // Out of credits is the one failure retrying can never fix — surface it immediately.
+          if (batchErr.code === 'ai_insufficient_quota') throw batchErr;
+          consecutiveFailures++;
+          if (consecutiveFailures > MAX_CONSECUTIVE_BATCH_FAILURES) throw batchErr;
+          const delayMs = RETRY_DELAYS_MS[Math.min(consecutiveFailures - 1, RETRY_DELAYS_MS.length - 1)];
+          setRetryNotice(`A batch hit a temporary issue (${batchErr.message}) — retrying in ${Math.round(delayMs / 1000)}s… (attempt ${consecutiveFailures}/${MAX_CONSECUTIVE_BATCH_FAILURES})`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+          setRetryNotice('');
+          continue; // resume from the accurate offset above
+        }
+        consecutiveFailures = 0;
 
         totalProcessed += result.totalAssetsProcessed || 0;
         totalTagged += result.tagged || 0;
@@ -368,6 +400,8 @@ export default function TagsManager() {
         setQuotaErrorMessage(err.message);
         setQuotaErrorProvider(err.data?.provider || 'openai');
         setShowQuotaError(true);
+      } else if (consecutiveFailures > MAX_CONSECUTIVE_BATCH_FAILURES) {
+        setError(`AI auto-tagging failed after ${MAX_CONSECUTIVE_BATCH_FAILURES} retries in a row: ${err.message}. Whatever was already tagged is saved — click AI Auto-Tag again to keep going from here.`);
       } else {
         setError('AI auto-tagging failed: ' + err.message);
       }
@@ -397,6 +431,7 @@ export default function TagsManager() {
     } finally {
       setAutoTagging(false);
       setBatchProgress(null);
+      setRetryNotice('');
     }
   };
 
@@ -507,6 +542,12 @@ export default function TagsManager() {
           <p className="text-xs text-brand-400">
             Processing in batches of {BATCH_SIZE}. Please keep this page open.
           </p>
+          {retryNotice && (
+            <p className="text-xs text-amber-600 flex items-center gap-1.5">
+              <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+              {retryNotice}
+            </p>
+          )}
         </div>
       )}
 
