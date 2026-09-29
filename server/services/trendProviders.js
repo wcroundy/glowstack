@@ -151,8 +151,10 @@ export async function refreshGeneralTrendsForIdeas(userId, now = Date.now()) {
   let states;
   try { states = await trendStatus(userId); }
   catch { report.status = 'unavailable'; report.gaps.push('General trend provider storage unavailable; refresh skipped.'); return report; }
-  for (const state of states) {
-    if (!state.configured) continue; // no API key saved for this provider — nothing to refresh
+  // The providers are independent, so refresh them in parallel — each has its own
+  // 55-second request timeout, and running them one after another would otherwise
+  // double the wait on every Generate click for no benefit.
+  await Promise.all(states.filter(s => s.configured).map(async state => {
     try {
       const result = await refreshTrend(userId, state.provider, fetch, now);
       if (result.reused) report.skipped_fresh++; else report.refreshed++;
@@ -160,7 +162,7 @@ export async function refreshGeneralTrendsForIdeas(userId, now = Date.now()) {
       report.failed++;
       report.gaps.push(`${state.name}: ${e.message}`);
     }
-  }
+  }));
   report.status = report.gaps.length ? 'partial' : 'completed';
   return report;
 }
