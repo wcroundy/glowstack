@@ -47,13 +47,44 @@ router.get('/', async (req, res) => {
 
     // Supabase query
     const { search, tag, tags, type, source, favorite, sort, limit = 50, offset = 0 } = req.query;
+
+    // Resolve a tag/tags filter to asset ids via media_tags directly, unbounded by
+    // pagination — filtering in-memory after .range() only ever sees the current
+    // page of (by default) newest assets, so a tag whose matches aren't concentrated
+    // in the most recent uploads would silently come back empty even with hundreds
+    // of real matches elsewhere in the library.
+    let requiredTagIds = null;
+    if (tag || tags) {
+      const requested = [...new Set([...(tag ? [tag] : []), ...(tags ? tags.split(',').map(t => t.trim()).filter(Boolean) : [])])];
+      const { data: tagRows, error: tagErr } = await supabase.from('tags').select('id').or(requested.map(t => `id.eq.${t},name.eq.${t}`).join(','));
+      if (tagErr) throw tagErr;
+      requiredTagIds = [...new Set((tagRows || []).map(t => t.id))];
+      if (requiredTagIds.length < requested.length) {
+        // An unresolvable tag (bad id/name) can never match — short-circuit rather
+        // than silently returning unrelated assets.
+        return res.json({ data: [], total: 0 });
+      }
+    }
+    let matchingAssetIds = null;
+    if (requiredTagIds) {
+      const { data: mtRows, error: mtErr } = await supabase.from('media_tags').select('media_id, tag_id').in('tag_id', requiredTagIds);
+      if (mtErr) throw mtErr;
+      const tagsByAsset = new Map();
+      for (const row of mtRows || []) {
+        if (!tagsByAsset.has(row.media_id)) tagsByAsset.set(row.media_id, new Set());
+        tagsByAsset.get(row.media_id).add(row.tag_id);
+      }
+      matchingAssetIds = [...tagsByAsset.entries()].filter(([, have]) => requiredTagIds.every(id => have.has(id))).map(([id]) => id);
+      if (matchingAssetIds.length === 0) return res.json({ data: [], total: 0 });
+    }
+
     let query = supabase
       .from('media_assets')
       .select('*, media_tags(tag_id, tags(*))', { count: 'exact' })
       .eq('is_archived', false)
-      .is('parent_asset_id', null)
-      .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
+      .is('parent_asset_id', null);
 
+    if (matchingAssetIds) query = query.in('id', matchingAssetIds);
     if (search) query = query.or(`title.ilike.%${search}%,ai_description.ilike.%${search}%`);
     if (type) query = query.eq('file_type', type);
     if (source) query = query.eq('source', source);
@@ -63,6 +94,7 @@ router.get('/', async (req, res) => {
     } else {
       query = query.order('created_at', { ascending: false });
     }
+    query = query.range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
 
     const { data, count, error } = await query;
     if (error) throw error;
@@ -89,16 +121,7 @@ router.get('/', async (req, res) => {
       scene_count: sceneCounts[asset.id] || 0,
     }));
 
-    let filtered = enriched;
-    if (tag) {
-      filtered = filtered.filter(a => a.tag_objects.some(t => t.id === tag || t.name === tag));
-    }
-    if (tags) {
-      // AND match: an asset must carry every requested tag, not just one.
-      const tagIds = tags.split(',').map(t => t.trim()).filter(Boolean);
-      filtered = filtered.filter(a => tagIds.every(tid => a.tag_objects.some(t => t.id === tid)));
-    }
-    res.json({ data: filtered, total: (tag || tags) ? filtered.length : count });
+    res.json({ data: enriched, total: count });
   } catch (err) {
     console.error('Media GET error:', err.message);
     res.status(500).json({ error: err.message });
