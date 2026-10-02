@@ -16,7 +16,7 @@ router.get('/', async (req, res) => {
   try {
     if (!isSupabaseConfigured()) {
       let assets = [...demoMedia];
-      const { search, tag, type, source, favorite, sort } = req.query;
+      const { search, tag, tags, type, source, favorite, sort } = req.query;
       if (search) {
         const q = search.toLowerCase();
         assets = assets.filter(a =>
@@ -26,6 +26,10 @@ router.get('/', async (req, res) => {
         );
       }
       if (tag) assets = assets.filter(a => a.tags?.includes(tag));
+      if (tags) {
+        const tagIds = tags.split(',').map(t => t.trim()).filter(Boolean);
+        assets = assets.filter(a => tagIds.every(tid => a.tags?.includes(tid)));
+      }
       if (type) assets = assets.filter(a => a.file_type === type);
       if (source) assets = assets.filter(a => a.source === source);
       if (favorite === 'true') assets = assets.filter(a => a.is_favorite);
@@ -42,7 +46,7 @@ router.get('/', async (req, res) => {
     }
 
     // Supabase query
-    const { search, tag, type, source, favorite, sort, limit = 50, offset = 0 } = req.query;
+    const { search, tag, tags, type, source, favorite, sort, limit = 50, offset = 0 } = req.query;
     let query = supabase
       .from('media_assets')
       .select('*, media_tags(tag_id, tags(*))', { count: 'exact' })
@@ -87,9 +91,14 @@ router.get('/', async (req, res) => {
 
     let filtered = enriched;
     if (tag) {
-      filtered = enriched.filter(a => a.tag_objects.some(t => t.id === tag || t.name === tag));
+      filtered = filtered.filter(a => a.tag_objects.some(t => t.id === tag || t.name === tag));
     }
-    res.json({ data: filtered, total: tag ? filtered.length : count });
+    if (tags) {
+      // AND match: an asset must carry every requested tag, not just one.
+      const tagIds = tags.split(',').map(t => t.trim()).filter(Boolean);
+      filtered = filtered.filter(a => tagIds.every(tid => a.tag_objects.some(t => t.id === tid)));
+    }
+    res.json({ data: filtered, total: (tag || tags) ? filtered.length : count });
   } catch (err) {
     console.error('Media GET error:', err.message);
     res.status(500).json({ error: err.message });

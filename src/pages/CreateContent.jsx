@@ -8,6 +8,7 @@ import {
 import { api } from '../services/api';
 import { useUnsavedChanges } from '../contexts/UnsavedChangesContext';
 import ContentIdeas from '../components/ContentIdeas';
+import ShootAssets from '../components/ShootAssets';
 
 // Mirrors the stages from Brooklyn's posting-process diagram (Generate Ideas ->
 // Gather & Shoot -> Edit -> Links -> Post), plus a final scheduling step that
@@ -307,6 +308,11 @@ export default function CreateContent() {
   };
 
   const updatePiece = (id, changes) => setForm(f => ({ ...f, contentPlan: { ...f.contentPlan, pieces: f.contentPlan.pieces.map(p => p.id === id ? { ...p, ...changes } : p) } }));
+  const toggleReuseAsset = (assetId) => setForm(f => {
+    const current = f.contentPlan?.selected_asset_ids || [];
+    const next = current.includes(assetId) ? current.filter(id => id !== assetId) : [...current, assetId];
+    return { ...f, contentPlan: { ...f.contentPlan, selected_asset_ids: next } };
+  });
 
   const handleSaveDraft = async () => {
     setSavingDraft(true);
@@ -516,6 +522,10 @@ export default function CreateContent() {
         )}
 
         {step.key === 'idea' && <ContentIdeas onUse={useIdea} disabled={savingDraft} />}
+
+        {step.key === 'shoot' && form.contentPlan && (
+          <ShootAssets idea={form.contentPlan} selectedAssetIds={form.contentPlan.selected_asset_ids || []} onToggleAsset={toggleReuseAsset} />
+        )}
 
         {!step.isPlatformStep && !step.isScheduleStep && (
           <textarea
