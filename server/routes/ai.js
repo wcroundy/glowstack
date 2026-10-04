@@ -3,7 +3,6 @@ import { Router } from 'express';
 import { supabase, isSupabaseConfigured } from '../services/supabase.js';
 import { demoMedia, demoInsights } from '../services/demoData.js';
 import * as aiProviders from '../services/aiProviders.js';
-import { incrementTagUsage } from '../services/tagUsage.js';
 
 const router = Router();
 
@@ -377,8 +376,7 @@ Be generous with existing tag matching. For suggested tags, focus on specific, r
           totalNewTags += matchedTagIds.length;
         }
 
-        // Update tag usage counts
-        await incrementTagUsage(supabase, matchedTagIds);
+        // tags.usage_count is maintained by a trigger on media_tags (migration 022).
       }
     }
 
