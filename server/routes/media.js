@@ -48,43 +48,44 @@ router.get('/', async (req, res) => {
     // Supabase query
     const { search, tag, tags, type, source, favorite, sort, limit = 50, offset = 0 } = req.query;
 
-    // Resolve a tag/tags filter to asset ids via media_tags directly, unbounded by
-    // pagination — filtering in-memory after .range() only ever sees the current
-    // page of (by default) newest assets, so a tag whose matches aren't concentrated
-    // in the most recent uploads would silently come back empty even with hundreds
-    // of real matches elsewhere in the library.
-    let requiredTagIds = null;
+    // Tag filtering has to happen in the database, before pagination: filtering in
+    // memory after .range() only sees the current page of newest assets, so a tag
+    // whose matches aren't among the latest uploads came back empty. Shipping a list
+    // of matching asset ids back through .in('id', ...) isn't an option either — a
+    // popular tag has hundreds of ids, which blows past the request URL limit.
+    // Instead, each required tag becomes its own aliased !inner embed of media_tags
+    // (so assets must carry ALL of them), kept separate from the display embed so
+    // every asset still returns its full tag list.
+    let requiredTagIds = [];
     if (tag || tags) {
       const requested = [...new Set([...(tag ? [tag] : []), ...(tags ? tags.split(',').map(t => t.trim()).filter(Boolean) : [])])];
-      const { data: tagRows, error: tagErr } = await supabase.from('tags').select('id').or(requested.map(t => `id.eq.${t},name.eq.${t}`).join(','));
+      // Callers may pass a tag id or (legacy) a tag name; a non-UUID can't be compared
+      // against the uuid id column, so look the two kinds up separately.
+      const isUuid = t => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t);
+      const idTokens = requested.filter(isUuid);
+      const nameTokens = requested.filter(t => !isUuid(t));
+      const lookups = await Promise.all([
+        idTokens.length ? supabase.from('tags').select('id').in('id', idTokens) : { data: [] },
+        nameTokens.length ? supabase.from('tags').select('id').in('name', nameTokens) : { data: [] },
+      ]);
+      const tagErr = lookups.find(l => l.error)?.error;
       if (tagErr) throw tagErr;
-      requiredTagIds = [...new Set((tagRows || []).map(t => t.id))];
+      requiredTagIds = [...new Set(lookups.flatMap(l => (l.data || []).map(t => t.id)))];
       if (requiredTagIds.length < requested.length) {
         // An unresolvable tag (bad id/name) can never match — short-circuit rather
         // than silently returning unrelated assets.
         return res.json({ data: [], total: 0 });
       }
     }
-    let matchingAssetIds = null;
-    if (requiredTagIds) {
-      const { data: mtRows, error: mtErr } = await supabase.from('media_tags').select('media_id, tag_id').in('tag_id', requiredTagIds);
-      if (mtErr) throw mtErr;
-      const tagsByAsset = new Map();
-      for (const row of mtRows || []) {
-        if (!tagsByAsset.has(row.media_id)) tagsByAsset.set(row.media_id, new Set());
-        tagsByAsset.get(row.media_id).add(row.tag_id);
-      }
-      matchingAssetIds = [...tagsByAsset.entries()].filter(([, have]) => requiredTagIds.every(id => have.has(id))).map(([id]) => id);
-      if (matchingAssetIds.length === 0) return res.json({ data: [], total: 0 });
-    }
+    const filterEmbeds = requiredTagIds.map((_, i) => `tagfilter${i}:media_tags!inner(tag_id)`);
 
     let query = supabase
       .from('media_assets')
-      .select('*, media_tags(tag_id, tags(*))', { count: 'exact' })
+      .select(['*', ...filterEmbeds, 'media_tags(tag_id, tags(*))'].join(', '), { count: 'exact' })
       .eq('is_archived', false)
       .is('parent_asset_id', null);
 
-    if (matchingAssetIds) query = query.in('id', matchingAssetIds);
+    requiredTagIds.forEach((id, i) => { query = query.eq(`tagfilter${i}.tag_id`, id); });
     if (search) query = query.or(`title.ilike.%${search}%,ai_description.ilike.%${search}%`);
     if (type) query = query.eq('file_type', type);
     if (source) query = query.eq('source', source);
@@ -114,12 +115,16 @@ router.get('/', async (req, res) => {
       }
     }
 
-    const enriched = (data || []).map(asset => ({
-      ...asset,
-      tag_objects: (asset.media_tags || []).map(mt => mt.tags).filter(Boolean),
-      media_tags: undefined,
-      scene_count: sceneCounts[asset.id] || 0,
-    }));
+    const enriched = (data || []).map(asset => {
+      const row = {
+        ...asset,
+        tag_objects: (asset.media_tags || []).map(mt => mt.tags).filter(Boolean),
+        media_tags: undefined,
+        scene_count: sceneCounts[asset.id] || 0,
+      };
+      for (const key of Object.keys(row)) if (key.startsWith('tagfilter')) delete row[key];
+      return row;
+    });
 
     res.json({ data: enriched, total: count });
   } catch (err) {
