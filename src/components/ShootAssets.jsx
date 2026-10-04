@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -70,6 +70,8 @@ export default function ShootAssets({ idea, selectedAssetIds = [], onToggleAsset
   const [matches, setMatches] = useState([]);
   const [loadingMatches, setLoadingMatches] = useState(false);
   const [error, setError] = useState('');
+  const [assetCache, setAssetCache] = useState({});
+  const attemptedIds = useRef(new Set()); // a deleted asset must not be re-fetched forever
 
   useEffect(() => {
     api.getTags().then(r => setAllTags(r.data || [])).catch(() => setError('Could not load tags.'));
@@ -98,10 +100,26 @@ export default function ShootAssets({ idea, selectedAssetIds = [], onToggleAsset
     if (!selectedTagIds.length) { setMatches([]); return; }
     setLoadingMatches(true); setError('');
     api.getMedia({ tags: selectedTagIds.join(','), limit: 60 })
-      .then(r => setMatches(r.data || []))
+      .then(r => {
+        const found = r.data || [];
+        setMatches(found);
+        setAssetCache(c => ({ ...c, ...Object.fromEntries(found.map(a => [a.id, a])) }));
+      })
       .catch(() => setError('Could not load matching assets.'))
       .finally(() => setLoadingMatches(false));
   }, [selectedTagIds]);
+
+  useEffect(() => {
+    const missing = selectedAssetIds.filter(id => !assetCache[id] && !attemptedIds.current.has(id));
+    if (!missing.length) return;
+    missing.forEach(id => attemptedIds.current.add(id));
+    Promise.all(missing.map(id => api.getMediaById(id).catch(() => null))).then(loaded => {
+      const found = loaded.filter(Boolean);
+      if (found.length) setAssetCache(c => ({ ...c, ...Object.fromEntries(found.map(a => [a.id, a])) }));
+    });
+  }, [selectedAssetIds, assetCache]);
+
+  const selectedAssets = selectedAssetIds.map(id => assetCache[id]).filter(Boolean);
 
   const toggleTag = (id) => setSelectedTagIds(ids => ids.includes(id) ? ids.filter(i => i !== id) : [...ids, id]);
 
@@ -119,6 +137,18 @@ export default function ShootAssets({ idea, selectedAssetIds = [], onToggleAsset
             </li>
           ))}
         </ul>
+      </div>
+    )}
+
+    {selectedAssetIds.length > 0 && (
+      <div className="rounded-xl border border-brand-200 p-4 space-y-2">
+        <h4 className="text-sm font-medium">{selectedAssetIds.length} asset{selectedAssetIds.length === 1 ? '' : 's'} selected for this shoot</h4>
+        <p className="text-xs text-surface-500">Click one to remove it.</p>
+        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 mt-1">
+          {selectedAssets.map(asset => (
+            <AssetTile key={asset.id} asset={asset} selected onClick={() => onToggleAsset(asset.id)} />
+          ))}
+        </div>
       </div>
     )}
 
@@ -144,9 +174,6 @@ export default function ShootAssets({ idea, selectedAssetIds = [], onToggleAsset
             <AssetTile key={asset.id} asset={asset} selected={selectedAssetIds.includes(asset.id)} onClick={() => onToggleAsset(asset.id)} />
           ))}
         </div>
-      )}
-      {selectedAssetIds.length > 0 && (
-        <p className="text-xs text-brand-600">{selectedAssetIds.length} asset{selectedAssetIds.length === 1 ? '' : 's'} selected for this shoot.</p>
       )}
     </div>
   </div>;
