@@ -133,11 +133,13 @@ export default function ShootAssets({ idea, selectedAssetIds = [], onToggleAsset
     const counts = new Map();
     for (const w of words(text)) if (!GENERIC.has(w)) counts.set(stem(w), (counts.get(stem(w)) || 0) + 1);
     if (!counts.size) return [];
-    return allTags
+    const scored = allTags
       .map(t => ({ tag: t, score: words(t.name).filter(w => !GENERIC.has(w)).reduce((sum, w) => sum + (counts.get(stem(w)) || 0), 0) }))
       .filter(x => x.score > 0)
-      .sort((a, b) => b.score - a.score || (b.tag.usage_count || 0) - (a.tag.usage_count || 0))
-      .map(x => x.tag);
+      .sort((a, b) => b.score - a.score || (b.tag.usage_count || 0) - (a.tag.usage_count || 0));
+    // A stray one-off word shouldn't read as a topic: keep tags at least ~a third as relevant as the best match.
+    const cutoff = Math.max(1, (scored[0]?.score || 0) * 0.34);
+    return scored.filter(x => x.score >= cutoff).map(x => x.tag);
   }, [idea, allTags]);
 
   const suggestedTagIds = useMemo(() => new Set(relevantTags.slice(0, 8).map(t => t.id)), [relevantTags]);
