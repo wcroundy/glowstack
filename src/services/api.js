@@ -39,6 +39,7 @@ export const api = {
   getMedia: (params) => request(`/media?${new URLSearchParams(params)}`),
   getMediaCounts: () => request('/media/counts'),
   getMediaById: (id) => request(`/media/${id}`),
+  suggestMedia: (tagIds, limit = 12) => request(`/media/suggest?${new URLSearchParams({ tags: tagIds, limit })}`),
   deleteMediaBulk: (ids) => request('/media/bulk/delete', { method: 'POST', body: JSON.stringify({ ids }) }),
   uploadMedia: (data) => request('/media/upload', { method: 'POST', body: JSON.stringify(data) }),
   uploadMediaFile: async (file) => {

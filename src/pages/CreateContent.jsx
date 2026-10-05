@@ -308,11 +308,20 @@ export default function CreateContent() {
   };
 
   const updatePiece = (id, changes) => setForm(f => ({ ...f, contentPlan: { ...f.contentPlan, pieces: f.contentPlan.pieces.map(p => p.id === id ? { ...p, ...changes } : p) } }));
-  const toggleReuseAsset = (assetId) => setForm(f => {
-    const current = f.contentPlan?.selected_asset_ids || [];
-    const next = current.includes(assetId) ? current.filter(id => id !== assetId) : [...current, assetId];
-    return { ...f, contentPlan: { ...f.contentPlan, selected_asset_ids: next } };
-  });
+  // Picking an asset is part of the saved idea: once the user stops clicking, save the draft
+  // (same Save as Draft path) so the selection isn't lost if they navigate away.
+  const autoSaveRef = useRef(null);
+  const assetSaveTimer = useRef(null);
+  const toggleReuseAsset = (assetId) => {
+    setForm(f => {
+      const current = f.contentPlan?.selected_asset_ids || [];
+      const next = current.includes(assetId) ? current.filter(id => id !== assetId) : [...current, assetId];
+      return { ...f, contentPlan: { ...f.contentPlan, selected_asset_ids: next } };
+    });
+    clearTimeout(assetSaveTimer.current);
+    assetSaveTimer.current = setTimeout(() => autoSaveRef.current?.(), 1200);
+  };
+  useEffect(() => () => clearTimeout(assetSaveTimer.current), []);
 
   const handleSaveDraft = async () => {
     setSavingDraft(true);
@@ -334,6 +343,7 @@ export default function CreateContent() {
     }
     setSavingDraft(false);
   };
+  autoSaveRef.current = () => { if (currentDraftId && !savingDraft) handleSaveDraft(); };
 
   const handlePin = async () => {
     if (!form.date) { setError('Pick a date first.'); return; }

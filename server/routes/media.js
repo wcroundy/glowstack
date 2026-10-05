@@ -4,6 +4,7 @@ import { supabase, isSupabaseConfigured, uploadFile } from '../services/supabase
 import { demoMedia, demoTags } from '../services/demoData.js';
 
 const router = Router();
+const isUuid = t => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t);
 
 // Multer: store files in memory (up to 200MB for videos)
 const upload = multer({
@@ -61,7 +62,6 @@ router.get('/', async (req, res) => {
       const requested = [...new Set([...(tag ? [tag] : []), ...(tags ? tags.split(',').map(t => t.trim()).filter(Boolean) : [])])];
       // Callers may pass a tag id or (legacy) a tag name; a non-UUID can't be compared
       // against the uuid id column, so look the two kinds up separately.
-      const isUuid = t => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t);
       const idTokens = requested.filter(isUuid);
       const nameTokens = requested.filter(t => !isUuid(t));
       const lookups = await Promise.all([
@@ -129,6 +129,38 @@ router.get('/', async (req, res) => {
     res.json({ data: enriched, total: count });
   } catch (err) {
     console.error('Media GET error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/media/suggest?tags=id1,id2,...&limit=12 — existing assets ranked by how many
+// of the given tags they carry (most relevant first). Must be defined before /:id.
+router.get('/suggest', async (req, res) => {
+  try {
+    if (!isSupabaseConfigured()) return res.json({ data: [] });
+    const tagIds = (req.query.tags || '').split(',').map(t => t.trim()).filter(isUuid).slice(0, 12);
+    const limit = Math.min(parseInt(req.query.limit) || 12, 24);
+    if (!tagIds.length) return res.json({ data: [] });
+
+    const { data: ranked, error: rankErr } = await supabase.rpc('suggest_media_for_tags', { tag_ids: tagIds, max_results: limit });
+    if (rankErr) throw rankErr;
+    if (!ranked?.length) return res.json({ data: [] });
+
+    const { data: assets, error } = await supabase
+      .from('media_assets')
+      .select('*, media_tags(tag_id, tags(*))')
+      .in('id', ranked.map(r => r.media_id));
+    if (error) throw error;
+
+    const byId = new Map((assets || []).map(a => [a.id, a]));
+    const data = ranked.map(r => byId.get(r.media_id)).filter(Boolean).map((asset, i) => {
+      const tag_objects = (asset.media_tags || []).map(mt => mt.tags).filter(Boolean);
+      const matched = new Set(ranked.find(r => r.media_id === asset.id).matched_tag_ids);
+      return { ...asset, media_tags: undefined, tag_objects, matched_tags: tag_objects.filter(t => matched.has(t.id)).map(t => t.name), match_count: matched.size };
+    });
+    res.json({ data });
+  } catch (err) {
+    console.error('Media suggest error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
