@@ -13,7 +13,8 @@ const BADGES = {
 export default function MediaSearchResults({ search, compact = false }) {
   const results = search?.results || [];
   if (!results.length) return null;
-  const openAll = `/media?ids=${results.map(r => r.id).join(',')}`;
+  const openAll = mediaSearchUrl(search);
+  const total = (search.all_ids || results).length;
 
   return (
     <div className="mt-3">
@@ -44,7 +45,7 @@ export default function MediaSearchResults({ search, compact = false }) {
         })}
       </div>
       <Link to={openAll} className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700">
-        <ImagesIcon className="w-3.5 h-3.5" /> Open these {results.length} in Media Library
+        <ImagesIcon className="w-3.5 h-3.5" /> View {total > results.length ? `all ${total}` : `these ${total}`} in Media Library
       </Link>
     </div>
   );
@@ -52,3 +53,11 @@ export default function MediaSearchResults({ search, compact = false }) {
 
 export const getMediaSearch = (message) =>
   (Array.isArray(message?.tool_calls) ? message.tool_calls.find(t => t?.function === 'media_search')?.result : null) || null;
+
+/** Media Library link for a search's full, best-first result set. */
+export function mediaSearchUrl(search) {
+  const ids = (search?.all_ids || (search?.results || []).map(r => r.id)).join(',');
+  const params = new URLSearchParams({ ids });
+  if (search?.summary) params.set('aiq', search.summary);
+  return `/media?${params}`;
+}

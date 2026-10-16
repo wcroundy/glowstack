@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, Sparkles, User, Lightbulb, BarChart3, CalendarDays, PenLine, Tag, Image as Images } from 'lucide-react';
 import { api } from '../services/api';
-import MediaSearchResults, { getMediaSearch } from '../components/chat/MediaSearchResults';
+import { useNavigate } from 'react-router-dom';
+import MediaSearchResults, { getMediaSearch, mediaSearchUrl } from '../components/chat/MediaSearchResults';
 
 const QUICK_PROMPTS = [
   { icon: BarChart3, label: 'How am I performing?', prompt: 'How am I performing this month? Give me a summary of my analytics.' },
@@ -66,6 +67,7 @@ export default function AiChat() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const navigate = useNavigate();
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -94,6 +96,9 @@ export default function AiChat() {
         result.user_message,
         result.assistant_message,
       ]);
+      // Photo searches open in the Media Library, where the results get the whole page
+      const found = getMediaSearch(result.assistant_message);
+      if (found?.results?.length) navigate(mediaSearchUrl(found));
     } catch (e) {
       console.error(e);
     }

@@ -94,9 +94,12 @@ router.get('/', async (req, res) => {
       const safe = String(term).toLowerCase().replace(/[-_]/g, ' ').replace(/[,()%*\\"]/g, ' ').replace(/\s+/g, ' ').trim();
       if (safe) query = query.ilike('search_text', `%${safe}%`);
     }
+    // ?ids= is an explicit, ordered list (the AI assistant's results, best first): it is
+    // returned in that order rather than newest-first, and paged in memory.
+    let idOrder = null;
     if (ids) {
-      const idList = String(ids).split(',').map(t => t.trim()).filter(isUuid).slice(0, 200);
-      query = query.in('id', idList);
+      idOrder = String(ids).split(',').map(t => t.trim()).filter(isUuid).slice(0, 100);
+      query = query.in('id', idOrder);
     }
     if (type) query = query.eq('file_type', type);
     if (source) query = query.eq('source', source);
@@ -106,10 +109,17 @@ router.get('/', async (req, res) => {
     } else {
       query = query.order('created_at', { ascending: false });
     }
-    query = query.range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
+    if (!idOrder) query = query.range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
 
-    const { data, count, error } = await query;
-    if (error) throw error;
+    const result = await query;
+    if (result.error) throw result.error;
+    let { data, count } = result;
+    if (idOrder) {
+      const position = new Map(idOrder.map((id, i) => [id, i]));
+      data = (data || []).sort((a, b) => position.get(a.id) - position.get(b.id));
+      count = data.length;
+      data = data.slice(parseInt(offset), parseInt(offset) + parseInt(limit));
+    }
 
     // Get scene counts for any video assets in this batch
     const videoIds = (data || []).filter(a => a.file_type === 'video').map(a => a.id);

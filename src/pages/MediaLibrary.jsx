@@ -389,9 +389,11 @@ export default function MediaLibrary() {
   // ?ids=a,b,c narrows the library to specific assets (the AI assistant's search results)
   const idsParam = searchParams.get('ids') || '';
   const idsCount = idsParam ? idsParam.split(',').filter(Boolean).length : 0;
+  const aiQuery = searchParams.get('aiq') || '';
   const clearIds = () => {
     const next = new URLSearchParams(searchParams);
     next.delete('ids');
+    next.delete('aiq');
     setSearchParams(next, { replace: true });
   };
   const searchKey = JSON.stringify([searchTerms, tagIds, idsParam]);
@@ -764,7 +766,7 @@ export default function MediaLibrary() {
           <span className="text-surface-500">Showing assets matching</span>
           {idsCount > 0 && (
             <span className="badge bg-brand-100 text-brand-700">
-              <Sparkles className="w-3 h-3 mr-1" />AI search results ({idsCount})
+              <Sparkles className="w-3 h-3 mr-1" />AI search{aiQuery ? `: ${aiQuery}` : ''} · {idsCount} best matches first
               <button type="button" className="ml-1.5 leading-none" onClick={clearIds} aria-label="Clear AI search results">×</button>
             </span>
           )}

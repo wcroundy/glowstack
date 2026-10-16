@@ -37,7 +37,8 @@ const VISION_CONCURRENCY = 3;
 const TEXT_CONCURRENCY = 2;
 const CHAT_TASK = 'chat';
 const VISION_TASK = 'auto_tag';
-export const MAX_RESULTS_SHOWN = 24;
+export const MAX_RESULTS_STORED = 60; // everything the Media Library page will show
+const CHAT_PREVIEW = 12;              // thumbnails shown inline in the (small) chat
 
 // ─── Intent ───────────────────────────────────────────────────────────────────
 
@@ -368,11 +369,11 @@ export async function runMediaSearch(userId, understood, { log = () => {} } = {}
     .filter(Boolean)
     .sort((a, b) => a.sort - b.sort || b.c.hits - a.c.hits || b.c.soft - a.c.soft || a.c.order - b.c.order);
 
-  const shown = ranked.slice(0, MAX_RESULTS_SHOWN);
+  const shown = ranked.slice(0, MAX_RESULTS_STORED);
   const confirmed = ranked.filter(r => r.confidence === 'confirmed').length;
   const partial = ranked.filter(r => r.confidence === 'partial').length;
 
-  const results = shown.map(({ c, v, confidence }) => toCard(c.asset, {
+  const results = shown.slice(0, CHAT_PREVIEW).map(({ c, v, confidence }) => toCard(c.asset, {
     confidence,
     hits: c.hits,
     missing: c.missing,
@@ -393,7 +394,8 @@ export async function runMediaSearch(userId, understood, { log = () => {} } = {}
   }
   if (!textChecked && !visionDone) lines.push('(Results are ranked by tag matches only.)');
   if (ranked.length > shown.length) lines.push(`Showing the best ${shown.length} of ${ranked.length}. Add a detail (a setting, a pose, an accessory) and I'll narrow it down.`);
+  else if (results.length) lines.push(`Showing all ${shown.length}, best matches first.`);
   if (!results.length) lines.push("None survived the closer check — tell me what to loosen and I'll try again.");
 
-  return { content: lines.join('\n'), search: { ...base, total_matches: scanned.total, results } };
+  return { content: lines.join('\n'), search: { ...base, total_matches: scanned.total, all_ids: shown.map(r => r.c.id), results } };
 }

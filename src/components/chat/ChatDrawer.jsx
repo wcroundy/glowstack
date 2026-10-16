@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Send, Sparkles, User, Minimize2 } from 'lucide-react';
 import { api } from '../../services/api';
-import MediaSearchResults, { getMediaSearch } from './MediaSearchResults';
+import { useNavigate } from 'react-router-dom';
+import MediaSearchResults, { getMediaSearch, mediaSearchUrl } from './MediaSearchResults';
 
 export default function ChatDrawer({ isOpen, onClose }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const navigate = useNavigate();
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -35,6 +37,8 @@ export default function ChatDrawer({ isOpen, onClose }) {
         result.user_message,
         result.assistant_message,
       ]);
+      const found = getMediaSearch(result.assistant_message);
+      if (found?.results?.length) navigate(mediaSearchUrl(found));
     } catch (e) { console.error(e); }
     setSending(false);
   };
