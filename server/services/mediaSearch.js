@@ -28,6 +28,7 @@ const TEXT_CHECK_BATCH = 60;
 const TEXT_CHECK_MAX = 120;
 const VISION_MAX = 18;
 const MAX_VISION_ROUNDS = 3;
+const ANCHOR_MAX = 120; // widest anchor concept worth looking at photo by photo
 const ENOUGH_CONFIRMED = 3;
 const VISION_BATCH = 6;
 // The MCP worker queue holds at most 4 active jobs per user and the worker rejects (and
@@ -281,6 +282,47 @@ const toCard = (asset, extra) => ({
   ...extra,
 });
 
+/** Looks at candidates a round at a time until a few clear matches turn up. */
+async function visionRounds(userId, summary, lookable, { log, t0, results = new Map(), maxRounds = MAX_VISION_ROUNDS }) {
+  const state = { results, failed: 0, unavailable: false, looked: 0 };
+  for (let round = 0; round < maxRounds && state.looked < lookable.length && !state.unavailable; round++) {
+    const slice = lookable.slice(state.looked, state.looked + VISION_MAX);
+    state.looked += slice.length;
+    try {
+      const v = await visionCheck(userId, summary, slice.map(c => ({ id: c.id, image: c.asset.thumbnail_url })));
+      v.results.forEach((val, id) => state.results.set(id, val));
+      state.failed += v.failed;
+      if (!v.results.size) state.unavailable = true;
+    } catch (err) {
+      state.unavailable = true;
+      console.warn('Media search vision step unavailable:', err.message);
+    }
+    log('vision', { ms: Date.now() - t0, round, looked: state.looked, answered: state.results.size });
+    if ([...state.results.values()].filter(r => r.match === 'yes').length >= ENOUGH_CONFIRMED) break;
+  }
+  return state;
+}
+
+/**
+ * Last resort when no photo matches everything: take the rarest tag-expressible concept
+ * (say "camo pants", 18 photos) and look at every photo carrying it, since the thing
+ * actually being asked for may simply not have been tagged with the other concepts.
+ */
+async function anchorCandidates(required, excludeIds, mediaType) {
+  const counted = await Promise.all(required.map(async concept => {
+    const rows = await scan([concept], 1);
+    return { concept, total: Number(rows[0]?.total_matches || 0), rows };
+  }));
+  const usable = counted.filter(c => c.total > 0 && c.total <= ANCHOR_MAX).sort((a, b) => a.total - b.total)[0];
+  if (!usable) return null;
+  const ids = usable.rows.map(r => r.media_id).filter(id => !excludeIds.has(id));
+  if (!ids.length) return null;
+  const assets = await loadAssets(ids);
+  const pool = ids.map((id, order) => ({ id, order, hits: 1, missing: required.filter(c => c !== usable.concept).map(c => c.label), asset: assets.get(id) }))
+    .filter(c => c.asset && c.asset.file_type === 'image' && c.asset.thumbnail_url && (!mediaType || c.asset.file_type === mediaType));
+  return { concept: usable.concept, total: usable.total, pool };
+}
+
 /**
  * Runs the funnel for an already-understood request.
  * Returns { content, search } where `search` is stored on the chat message for rendering.
@@ -316,45 +358,53 @@ export async function runMediaSearch(userId, understood, { log = () => {} } = {}
     // best tag match first; among equals, the ones whose tags also hint at the soft details
     .sort((a, b) => b.hits - a.hits || b.soft - a.soft || a.order - b.order);
 
-  // Stage 3: tags sanity check (judges only the tag-expressible concepts)
-  let textChecked = true;
-  try {
-    const items = pool.slice(0, TEXT_CHECK_MAX).map(c => ({ id: c.id, doc: c.asset.search_text || '' }));
-    const verdicts = await textCheck(userId, labels.join(' + '), items);
-    const rank = { exact: 0, close: 1 };
-    pool = pool
-      .filter(c => verdicts.get(c.id) !== 'no')
-      .map(c => ({ ...c, tagVerdict: verdicts.get(c.id) || null }))
-      .sort((a, b) => (rank[a.tagVerdict] ?? 1) - (rank[b.tagVerdict] ?? 1) || b.hits - a.hits || b.soft - a.soft || a.order - b.order);
-    log('textCheck', { ms: Date.now() - t0, kept: pool.length });
-  } catch (err) {
-    textChecked = false;
-    console.warn('Media search text check failed:', err.message);
+  // Stage 3: tags sanity check (judges only the tag-expressible concepts). It exists to
+  // catch false hits among assets tagged for everything ("cream" the skincare product);
+  // widened candidates are missing a concept by design, so only the photos can judge those.
+  let textChecked = scanned.relaxedTo === scanned.requiredCount;
+  if (textChecked) {
+    try {
+      const items = pool.slice(0, TEXT_CHECK_MAX).map(c => ({ id: c.id, doc: c.asset.search_text || '' }));
+      const verdicts = await textCheck(userId, labels.join(' + '), items);
+      const rank = { exact: 0, close: 1 };
+      const kept = pool.filter(c => verdicts.get(c.id) !== 'no');
+      // Never let a strict read empty the pool — the photo check is the better judge
+      pool = (kept.length ? kept : pool)
+        .map(c => ({ ...c, tagVerdict: verdicts.get(c.id) || null }))
+        .sort((a, b) => (rank[a.tagVerdict] ?? 1) - (rank[b.tagVerdict] ?? 1) || b.hits - a.hits || b.soft - a.soft || a.order - b.order);
+      log('textCheck', { ms: Date.now() - t0, kept: kept.length, pool: pool.length });
+    } catch (err) {
+      textChecked = false;
+      console.warn('Media search text check failed:', err.message);
+    }
   }
 
   // Stage 4: look at the best photos, a round at a time, until a few clear matches turn up
   const lookable = pool.filter(c => c.asset.file_type === 'image' && c.asset.thumbnail_url);
-  const visionResults = new Map();
-  let visionFailedBatches = 0;
-  let visionUnavailable = false;
-  let looked = 0;
-  for (let round = 0; round < MAX_VISION_ROUNDS && looked < lookable.length && !visionUnavailable; round++) {
-    const slice = lookable.slice(looked, looked + VISION_MAX);
-    looked += slice.length;
+  const vision = await visionRounds(userId, summary, lookable, { log, t0 });
+  const visionResults = vision.results;
+  let visionFailedBatches = vision.failed;
+  let looked = vision.looked;
+  const lookedIds = new Set(lookable.slice(0, looked).map(c => c.id));
+
+  // Nothing clearly matched: also look at every photo carrying the rarest concept
+  let anchorNote = null;
+  if (visionResults.size && required.length > 1 && ![...visionResults.values()].some(r => r.match === 'yes')) {
     try {
-      const v = await visionCheck(userId, summary, slice.map(c => ({ id: c.id, image: c.asset.thumbnail_url })));
-      v.results.forEach((val, id) => visionResults.set(id, val));
-      visionFailedBatches += v.failed;
-      if (!v.results.size) visionUnavailable = true;
+      const anchor = await anchorCandidates(required, new Set(scanned.candidates.map(c => c.id)), mediaType);
+      if (anchor?.pool.length) {
+        const more = await visionRounds(userId, summary, anchor.pool, { log, t0, results: visionResults });
+        visionFailedBatches += more.failed;
+        looked += more.looked;
+        anchor.pool.slice(0, more.looked).forEach(c => lookedIds.add(c.id));
+        pool = pool.concat(anchor.pool);
+        anchorNote = { label: anchor.concept.label, total: anchor.total, looked: more.looked };
+      }
     } catch (err) {
-      visionUnavailable = true;
-      console.warn('Media search vision step unavailable:', err.message);
+      console.warn('Media search anchor fallback failed:', err.message);
     }
-    log('vision', { ms: Date.now() - t0, round, looked, answered: visionResults.size });
-    if ([...visionResults.values()].filter(r => r.match === 'yes').length >= ENOUGH_CONFIRMED) break;
   }
   const visionDone = visionResults.size > 0;
-  const lookedIds = new Set(lookable.slice(0, looked).map(c => c.id));
 
   const order = { yes: 0, partial: 1 };
   const ranked = pool
@@ -392,10 +442,15 @@ export async function runMediaSearch(userId, understood, { log = () => {} } = {}
   } else if (lookable.length) {
     lines.push("I couldn't view the photos right now, so these are matched on tags only — they may need a quick look.");
   }
-  if (!textChecked && !visionDone) lines.push('(Results are ranked by tag matches only.)');
+  if (anchorNote) {
+    lines.push(`Nothing matched all of it, so I also looked through ${anchorNote.looked === anchorNote.total ? `all ${anchorNote.total}` : `${anchorNote.looked} more of the ${anchorNote.total}`} photos tagged **${anchorNote.label}** in case the rest just wasn't tagged.`);
+  }
   if (ranked.length > shown.length) lines.push(`Showing the best ${shown.length} of ${ranked.length}. Add a detail (a setting, a pose, an accessory) and I'll narrow it down.`);
   else if (results.length) lines.push(`Showing all ${shown.length}, best matches first.`);
-  if (!results.length) lines.push("None survived the closer check — tell me what to loosen and I'll try again.");
+  if (!results.length) {
+    const seen = [...new Set([...visionResults.values()].filter(r => r.match === 'no' && r.seen).map(r => r.seen))].slice(0, 3);
+    lines.push(`None of the photos I checked actually match.${seen.length ? ` What I saw instead: ${seen.join('; ')}.` : ''} Tell me what to loosen (or describe it another way) and I'll try again.`);
+  }
 
   return { content: lines.join('\n'), search: { ...base, total_matches: scanned.total, all_ids: shown.map(r => r.c.id), results } };
 }
