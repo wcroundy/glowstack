@@ -3,7 +3,7 @@ import {
   Search, Filter, Grid3X3, List, Heart, Star, Tag, Upload,
   Image as ImageIcon, Video, Sparkles, X, ChevronDown, Eye, Camera, ExternalLink,
   ChevronLeft, ChevronRight as ChevronRightIcon, ChevronsLeft, ChevronsRight, Scissors,
-  Trash2, CheckSquare, Square, Check, Loader2
+  Trash2, CheckSquare, Square, Check, Loader2, Calendar
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../services/api';
@@ -323,6 +323,26 @@ function MediaDetail({ asset, onClose }) {
 
 const PAGE_SIZE = 50;
 
+// Date taken filter: local calendar days (YYYY-MM-DD) in the URL as from= / to=,
+// sent to the API as instants so "Sep 1" means the user's Sep 1, not UTC's.
+const isoDay = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const validDay = v => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') && !Number.isNaN(Date.parse(`${v}T00:00:00`)) ? v : '');
+const dayStart = v => new Date(`${v}T00:00:00`).toISOString();
+const dayAfter = v => { const d = new Date(`${v}T00:00:00`); d.setDate(d.getDate() + 1); return d.toISOString(); };
+const prettyDay = v => new Date(`${v}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+function datePresets() {
+  const today = new Date();
+  const daysAgo = n => { const d = new Date(today); d.setDate(d.getDate() - n); return isoDay(d); };
+  const y = today.getFullYear();
+  return [
+    { label: 'Last 7 days', from: daysAgo(6), to: isoDay(today) },
+    { label: 'Last 30 days', from: daysAgo(29), to: isoDay(today) },
+    { label: 'Last 90 days', from: daysAgo(89), to: isoDay(today) },
+    { label: 'This year', from: `${y}-01-01`, to: isoDay(today) },
+    { label: 'Last year', from: `${y - 1}-01-01`, to: `${y - 1}-12-31` },
+  ];
+}
+
 // URL → criteria. `tag` is the older single-tag form (still used by Tag Manager links).
 function parseTagIds(params) {
   const ids = [params.get('tag'), ...(params.get('tags') || '').split(',')].map(t => (t || '').trim()).filter(Boolean);
@@ -389,6 +409,17 @@ export default function MediaLibrary() {
   // ?ids=a,b,c narrows the library to specific assets (the AI assistant's search results)
   const idsParam = searchParams.get('ids') || '';
   const idsCount = idsParam ? idsParam.split(',').filter(Boolean).length : 0;
+  const dateFrom = validDay(searchParams.get('from'));
+  const dateTo = validDay(searchParams.get('to'));
+  const setDates = (from, to) => {
+    const next = new URLSearchParams(searchParams);
+    if (from) next.set('from', from); else next.delete('from');
+    if (to) next.set('to', to); else next.delete('to');
+    setSearchParams(next, { replace: true });
+  };
+  const dateLabel = dateFrom && dateTo
+    ? (dateFrom === dateTo ? prettyDay(dateFrom) : `${prettyDay(dateFrom)} – ${prettyDay(dateTo)}`)
+    : dateFrom ? `Since ${prettyDay(dateFrom)}` : dateTo ? `Until ${prettyDay(dateTo)}` : '';
   const aiQuery = searchParams.get('aiq') || '';
   const clearIds = () => {
     const next = new URLSearchParams(searchParams);
@@ -396,7 +427,7 @@ export default function MediaLibrary() {
     next.delete('aiq');
     setSearchParams(next, { replace: true });
   };
-  const searchKey = JSON.stringify([searchTerms, tagIds, idsParam]);
+  const searchKey = JSON.stringify([searchTerms, tagIds, idsParam, dateFrom, dateTo]);
 
   const addTag = (id) => {
     setTagIds(cur => (cur.includes(id) ? cur : [...cur, id]));
@@ -417,7 +448,7 @@ export default function MediaLibrary() {
     setSuggestIndex(-1);
   };
   const removeTerm = (term) => setTerms(cur => cur.filter(t => t !== term));
-  const clearAllCriteria = () => { setTagIds([]); setTerms([]); setDraft(''); setDebouncedDraft(''); if (searchParams.get('ids')) clearIds(); };
+  const clearAllCriteria = () => { setTagIds([]); setTerms([]); setDraft(''); setDebouncedDraft(''); if (searchParams.get('ids')) clearIds(); if (dateFrom || dateTo) setDates('', ''); };
 
   const draftLower = draft.trim().toLowerCase();
   const suggestions = draftLower
@@ -463,6 +494,8 @@ export default function MediaLibrary() {
     const queryParams = { ...activeFilter, limit: PAGE_SIZE, offset, ...params };
     if (tagIds.length) queryParams.tags = tagIds.join(',');
     if (idsParam) queryParams.ids = idsParam;
+    if (dateFrom) queryParams.captured_after = dayStart(dateFrom);
+    if (dateTo) queryParams.captured_before = dayAfter(dateTo);
     delete queryParams.page;
     for (const key of Object.keys(queryParams)) {
       if (queryParams[key] === undefined || queryParams[key] === null || queryParams[key] === '') delete queryParams[key];
@@ -761,9 +794,15 @@ export default function MediaLibrary() {
         </div>
       </div>
 
-      {(tagIds.length > 0 || terms.length > 0 || idsCount > 0) && (
+      {(tagIds.length > 0 || terms.length > 0 || idsCount > 0 || dateLabel) && (
         <div className="flex flex-wrap items-center gap-2 mb-4 text-sm">
           <span className="text-surface-500">Showing assets matching</span>
+          {dateLabel && (
+            <span className="badge bg-surface-200 text-surface-700">
+              <Calendar className="w-3 h-3 mr-1" />Taken {dateLabel.startsWith('Since') || dateLabel.startsWith('Until') ? dateLabel.charAt(0).toLowerCase() + dateLabel.slice(1) : dateLabel}
+              <button type="button" className="ml-1.5 leading-none" onClick={() => setDates('', '')} aria-label="Clear date filter">×</button>
+            </span>
+          )}
           {idsCount > 0 && (
             <span className="badge bg-brand-100 text-brand-700">
               <Sparkles className="w-3 h-3 mr-1" />AI search{aiQuery ? `: ${aiQuery}` : ''} · {idsCount} best matches first
@@ -786,7 +825,7 @@ export default function MediaLibrary() {
             </span>
           ))}
           <button type="button" className="text-xs text-surface-400 hover:text-surface-600 underline" onClick={clearAllCriteria}>
-            {tagIds.length + terms.length + (idsCount ? 1 : 0) > 1 ? 'Clear all' : 'Show all assets'}
+            {tagIds.length + terms.length + (idsCount ? 1 : 0) + (dateLabel ? 1 : 0) > 1 ? 'Clear all' : 'Show all assets'}
           </button>
           <span className="text-xs text-surface-400 ml-auto">{totalAssets} match{totalAssets === 1 ? '' : 'es'}</span>
         </div>
@@ -832,6 +871,36 @@ export default function MediaLibrary() {
               >
                 <Heart className="w-3 h-3 mr-1" /> Favorites Only
               </button>
+            </div>
+          </div>
+
+          {/* Date taken */}
+          <div className="mt-3 pt-3 border-t">
+            <span className="text-xs font-medium text-surface-500 block mb-1.5">Date taken</span>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <div className="flex flex-wrap gap-1.5">
+                {datePresets().map(p => {
+                  const active = dateFrom === p.from && dateTo === p.to;
+                  return (
+                    <button
+                      key={p.label}
+                      className={`badge cursor-pointer ${active ? 'bg-brand-100 text-brand-700' : 'bg-surface-100 text-surface-600 hover:bg-surface-200'}`}
+                      onClick={() => (active ? setDates('', '') : setDates(p.from, p.to))}
+                    >
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex items-center gap-2 text-xs text-surface-500">
+                <label className="flex items-center gap-1.5">From
+                  <input type="date" className="input py-1 text-xs w-36" value={dateFrom} max={dateTo || undefined} onChange={e => setDates(validDay(e.target.value), dateTo)} aria-label="Taken from" />
+                </label>
+                <label className="flex items-center gap-1.5">To
+                  <input type="date" className="input py-1 text-xs w-36" value={dateTo} min={dateFrom || undefined} onChange={e => setDates(dateFrom, validDay(e.target.value))} aria-label="Taken to" />
+                </label>
+                {(dateFrom || dateTo) && <button className="underline text-surface-400 hover:text-surface-600" onClick={() => setDates('', '')}>Clear</button>}
+              </div>
             </div>
           </div>
 

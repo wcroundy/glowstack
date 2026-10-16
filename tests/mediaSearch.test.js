@@ -5,6 +5,7 @@ import { looksLikeMediaSearch, sanitizeConcepts, extractJson } from '../server/s
 test('recognises requests to find photos and refinements of a previous search', () => {
   assert.ok(looksLikeMediaSearch("I'm looking for images of a cream shirt with floral print that I wore with camo pants"));
   assert.ok(looksLikeMediaSearch('find me photos in a black dress'));
+  assert.ok(looksLikeMediaSearch('photos from last October'));
   assert.ok(looksLikeMediaSearch('only the ones outdoors', { previousWasSearch: true }));
   assert.ok(!looksLikeMediaSearch('only the ones outdoors'));
   assert.ok(!looksLikeMediaSearch('How am I performing this month?'));

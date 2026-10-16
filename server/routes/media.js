@@ -17,7 +17,7 @@ router.get('/', async (req, res) => {
   try {
     if (!isSupabaseConfigured()) {
       let assets = [...demoMedia];
-      const { search, tag, tags, type, source, favorite, sort } = req.query;
+      const { search, tag, tags, type, source, favorite, sort, captured_after, captured_before } = req.query;
       // `search` may repeat; every term must match (AND)
       for (const term of [].concat(search || [])) {
         const q = String(term).toLowerCase();
@@ -32,6 +32,8 @@ router.get('/', async (req, res) => {
         const tagIds = tags.split(',').map(t => t.trim()).filter(Boolean);
         assets = assets.filter(a => tagIds.every(tid => a.tags?.includes(tid)));
       }
+      if (captured_after) assets = assets.filter(a => !a.captured_at || a.captured_at >= captured_after);
+      if (captured_before) assets = assets.filter(a => !a.captured_at || a.captured_at < captured_before);
       if (type) assets = assets.filter(a => a.file_type === type);
       if (source) assets = assets.filter(a => a.source === source);
       if (favorite === 'true') assets = assets.filter(a => a.is_favorite);
@@ -48,7 +50,7 @@ router.get('/', async (req, res) => {
     }
 
     // Supabase query
-    const { search, tag, tags, ids, type, source, favorite, sort, limit = 50, offset = 0 } = req.query;
+    const { search, tag, tags, ids, type, source, favorite, sort, captured_after, captured_before, limit = 50, offset = 0 } = req.query;
 
     // Tag filtering has to happen in the database, before pagination: filtering in
     // memory after .range() only sees the current page of newest assets, so a tag
@@ -101,6 +103,12 @@ router.get('/', async (req, res) => {
       idOrder = String(ids).split(',').map(t => t.trim()).filter(isUuid).slice(0, 100);
       query = query.in('id', idOrder);
     }
+    // Date taken: [captured_after, captured_before) as ISO instants (the client turns the
+    // user's local calendar days into these)
+    const after = captured_after && !Number.isNaN(Date.parse(captured_after)) ? new Date(captured_after).toISOString() : null;
+    const before = captured_before && !Number.isNaN(Date.parse(captured_before)) ? new Date(captured_before).toISOString() : null;
+    if (after) query = query.gte('captured_at', after);
+    if (before) query = query.lt('captured_at', before);
     if (type) query = query.eq('file_type', type);
     if (source) query = query.eq('source', source);
     if (favorite === 'true') query = query.eq('is_favorite', true);

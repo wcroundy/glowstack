@@ -21,7 +21,8 @@ export default function MediaSearchResults({ search, compact = false }) {
       <div className={`grid gap-2 ${compact ? 'grid-cols-3' : 'grid-cols-3 sm:grid-cols-4'}`}>
         {results.map(r => {
           const badge = BADGES[r.confidence] || BADGES.near;
-          const note = r.seen || (r.missing?.length ? `Missing: ${r.missing.join(', ')}` : '');
+          const taken = r.taken_at ? new Date(r.taken_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+          const note = [r.seen, !r.seen && r.missing?.length ? `Missing: ${r.missing.join(', ')}` : '', taken && taken !== r.seen ? `Taken ${taken}` : ''].filter(Boolean).join(' · ');
           return (
             <a
               key={r.id}

@@ -119,7 +119,7 @@ export const api = {
 
   // Chat
   getChatMessages: () => request('/chat/messages'),
-  sendChatMessage: (message, conversationId) => request('/chat/send', { method: 'POST', body: JSON.stringify({ message, conversation_id: conversationId || undefined }) }),
+  sendChatMessage: (message, conversationId) => request('/chat/send', { method: 'POST', body: JSON.stringify({ message, conversation_id: conversationId || undefined, tz: Intl.DateTimeFormat().resolvedOptions().timeZone }) }),
   getChatConversations: (q) => request(`/chat/conversations${q ? `?${new URLSearchParams({ q })}` : ''}`),
   getChatConversation: (id) => request(`/chat/conversations/${id}/messages`),
   renameChatConversation: (id, title) => request(`/chat/conversations/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }),

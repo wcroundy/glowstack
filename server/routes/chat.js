@@ -237,7 +237,7 @@ router.get('/conversations/:id/messages', async (req, res) => {
 // POST /api/chat/send  { message, conversation_id? } — starts a new chat when no id is given
 router.post('/send', async (req, res) => {
   try {
-    const { message, conversation_id: conversationId } = req.body;
+    const { message, conversation_id: conversationId, tz } = req.body;
     if (!message) return res.status(400).json({ error: 'Message required' });
     const userId = uid(req);
 
@@ -259,7 +259,10 @@ router.post('/send', async (req, res) => {
         if (looksLikeMediaSearch(message, { previousWasSearch: !!previousSearch })) {
           const understood = await understandRequest(userId, message, {
             history,
-            previous: previousSearch?.concept_words ? { summary: previousSearch.summary, concepts: previousSearch.concept_words } : null,
+            previous: previousSearch && (previousSearch.concept_words || previousSearch.date_range)
+              ? { summary: previousSearch.summary, concepts: previousSearch.concept_words || [], date_range: previousSearch.date_range || null }
+              : null,
+            tz,
           });
           if (understood?.is_search) {
             try {

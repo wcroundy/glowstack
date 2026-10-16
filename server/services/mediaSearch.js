@@ -1,5 +1,6 @@
 import { supabase } from './supabase.js';
 import * as aiProviders from './aiProviders.js';
+import { normalizeDateRange, todayIn, validTimeZone, describeRange } from './dateRange.js';
 
 // AI media search for the assistant chat.
 //
@@ -49,7 +50,7 @@ const MEDIA_NOUN = /\b(photos?|pics?|pictures?|images?|videos?|clips?|shots?|sel
 /** Cheap gate so ordinary chat doesn't pay for the understanding call. */
 export function looksLikeMediaSearch(message, { previousWasSearch = false } = {}) {
   const text = String(message || '');
-  if (MEDIA_NOUN.test(text) && (SEARCH_VERB.test(text) || /\b(of|with|in)\b/i.test(text))) return true;
+  if (MEDIA_NOUN.test(text) && (SEARCH_VERB.test(text) || /\b(of|with|in|from|during|since|before|after|taken)\b/i.test(text))) return true;
   if (/\b(look(?:ing)?\s+for|find me|show me)\b/i.test(text)) return true;
   // "only the ones outdoors", "narrow it down to..." right after a search
   return previousWasSearch && text.length < 200 && /\b(only|just|ones|those|narrow|also|instead|without|but|more|fewer)\b/i.test(text);
@@ -114,17 +115,35 @@ If they are, split the request into 2-6 CONCEPTS — one per distinct garment, c
 
 Mark each concept "required": true if the tag vocabulary can express it (there are tags like "floral print", "camo pants", "shirt"). Mark it "required": false if the vocabulary can't express it reliably — typically a specific color shade or subtle detail (e.g. "cream" when there is no cream tag, only white/neutral). Non-required concepts are checked by looking at the photo, and their words are used only to rank, so make them generous (cream → cream, ivory, off white, beige, white, neutral). Always keep at least one required concept.
 
-If the user is refining an earlier search ("only the ones outdoors"), return the COMBINED concept list (previous + new) and set refines_previous true.
+DATES: photos have a date taken. If the request mentions a time ("from September 2025", "last summer", "in the last 2 weeks", "this year", "before 2024", "recently"), return "date_range": {"from": "YYYY-MM-DD", "to": "YYYY-MM-DD", "label": "short label"} using TODAY'S DATE given below; either bound may be null for open-ended ranges ("since March" → to null). Both bounds are inclusive local calendar days. Seasons are northern-hemisphere (summer = Jun 1–Aug 31); "last <season/month/year>" means the most recent complete one in the past; "recently" = the last 30 days. If no time is mentioned, "date_range": null. A request can be dates only ("photos from last October") — then "concepts" is an empty list.
+
+If the user is refining an earlier search ("only the ones outdoors"), return the COMBINED concept list (previous + new) and set refines_previous true; keep the previous date_range unless they change it.
 
 Reply with JSON only:
-{"is_search": true, "summary": "<the request in a short phrase>", "media_type": "image"|"video"|null, "refines_previous": false, "concepts": [{"label": "floral print", "words": ["floral print","floral","flower"], "required": true}, {"label": "cream", "words": ["cream","ivory","off white","beige","white","neutral"], "required": false}]}`;
+{"is_search": true, "summary": "<the request in a short phrase>", "media_type": "image"|"video"|null, "refines_previous": false, "date_range": null, "concepts": [{"label": "floral print", "words": ["floral print","floral","flower"], "required": true}, {"label": "cream", "words": ["cream","ivory","off white","beige","white","neutral"], "required": false}]}`;
 
-export async function understandRequest(userId, message, { history = [], previous = null } = {}) {
-  const vocab = await tagVocabulary();
+let spanCache = { at: 0, text: '' };
+async function librarySpan() {
+  if (Date.now() - spanCache.at < 10 * 60 * 1000 && spanCache.text) return spanCache.text;
+  const [oldest, newest] = await Promise.all([
+    supabase.from('media_assets').select('captured_at').not('captured_at', 'is', null).order('captured_at', { ascending: true }).limit(1),
+    supabase.from('media_assets').select('captured_at').not('captured_at', 'is', null).order('captured_at', { ascending: false }).limit(1),
+  ]);
+  const a = oldest.data?.[0]?.captured_at?.slice(0, 10);
+  const b = newest.data?.[0]?.captured_at?.slice(0, 10);
+  const text = a && b ? `Photos in the library were taken between ${a} and ${b}.` : '';
+  spanCache = { at: Date.now(), text };
+  return text;
+}
+
+export async function understandRequest(userId, message, { history = [], previous = null, tz = 'UTC' } = {}) {
+  const zone = validTimeZone(tz);
+  const [vocab, span] = await Promise.all([tagVocabulary(), librarySpan()]);
   const recent = history.slice(-4).map(m => `${m.role}: ${String(m.content).slice(0, 300)}`).join('\n');
   const user = [
+    `TODAY'S DATE: ${todayIn(zone)} (time zone ${zone}). ${span}`,
     `TAG VOCABULARY: ${vocab}`,
-    previous ? `PREVIOUS SEARCH: ${previous.summary} — concepts: ${JSON.stringify(previous.concepts)}` : '',
+    previous ? `PREVIOUS SEARCH: ${previous.summary} — concepts: ${JSON.stringify(previous.concepts)}${previous.date_range ? ` — date_range: ${JSON.stringify({ from: previous.date_range.from, to: previous.date_range.to, label: previous.date_range.label })}` : ''}` : '',
     recent ? `RECENT CONVERSATION:\n${recent}` : '',
     `USER REQUEST: ${message}`,
   ].filter(Boolean).join('\n\n');
@@ -133,32 +152,36 @@ export async function understandRequest(userId, message, { history = [], previou
   const parsed = extractJson(text);
   if (!parsed || !parsed.is_search) return { is_search: false };
   const concepts = sanitizeConcepts(parsed.concepts);
-  if (!concepts.length) return { is_search: false };
+  const dateRange = normalizeDateRange(parsed.date_range, zone);
+  if (!concepts.length && !dateRange) return { is_search: false };
   return {
     is_search: true,
     summary: String(parsed.summary || message).slice(0, 160),
     media_type: parsed.media_type === 'video' || parsed.media_type === 'image' ? parsed.media_type : null,
     concepts,
+    date_range: dateRange,
   };
 }
 
 // ─── 2. Scan ──────────────────────────────────────────────────────────────────
 
-async function scan(concepts, minHits) {
+async function scan(concepts, minHits, dateRange = null) {
   const { data, error } = await supabase.rpc('search_media_concepts', {
     concepts: concepts.map(c => c.words),
     min_hits: minHits,
     max_results: SCAN_LIMIT,
+    ...(dateRange?.takenFrom ? { taken_from: dateRange.takenFrom } : {}),
+    ...(dateRange?.takenTo ? { taken_to: dateRange.takenTo } : {}),
   });
   if (error) throw error;
   return data || [];
 }
 
 /** Everything hitting all required concepts; if that's thin, widen to assets missing one, then two, and so on. */
-export async function scanLibrary(allConcepts) {
+export async function scanLibrary(allConcepts, dateRange = null) {
   const concepts = allConcepts.filter(c => c.required !== false);
   const n = concepts.length;
-  let rows = await scan(concepts, n);
+  let rows = await scan(concepts, n, dateRange);
   const exactCount = Number(rows[0]?.total_matches || 0);
   let relaxedTo = n;
   // Widen only as far as needed. With real exact matches, a 1-or-2-concept search stays
@@ -166,7 +189,7 @@ export async function scanLibrary(allConcepts) {
   // drop down to half their concepts. With no exact matches at all, go as wide as it takes.
   const floor = rows.length ? (n >= 3 ? Math.ceil(n / 2) : n) : 1;
   for (let minHits = n - 1; minHits >= floor && rows.length < MIN_GOOD_RESULTS; minHits--) {
-    rows = await scan(concepts, minHits);
+    rows = await scan(concepts, minHits, dateRange);
     relaxedTo = minHits;
   }
   const total = Number(rows[0]?.total_matches || 0);
@@ -192,7 +215,7 @@ async function loadAssets(ids) {
   for (let i = 0; i < ids.length; i += 50) {
     const { data, error } = await supabase
       .from('media_assets')
-      .select('id, title, file_type, file_url, thumbnail_url, search_text, ai_quality_score, created_at')
+      .select('id, title, file_type, file_url, thumbnail_url, search_text, ai_quality_score, created_at, captured_at')
       .in('id', ids.slice(i, i + 50));
     if (error) throw error;
     (data || []).forEach(a => byId.set(a.id, a));
@@ -279,6 +302,7 @@ const toCard = (asset, extra) => ({
   file_type: asset.file_type,
   thumbnail_url: asset.thumbnail_url || asset.file_url || null,
   file_url: asset.file_url || null,
+  taken_at: asset.captured_at || null,
   ...extra,
 });
 
@@ -308,9 +332,9 @@ async function visionRounds(userId, summary, lookable, { log, t0, results = new 
  * (say "camo pants", 18 photos) and look at every photo carrying it, since the thing
  * actually being asked for may simply not have been tagged with the other concepts.
  */
-async function anchorCandidates(required, excludeIds, mediaType) {
+async function anchorCandidates(required, excludeIds, mediaType, dateRange = null) {
   const counted = await Promise.all(required.map(async concept => {
-    const rows = await scan([concept], 1);
+    const rows = await scan([concept], 1, dateRange);
     return { concept, total: Number(rows[0]?.total_matches || 0), rows };
   }));
   const usable = counted.filter(c => c.total > 0 && c.total <= ANCHOR_MAX).sort((a, b) => a.total - b.total)[0];
@@ -323,28 +347,67 @@ async function anchorCandidates(required, excludeIds, mediaType) {
   return { concept: usable.concept, total: usable.total, pool };
 }
 
+/** Count of searchable assets, optionally within a date range. */
+async function countAssets(dateRange, mediaType) {
+  let q = supabase.from('media_assets').select('id', { count: 'exact', head: true }).eq('is_archived', false).is('parent_asset_id', null);
+  if (dateRange?.takenFrom) q = q.gte('captured_at', dateRange.takenFrom);
+  if (dateRange?.takenTo) q = q.lt('captured_at', dateRange.takenTo);
+  if (mediaType) q = q.eq('file_type', mediaType);
+  const { count } = await q;
+  return count || 0;
+}
+
+/** A request that is only about when ("photos from last October"): list that window, newest first. */
+async function dateOnlySearch(understood) {
+  const { summary, media_type: mediaType, date_range: dateRange } = understood;
+  let q = supabase
+    .from('media_assets')
+    .select('id, title, file_type, file_url, thumbnail_url, captured_at', { count: 'exact' })
+    .eq('is_archived', false).is('parent_asset_id', null)
+    .order('captured_at', { ascending: false }).limit(MAX_RESULTS_STORED);
+  if (dateRange.takenFrom) q = q.gte('captured_at', dateRange.takenFrom);
+  if (dateRange.takenTo) q = q.lt('captured_at', dateRange.takenTo);
+  if (mediaType) q = q.eq('file_type', mediaType);
+  const { data, count, error } = await q;
+  if (error) throw error;
+  const total = count || 0;
+  const base = { summary, concepts: [], concept_words: [], date_range: { from: dateRange.from, to: dateRange.to, label: dateRange.label } };
+  if (!total) {
+    return { content: `I don't see any ${mediaType ? `${mediaType}s` : 'photos or videos'} taken **${dateRange.label}**.`, search: { ...base, total_matches: 0, results: [] } };
+  }
+  const results = (data || []).slice(0, CHAT_PREVIEW).map(a => toCard(a, { confidence: 'tags', hits: 0, missing: [], seen: a.captured_at ? new Date(a.captured_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : null }));
+  const lines = [`**${total.toLocaleString()}** ${mediaType ? `${mediaType}s were` : 'assets were'} taken **${dateRange.label}**.`];
+  if (total > (data || []).length) lines.push(`Showing the newest ${(data || []).length}. Tell me what's in them (an outfit, a setting, a color) and I'll narrow it down.`);
+  return { content: lines.join('\n'), search: { ...base, total_matches: total, all_ids: (data || []).map(a => a.id), results } };
+}
+
 /**
  * Runs the funnel for an already-understood request.
  * Returns { content, search } where `search` is stored on the chat message for rendering.
  */
 export async function runMediaSearch(userId, understood, { log = () => {} } = {}) {
-  const { concepts, summary, media_type: mediaType } = understood;
+  const { concepts, summary, media_type: mediaType, date_range: dateRange = null } = understood;
+  if (!concepts.length) return dateOnlySearch(understood);
   const required = concepts.filter(c => c.required !== false);
   const soft = concepts.filter(c => c.required === false);
   const labels = required.map(c => c.label);
   const t0 = Date.now();
 
-  const scanned = await scanLibrary(concepts);
-  log('scan', { ms: Date.now() - t0, total: scanned.total, relaxedTo: scanned.relaxedTo, of: scanned.requiredCount });
+  const scanned = await scanLibrary(concepts, dateRange);
+  log('scan', { ms: Date.now() - t0, total: scanned.total, relaxedTo: scanned.relaxedTo, of: scanned.requiredCount, dates: dateRange?.label || null });
 
-  const { count: librarySize } = await supabase
-    .from('media_assets').select('id', { count: 'exact', head: true }).eq('is_archived', false).is('parent_asset_id', null);
-  const libraryText = librarySize ? `all ${librarySize.toLocaleString()} assets` : 'every asset';
-  const base = { summary, concepts: concepts.map(c => c.label), concept_words: concepts, library_size: librarySize || null };
+  const librarySize = await countAssets(dateRange, null);
+  const libraryText = dateRange
+    ? `the ${librarySize.toLocaleString()} assets taken ${dateRange.label}`
+    : (librarySize ? `all ${librarySize.toLocaleString()} assets` : 'every asset');
+  const base = {
+    summary, concepts: concepts.map(c => c.label), concept_words: concepts, library_size: librarySize || null,
+    date_range: dateRange ? { from: dateRange.from, to: dateRange.to, label: dateRange.label } : null,
+  };
 
   if (!scanned.candidates.length) {
     return {
-      content: `I scanned ${libraryText} and nothing is tagged with ${labels.length > 1 ? 'those details' : labels[0]} (${labels.join(', ')}). Try different wording, or check the Tag Manager for what's tagged.`,
+      content: `I scanned ${libraryText} and nothing is tagged with ${labels.length > 1 ? 'those details' : labels[0]} (${labels.join(', ')}). ${dateRange ? 'Try a wider date range, or different wording.' : "Try different wording, or check the Tag Manager for what's tagged."}`,
       search: { ...base, total_matches: 0, results: [] },
     };
   }
@@ -391,7 +454,7 @@ export async function runMediaSearch(userId, understood, { log = () => {} } = {}
   let anchorNote = null;
   if (visionResults.size && required.length > 1 && ![...visionResults.values()].some(r => r.match === 'yes')) {
     try {
-      const anchor = await anchorCandidates(required, new Set(scanned.candidates.map(c => c.id)), mediaType);
+      const anchor = await anchorCandidates(required, new Set(scanned.candidates.map(c => c.id)), mediaType, dateRange);
       if (anchor?.pool.length) {
         const more = await visionRounds(userId, summary, anchor.pool, { log, t0, results: visionResults });
         visionFailedBatches += more.failed;
