@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Sparkles, User, Lightbulb, BarChart3, CalendarDays, PenLine, Tag } from 'lucide-react';
+import { Send, Sparkles, User, Lightbulb, BarChart3, CalendarDays, PenLine, Tag, Image as Images } from 'lucide-react';
 import { api } from '../services/api';
+import MediaSearchResults, { getMediaSearch } from '../components/chat/MediaSearchResults';
 
 const QUICK_PROMPTS = [
   { icon: BarChart3, label: 'How am I performing?', prompt: 'How am I performing this month? Give me a summary of my analytics.' },
   { icon: CalendarDays, label: 'Plan my content', prompt: 'Help me plan my content for this week across all platforms.' },
   { icon: PenLine, label: 'Write a caption', prompt: 'Write me a few caption ideas for my latest post.' },
   { icon: Lightbulb, label: 'Best posting times', prompt: 'When should I post this week for maximum engagement?' },
+  { icon: Images, label: 'Find photos', prompt: "Find photos of me in a floral top with jeans" },
   { icon: Tag, label: 'Organize my media', prompt: 'Help me organize and tag my media library.' },
   { icon: Sparkles, label: 'Generate a report', prompt: 'Generate a weekly performance report for all my platforms.' },
 ];
@@ -51,6 +53,7 @@ function ChatMessage({ message }) {
             );
           })}
         </div>
+        {!isUser && <MediaSearchResults search={getMediaSearch(message)} />}
         <div className={`text-[10px] mt-1.5 ${isUser ? 'text-brand-200' : 'text-surface-300'}`}>
           {new Date(message.created_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
         </div>
@@ -172,7 +175,7 @@ export default function AiChat() {
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Ask about analytics, content ideas, scheduling..."
+                placeholder="Ask about analytics, content ideas — or describe photos to find…"
                 rows={1}
                 className="input resize-none pr-12 py-3"
                 style={{ minHeight: '48px', maxHeight: '120px' }}

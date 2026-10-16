@@ -2,10 +2,11 @@ import { Router } from 'express';
 import { supabase, isSupabaseConfigured } from '../services/supabase.js';
 import { demoInsights, demoPosts, demoMedia, demoPlatformAnalytics } from '../services/demoData.js';
 import * as aiProviders from '../services/aiProviders.js';
+import { looksLikeMediaSearch, understandRequest, runMediaSearch } from '../services/mediaSearch.js';
 
 const router = Router();
 
-const CHAT_SYSTEM_PROMPT = `You are the AI assistant inside GlowStack, a media library and analytics tool built for a beauty/fashion content creator. You help with content planning, caption ideas, interpreting analytics, and organizing their media library. Be concise, warm, and actionable — this creator is not deeply technical, so avoid jargon.`;
+const CHAT_SYSTEM_PROMPT = `You are the AI assistant inside GlowStack, a media library and analytics tool built for a beauty/fashion content creator. You help with content planning, caption ideas, interpreting analytics, and organizing their media library. (When they want to find specific photos or videos, a separate search step handles it — you can invite them to describe what they're looking for, e.g. "find photos of me in a floral shirt with camo pants".) Be concise, warm, and actionable — this creator is not deeply technical, so avoid jargon.`;
 
 /** Calls the user's connected Chat AI provider with recent conversation history. Returns null if none is configured. */
 async function generateAiResponse(userId, message, history) {
@@ -107,10 +108,39 @@ router.post('/send', async (req, res) => {
     let aiResponse = null;
     try {
       const history = isSupabaseConfigured()
-        ? (await supabase.from('chat_messages').select('role, content').order('created_at', { ascending: false }).limit(10)).data?.reverse() || []
+        ? (await supabase.from('chat_messages').select('role, content, tool_calls').order('created_at', { ascending: false }).limit(10)).data?.reverse() || []
         : chatHistory.slice(-10);
-      const aiText = await generateAiResponse(userId, message, history);
-      if (aiText) aiResponse = { content: aiText };
+
+      // Asking to find photos/videos runs the library search instead of a plain chat reply
+      if (isSupabaseConfigured()) {
+        const lastAssistant = [...history].reverse().find(m => m.role === 'assistant');
+        const previousSearch = lastAssistant?.tool_calls?.find?.(t => t.function === 'media_search')?.result || null;
+        if (looksLikeMediaSearch(message, { previousWasSearch: !!previousSearch })) {
+          const understood = await understandRequest(userId, message, {
+            history,
+            previous: previousSearch?.concept_words ? { summary: previousSearch.summary, concepts: previousSearch.concept_words } : null,
+          });
+          if (understood?.is_search) {
+            try {
+              const { content, search } = await runMediaSearch(userId, understood, { log: (step, info) => console.log('[media-search]', step, JSON.stringify(info)) });
+              aiResponse = { content, tool_calls: [{ function: 'media_search', result: search }] };
+            } catch (err) {
+              if (err.code?.startsWith('ai_mcp_')) throw err;
+              console.error('Media search error:', err.message);
+              aiResponse = {
+                content: err.code === 'ai_insufficient_quota'
+                  ? 'Your AI provider is out of credit, so I couldn\'t run that search. Add credit with your provider and ask again.'
+                  : 'I ran into a problem searching your library. Please try again in a moment.',
+              };
+            }
+          }
+        }
+      }
+
+      if (!aiResponse) {
+        const aiText = await generateAiResponse(userId, message, history);
+        if (aiText) aiResponse = { content: aiText };
+      }
     } catch (err) {
       if (err.code?.startsWith('ai_mcp_')) return res.status(503).json({ error: err.code, message: err.message });
       console.error('AI chat error, falling back to canned response:', err.message);

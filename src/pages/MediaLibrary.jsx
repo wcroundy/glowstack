@@ -386,7 +386,15 @@ export default function MediaLibrary() {
   }, [draft]);
 
   const searchTerms = debouncedDraft ? [...terms, debouncedDraft] : terms;
-  const searchKey = JSON.stringify([searchTerms, tagIds]);
+  // ?ids=a,b,c narrows the library to specific assets (the AI assistant's search results)
+  const idsParam = searchParams.get('ids') || '';
+  const idsCount = idsParam ? idsParam.split(',').filter(Boolean).length : 0;
+  const clearIds = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('ids');
+    setSearchParams(next, { replace: true });
+  };
+  const searchKey = JSON.stringify([searchTerms, tagIds, idsParam]);
 
   const addTag = (id) => {
     setTagIds(cur => (cur.includes(id) ? cur : [...cur, id]));
@@ -407,7 +415,7 @@ export default function MediaLibrary() {
     setSuggestIndex(-1);
   };
   const removeTerm = (term) => setTerms(cur => cur.filter(t => t !== term));
-  const clearAllCriteria = () => { setTagIds([]); setTerms([]); setDraft(''); setDebouncedDraft(''); };
+  const clearAllCriteria = () => { setTagIds([]); setTerms([]); setDraft(''); setDebouncedDraft(''); if (searchParams.get('ids')) clearIds(); };
 
   const draftLower = draft.trim().toLowerCase();
   const suggestions = draftLower
@@ -452,6 +460,7 @@ export default function MediaLibrary() {
     const offset = ((params.page || page) - 1) * PAGE_SIZE;
     const queryParams = { ...activeFilter, limit: PAGE_SIZE, offset, ...params };
     if (tagIds.length) queryParams.tags = tagIds.join(',');
+    if (idsParam) queryParams.ids = idsParam;
     delete queryParams.page;
     for (const key of Object.keys(queryParams)) {
       if (queryParams[key] === undefined || queryParams[key] === null || queryParams[key] === '') delete queryParams[key];
@@ -750,9 +759,15 @@ export default function MediaLibrary() {
         </div>
       </div>
 
-      {(tagIds.length > 0 || terms.length > 0) && (
+      {(tagIds.length > 0 || terms.length > 0 || idsCount > 0) && (
         <div className="flex flex-wrap items-center gap-2 mb-4 text-sm">
           <span className="text-surface-500">Showing assets matching</span>
+          {idsCount > 0 && (
+            <span className="badge bg-brand-100 text-brand-700">
+              <Sparkles className="w-3 h-3 mr-1" />AI search results ({idsCount})
+              <button type="button" className="ml-1.5 leading-none" onClick={clearIds} aria-label="Clear AI search results">×</button>
+            </span>
+          )}
           {tagIds.map(id => {
             const tag = tags.find(t => t.id === id);
             return (
@@ -769,7 +784,7 @@ export default function MediaLibrary() {
             </span>
           ))}
           <button type="button" className="text-xs text-surface-400 hover:text-surface-600 underline" onClick={clearAllCriteria}>
-            {tagIds.length + terms.length > 1 ? 'Clear all' : 'Show all assets'}
+            {tagIds.length + terms.length + (idsCount ? 1 : 0) > 1 ? 'Clear all' : 'Show all assets'}
           </button>
           <span className="text-xs text-surface-400 ml-auto">{totalAssets} match{totalAssets === 1 ? '' : 'es'}</span>
         </div>

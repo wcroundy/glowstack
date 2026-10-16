@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Send, Sparkles, User, Minimize2 } from 'lucide-react';
 import { api } from '../../services/api';
+import MediaSearchResults, { getMediaSearch } from './MediaSearchResults';
 
 export default function ChatDrawer({ isOpen, onClose }) {
   const [messages, setMessages] = useState([]);
@@ -79,6 +80,7 @@ export default function ChatDrawer({ isOpen, onClose }) {
                   </p>
                 );
               })}
+              {msg.role !== 'user' && <MediaSearchResults search={getMediaSearch(msg)} compact />}
             </div>
           </div>
         ))}

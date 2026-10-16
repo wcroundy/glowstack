@@ -48,7 +48,7 @@ router.get('/', async (req, res) => {
     }
 
     // Supabase query
-    const { search, tag, tags, type, source, favorite, sort, limit = 50, offset = 0 } = req.query;
+    const { search, tag, tags, ids, type, source, favorite, sort, limit = 50, offset = 0 } = req.query;
 
     // Tag filtering has to happen in the database, before pagination: filtering in
     // memory after .range() only sees the current page of newest assets, so a tag
@@ -87,12 +87,16 @@ router.get('/', async (req, res) => {
       .is('parent_asset_id', null);
 
     requiredTagIds.forEach((id, i) => { query = query.eq(`tagfilter${i}.tag_id`, id); });
-    // `search` may repeat (?search=a&search=b); each term must match the title or
-    // description, and chained .or() calls are ANDed together. Characters that are
-    // syntax in a PostgREST filter string are dropped from the term.
+    // `search` may repeat (?search=a&search=b); every term must appear in the asset's
+    // search document (title, AI fields, notes and tag names — see migration 024).
+    // Hyphens count as spaces, and characters that are LIKE/filter syntax are dropped.
     for (const term of [].concat(search || [])) {
-      const safe = String(term).replace(/[,()%*\\"]/g, ' ').trim();
-      if (safe) query = query.or(`title.ilike.%${safe}%,ai_description.ilike.%${safe}%`);
+      const safe = String(term).toLowerCase().replace(/[-_]/g, ' ').replace(/[,()%*\\"]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (safe) query = query.ilike('search_text', `%${safe}%`);
+    }
+    if (ids) {
+      const idList = String(ids).split(',').map(t => t.trim()).filter(isUuid).slice(0, 200);
+      query = query.in('id', idList);
     }
     if (type) query = query.eq('file_type', type);
     if (source) query = query.eq('source', source);
@@ -130,6 +134,7 @@ router.get('/', async (req, res) => {
         scene_count: sceneCounts[asset.id] || 0,
       };
       for (const key of Object.keys(row)) if (key.startsWith('tagfilter')) delete row[key];
+      delete row.search_text; // internal search document; not useful to clients
       return row;
     });
 
