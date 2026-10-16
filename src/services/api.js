@@ -119,7 +119,11 @@ export const api = {
 
   // Chat
   getChatMessages: () => request('/chat/messages'),
-  sendChatMessage: (message) => request('/chat/send', { method: 'POST', body: JSON.stringify({ message }) }),
+  sendChatMessage: (message, conversationId) => request('/chat/send', { method: 'POST', body: JSON.stringify({ message, conversation_id: conversationId || undefined }) }),
+  getChatConversations: (q) => request(`/chat/conversations${q ? `?${new URLSearchParams({ q })}` : ''}`),
+  getChatConversation: (id) => request(`/chat/conversations/${id}/messages`),
+  renameChatConversation: (id, title) => request(`/chat/conversations/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
+  deleteChatConversation: (id) => request(`/chat/conversations/${id}`, { method: 'DELETE' }),
 
   // Platforms
   getPlatforms: () => request('/platforms'),

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Sparkles, User, Lightbulb, BarChart3, CalendarDays, PenLine, Tag, Image as Images } from 'lucide-react';
-import { api } from '../services/api';
+import { Send, Sparkles, User, Lightbulb, BarChart3, CalendarDays, PenLine, Tag, History, Image as Images } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import useChat from '../components/chat/useChat';
+import ConversationList from '../components/chat/ConversationList';
 import MediaSearchResults, { getMediaSearch, mediaSearchUrl } from '../components/chat/MediaSearchResults';
 
 const QUICK_PROMPTS = [
@@ -64,45 +65,27 @@ function ChatMessage({ message }) {
 }
 
 export default function AiChat() {
-  const [messages, setMessages] = useState([]);
+  const chat = useChat();
+  const { messages, sending, loading, error, conversationId } = chat;
   const [input, setInput] = useState('');
-  const [sending, setSending] = useState(false);
+  const [showHistory, setShowHistory] = useState(false); // history panel on small screens
   const navigate = useNavigate();
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
   useEffect(() => {
-    api.getChatMessages().then(r => setMessages(r.data || []));
-  }, []);
-
-  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, sending]);
 
   const sendMessage = async (text) => {
-    const msg = text || input.trim();
+    const msg = (text || input).trim();
     if (!msg || sending) return;
     setInput('');
-    setSending(true);
-
-    // Optimistic add
-    const tempUser = { id: 'tmp-' + Date.now(), role: 'user', content: msg, created_at: new Date().toISOString() };
-    setMessages(prev => [...prev, tempUser]);
-
-    try {
-      const result = await api.sendChatMessage(msg);
-      setMessages(prev => [
-        ...prev.filter(m => m.id !== tempUser.id),
-        result.user_message,
-        result.assistant_message,
-      ]);
-      // Photo searches open in the Media Library, where the results get the whole page
-      const found = getMediaSearch(result.assistant_message);
-      if (found?.results?.length) navigate(mediaSearchUrl(found));
-    } catch (e) {
-      console.error(e);
-    }
-    setSending(false);
+    const result = await chat.send(msg);
+    if (result?.failedMessage) setInput(result.failedMessage); // let them retry without retyping
+    // Photo searches open in the Media Library, where the results get the whole page
+    const found = getMediaSearch(result?.assistant_message);
+    if (found?.results?.length) navigate(mediaSearchUrl(found));
     inputRef.current?.focus();
   };
 
@@ -113,90 +96,127 @@ export default function AiChat() {
     }
   };
 
+  const pick = (id) => { chat.open(id); setShowHistory(false); };
+  const startNew = () => { chat.newChat(); setShowHistory(false); setInput(''); setTimeout(() => inputRef.current?.focus(), 0); };
+
+  const history = (
+    <ConversationList
+      activeId={conversationId}
+      onSelect={pick}
+      onNew={startNew}
+      onDeleted={(id) => { if (id === conversationId) chat.open(null); }}
+      refreshKey={chat.refreshKey}
+      disabled={sending}
+    />
+  );
+
   return (
-    <div className="h-full flex flex-col">
-      {/* Header */}
-      <div className="px-4 lg:px-8 py-4 border-b bg-white">
-        <div className="flex items-center gap-3 max-w-3xl mx-auto">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-green-400 to-pink-500 flex items-center justify-center">
-            <Sparkles className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h1 className="text-lg font-bold text-surface-900">AI Assistant</h1>
-            <p className="text-xs text-surface-400">Your personal analytics & content strategist</p>
-          </div>
-        </div>
-      </div>
+    <div className="h-full flex">
+      {/* Chat history (desktop) */}
+      <aside className="hidden md:flex w-64 shrink-0 flex-col border-r bg-white p-3">{history}</aside>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 lg:px-8 py-6">
-        <div className="max-w-3xl mx-auto space-y-6">
-          {messages.map(msg => (
-            <ChatMessage key={msg.id} message={msg} />
-          ))}
-
-          {sending && (
-            <div className="flex gap-3">
-              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-green-400 to-pink-500 flex items-center justify-center shrink-0">
-                <Sparkles className="w-4 h-4 text-white" />
-              </div>
-              <div className="bg-white border border-surface-200 rounded-2xl rounded-bl-md px-4 py-3">
-                <div className="flex gap-1.5">
-                  <div className="w-2 h-2 rounded-full bg-brand-300 animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <div className="w-2 h-2 rounded-full bg-brand-300 animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <div className="w-2 h-2 rounded-full bg-brand-300 animate-bounce" style={{ animationDelay: '300ms' }} />
-                </div>
-              </div>
+      <div className="flex-1 min-w-0 flex flex-col">
+        {/* Header */}
+        <div className="px-4 lg:px-8 py-4 border-b bg-white">
+          <div className="flex items-center gap-3 max-w-3xl mx-auto">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-green-400 to-pink-500 flex items-center justify-center">
+              <Sparkles className="w-5 h-5 text-white" />
             </div>
-          )}
-
-          {/* Quick prompts (show when few messages) */}
-          {messages.length <= 1 && (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-4">
-              {QUICK_PROMPTS.map(({ icon: Icon, label, prompt }) => (
-                <button
-                  key={label}
-                  onClick={() => sendMessage(prompt)}
-                  className="card-hover p-3 text-left group"
-                >
-                  <Icon className="w-4 h-4 text-brand-400 mb-2 group-hover:text-brand-500" />
-                  <span className="text-xs font-medium text-surface-700">{label}</span>
-                </button>
-              ))}
+            <div className="flex-1 min-w-0">
+              <h1 className="text-lg font-bold text-surface-900">AI Assistant</h1>
+              <p className="text-xs text-surface-400">Your personal analytics & content strategist</p>
             </div>
-          )}
-
-          <div ref={messagesEndRef} />
-        </div>
-      </div>
-
-      {/* Input */}
-      <div className="px-4 lg:px-8 py-4 border-t bg-white">
-        <div className="max-w-3xl mx-auto">
-          <div className="flex gap-2">
-            <div className="flex-1 relative">
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Ask about analytics, content ideas — or describe photos to find…"
-                rows={1}
-                className="input resize-none pr-12 py-3"
-                style={{ minHeight: '48px', maxHeight: '120px' }}
-              />
-            </div>
-            <button
-              onClick={() => sendMessage()}
-              disabled={!input.trim() || sending}
-              className="btn-primary px-4"
-            >
-              <Send className="w-4 h-4" />
+            <button className="md:hidden btn-secondary text-xs" onClick={() => setShowHistory(v => !v)}>
+              <History className="w-4 h-4" /> History
             </button>
           </div>
-          <p className="text-[10px] text-surface-300 mt-1.5 text-center">
-            AI responses are based on your analytics data. For production, connect OpenAI or Claude API for real-time intelligence.
-          </p>
+        </div>
+
+        {showHistory && <div className="md:hidden border-b bg-white p-3 max-h-[60vh] flex flex-col">{history}</div>}
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto px-4 lg:px-8 py-6">
+          <div className="max-w-3xl mx-auto space-y-6">
+            {loading && <p className="text-xs text-surface-400 text-center">Loading chat…</p>}
+            {!loading && messages.length === 0 && (
+              <div className="flex gap-3">
+                <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-green-400 to-pink-500 flex items-center justify-center shrink-0">
+                  <Sparkles className="w-4 h-4 text-white" />
+                </div>
+                <div className="max-w-[80%] rounded-2xl rounded-bl-md px-4 py-3 bg-white border border-surface-200 text-sm text-surface-800">
+                  Hey! I'm your AI assistant for GlowStack. I can help with analytics, content planning, finding photos in your library, and more. What would you like to work on?
+                </div>
+              </div>
+            )}
+            {messages.map(msg => (
+              <ChatMessage key={msg.id} message={msg} />
+            ))}
+
+            {sending && (
+              <div className="flex gap-3">
+                <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-green-400 to-pink-500 flex items-center justify-center shrink-0">
+                  <Sparkles className="w-4 h-4 text-white" />
+                </div>
+                <div className="bg-white border border-surface-200 rounded-2xl rounded-bl-md px-4 py-3">
+                  <div className="flex gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-brand-300 animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <div className="w-2 h-2 rounded-full bg-brand-300 animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <div className="w-2 h-2 rounded-full bg-brand-300 animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {error && <p role="alert" className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-2">{error}</p>}
+
+            {/* Quick prompts for a fresh chat */}
+            {!loading && messages.length === 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-4">
+                {QUICK_PROMPTS.map(({ icon: Icon, label, prompt }) => (
+                  <button
+                    key={label}
+                    onClick={() => sendMessage(prompt)}
+                    className="card-hover p-3 text-left group"
+                  >
+                    <Icon className="w-4 h-4 text-brand-400 mb-2 group-hover:text-brand-500" />
+                    <span className="text-xs font-medium text-surface-700">{label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div ref={messagesEndRef} />
+          </div>
+        </div>
+
+        {/* Input */}
+        <div className="px-4 lg:px-8 py-4 border-t bg-white">
+          <div className="max-w-3xl mx-auto">
+            <div className="flex gap-2">
+              <div className="flex-1 relative">
+                <textarea
+                  ref={inputRef}
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Ask about analytics, content ideas — or describe photos to find…"
+                  rows={1}
+                  className="input resize-none pr-12 py-3"
+                  style={{ minHeight: '48px', maxHeight: '120px' }}
+                />
+              </div>
+              <button
+                onClick={() => sendMessage()}
+                disabled={!input.trim() || sending}
+                className="btn-primary px-4"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-[10px] text-surface-300 mt-1.5 text-center">
+              Chats are saved to your history. Photo searches open in the Media Library.
+            </p>
+          </div>
         </div>
       </div>
     </div>

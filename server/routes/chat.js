@@ -19,15 +19,9 @@ async function generateAiResponse(userId, message, history) {
   return text || null;
 }
 
-// In-memory chat history for demo
-const chatHistory = [
-  {
-    id: 'msg0',
-    role: 'assistant',
-    content: "Hey! I'm your AI assistant for GlowStack. I can help you with analytics, content planning, media management, and more. What would you like to work on?",
-    created_at: new Date(Date.now() - 3600000).toISOString(),
-  },
-];
+// In-memory store used when Supabase isn't configured (local demo mode)
+const demoConversations = []; // { id, user_id, title, created_at, updated_at, last_message_at }
+const demoMessages = [];      // { id, conversation_id, user_id, role, content, tool_calls, created_at }
 
 // Simple AI response generator for demo
 function generateResponse(message) {
@@ -78,39 +72,186 @@ function generateResponse(message) {
   };
 }
 
-// GET /api/chat/messages
-router.get('/messages', async (req, res) => {
+// ─── Conversations ─────────────────────────────────────────────────────────────
+
+const DEFAULT_TITLE = 'New chat';
+const uid = req => req.userId || 'default';
+
+/** First words of the opening message, trimmed at a word boundary. */
+function titleFrom(message) {
+  const text = String(message).replace(/\s+/g, ' ').trim();
+  if (text.length <= 48) return text || DEFAULT_TITLE;
+  const cut = text.slice(0, 48);
+  return `${cut.slice(0, Math.max(cut.lastIndexOf(' '), 24))}…`;
+}
+
+// ilike patterns: neutralise the wildcard characters in user input
+const likeTerm = q => String(q).replace(/[%_\\,()]/g, ' ').trim();
+
+async function getConversation(userId, id) {
+  if (!isSupabaseConfigured()) return demoConversations.find(c => c.id === id && c.user_id === userId) || null;
+  if (!/^[0-9a-f-]{36}$/i.test(String(id))) return null;
+  const { data, error } = await supabase.from('chat_conversations').select('*').eq('id', id).eq('user_id', userId).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+async function createConversation(userId, title = DEFAULT_TITLE) {
+  if (!isSupabaseConfigured()) {
+    const now = new Date().toISOString();
+    const row = { id: 'conv-' + Date.now() + Math.random().toString(36).slice(2, 6), user_id: userId, title, created_at: now, updated_at: now, last_message_at: now };
+    demoConversations.push(row);
+    return row;
+  }
+  const { data, error } = await supabase.from('chat_conversations').insert({ user_id: userId, title }).select().single();
+  if (error) throw error;
+  return data;
+}
+
+async function listMessages(conversationId, { limit = 500, newestFirst = false } = {}) {
+  if (!isSupabaseConfigured()) {
+    const rows = demoMessages.filter(m => m.conversation_id === conversationId);
+    return (newestFirst ? rows.slice(-limit) : rows.slice(0, limit));
+  }
+  const q = supabase.from('chat_messages').select('*').eq('conversation_id', conversationId).order('created_at', { ascending: !newestFirst }).limit(limit);
+  const { data, error } = await q;
+  if (error) throw error;
+  return newestFirst ? (data || []).reverse() : (data || []);
+}
+
+// GET /api/chat/conversations?q=  — recent chats, or a search over titles and message text
+router.get('/conversations', async (req, res) => {
   try {
+    const userId = uid(req);
+    const q = likeTerm(req.query.q || '');
+    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+
     if (!isSupabaseConfigured()) {
-      return res.json({ data: chatHistory });
+      let rows = demoConversations.filter(c => c.user_id === userId);
+      if (q) {
+        const needle = q.toLowerCase();
+        rows = rows.filter(c => c.title.toLowerCase().includes(needle) || demoMessages.some(m => m.conversation_id === c.id && m.content.toLowerCase().includes(needle)));
+      }
+      return res.json({ data: rows.sort((a, b) => b.last_message_at.localeCompare(a.last_message_at)).slice(0, limit) });
     }
 
-    const { data, error } = await supabase
-      .from('chat_messages')
-      .select('*')
-      .order('created_at', { ascending: true })
-      .limit(100);
+    if (!q) {
+      const { data, error } = await supabase.from('chat_conversations').select('*').eq('user_id', userId).order('last_message_at', { ascending: false }).limit(limit);
+      if (error) throw error;
+      return res.json({ data });
+    }
+
+    const [titleHits, messageHits] = await Promise.all([
+      supabase.from('chat_conversations').select('*').eq('user_id', userId).ilike('title', `%${q}%`).limit(limit),
+      supabase.from('chat_messages').select('conversation_id, content, created_at').eq('user_id', userId).ilike('content', `%${q}%`).not('conversation_id', 'is', null).order('created_at', { ascending: false }).limit(300),
+    ]);
+    if (titleHits.error) throw titleHits.error;
+    if (messageHits.error) throw messageHits.error;
+
+    // best (most recent) matching message per conversation, shown as a snippet
+    const snippets = new Map();
+    for (const m of messageHits.data || []) {
+      if (snippets.has(m.conversation_id)) continue;
+      const at = m.content.toLowerCase().indexOf(q.toLowerCase());
+      const start = Math.max(0, at - 30);
+      snippets.set(m.conversation_id, `${start ? '…' : ''}${m.content.slice(start, start + 110).replace(/\s+/g, ' ')}${m.content.length > start + 110 ? '…' : ''}`);
+    }
+    const byId = new Map((titleHits.data || []).map(c => [c.id, c]));
+    const missing = [...snippets.keys()].filter(id => !byId.has(id));
+    if (missing.length) {
+      const { data, error } = await supabase.from('chat_conversations').select('*').eq('user_id', userId).in('id', missing);
+      if (error) throw error;
+      (data || []).forEach(c => byId.set(c.id, c));
+    }
+    const rows = [...byId.values()]
+      .map(c => ({ ...c, snippet: snippets.get(c.id) || null }))
+      .sort((a, b) => b.last_message_at.localeCompare(a.last_message_at))
+      .slice(0, limit);
+    res.json({ data: rows });
+  } catch (err) {
+    console.error('Chat conversations error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/chat/conversations — start an empty chat
+router.post('/conversations', async (req, res) => {
+  try {
+    res.json({ data: await createConversation(uid(req)) });
+  } catch (err) {
+    console.error('Chat create error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/chat/conversations/:id — rename
+router.patch('/conversations/:id', async (req, res) => {
+  try {
+    const userId = uid(req);
+    const title = String(req.body?.title || '').replace(/\s+/g, ' ').trim().slice(0, 100);
+    if (!title) return res.status(400).json({ error: 'Title required' });
+    const convo = await getConversation(userId, req.params.id);
+    if (!convo) return res.status(404).json({ error: 'Conversation not found' });
+    if (!isSupabaseConfigured()) { convo.title = title; return res.json({ data: convo }); }
+    const { data, error } = await supabase.from('chat_conversations').update({ title, updated_at: new Date().toISOString() }).eq('id', convo.id).eq('user_id', userId).select().single();
     if (error) throw error;
-    res.json({ data: data?.length ? data : chatHistory });
+    res.json({ data });
+  } catch (err) {
+    console.error('Chat rename error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/chat/conversations/:id — removes the chat and its messages
+router.delete('/conversations/:id', async (req, res) => {
+  try {
+    const userId = uid(req);
+    const convo = await getConversation(userId, req.params.id);
+    if (!convo) return res.status(404).json({ error: 'Conversation not found' });
+    if (!isSupabaseConfigured()) {
+      demoConversations.splice(demoConversations.indexOf(convo), 1);
+      for (let i = demoMessages.length - 1; i >= 0; i--) if (demoMessages[i].conversation_id === convo.id) demoMessages.splice(i, 1);
+      return res.json({ ok: true });
+    }
+    const { error } = await supabase.from('chat_conversations').delete().eq('id', convo.id).eq('user_id', userId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Chat delete error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/chat/conversations/:id/messages
+router.get('/conversations/:id/messages', async (req, res) => {
+  try {
+    const convo = await getConversation(uid(req), req.params.id);
+    if (!convo) return res.status(404).json({ error: 'Conversation not found' });
+    res.json({ conversation: convo, data: await listMessages(convo.id) });
   } catch (err) {
     console.error('Chat messages error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// POST /api/chat/send
+// POST /api/chat/send  { message, conversation_id? } — starts a new chat when no id is given
 router.post('/send', async (req, res) => {
   try {
-    const { message } = req.body;
+    const { message, conversation_id: conversationId } = req.body;
     if (!message) return res.status(400).json({ error: 'Message required' });
-    const userId = req.userId || 'default';
+    const userId = uid(req);
+
+    let convo = null;
+    if (conversationId) {
+      convo = await getConversation(userId, conversationId);
+      if (!convo) return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    // Only this conversation's recent messages are context for the model
+    const history = convo ? await listMessages(convo.id, { limit: 10, newestFirst: true }) : [];
 
     let aiResponse = null;
     try {
-      const history = isSupabaseConfigured()
-        ? (await supabase.from('chat_messages').select('role, content, tool_calls').order('created_at', { ascending: false }).limit(10)).data?.reverse() || []
-        : chatHistory.slice(-10);
-
       // Asking to find photos/videos runs the library search instead of a plain chat reply
       if (isSupabaseConfigured()) {
         const lastAssistant = [...history].reverse().find(m => m.role === 'assistant');
@@ -149,42 +290,59 @@ router.post('/send', async (req, res) => {
     // Fall back to the keyword-based stub if no Chat AI is configured or the call failed
     if (!aiResponse) aiResponse = generateResponse(message);
 
+    // The chat is created only once there is an answer to keep, so a failed first
+    // message (e.g. worker offline) doesn't leave an empty conversation behind
+    if (!convo) convo = await createConversation(userId, titleFrom(message));
+    else if (convo.title === DEFAULT_TITLE) convo.title = titleFrom(message);
+    const now = new Date().toISOString();
+
     if (!isSupabaseConfigured()) {
-      const userMsg = {
-        id: 'msg-' + Date.now(), role: 'user', content: message,
-        created_at: new Date().toISOString(),
-      };
+      const userMsg = { id: 'msg-' + Date.now(), conversation_id: convo.id, user_id: userId, role: 'user', content: message, created_at: now };
       const assistantMsg = {
-        id: 'msg-' + (Date.now() + 1), role: 'assistant', content: aiResponse.content,
-        tool_calls: aiResponse.tool_calls || null, created_at: new Date().toISOString(),
+        id: 'msg-' + (Date.now() + 1), conversation_id: convo.id, user_id: userId, role: 'assistant', content: aiResponse.content,
+        tool_calls: aiResponse.tool_calls || null, created_at: new Date(Date.now() + 1).toISOString(),
       };
-      chatHistory.push(userMsg, assistantMsg);
-      return res.json({ user_message: userMsg, assistant_message: assistantMsg });
+      demoMessages.push(userMsg, assistantMsg);
+      Object.assign(convo, { title: convo.title, updated_at: now, last_message_at: now });
+      return res.json({ conversation: convo, user_message: userMsg, assistant_message: assistantMsg });
     }
 
-    // Store user message
     const { data: userMsg, error: userErr } = await supabase
       .from('chat_messages')
-      .insert({ role: 'user', content: message })
-      .select()
-      .single();
+      .insert({ conversation_id: convo.id, user_id: userId, role: 'user', content: message })
+      .select().single();
     if (userErr) throw userErr;
 
-    // Store AI response
     const { data: assistantMsg, error: aiErr } = await supabase
       .from('chat_messages')
-      .insert({
-        role: 'assistant',
-        content: aiResponse.content,
-        tool_calls: aiResponse.tool_calls || null,
-      })
-      .select()
-      .single();
+      .insert({ conversation_id: convo.id, user_id: userId, role: 'assistant', content: aiResponse.content, tool_calls: aiResponse.tool_calls || null })
+      .select().single();
     if (aiErr) throw aiErr;
 
-    res.json({ user_message: userMsg, assistant_message: assistantMsg });
+    const { data: updated, error: convoErr } = await supabase
+      .from('chat_conversations')
+      .update({ title: convo.title, updated_at: now, last_message_at: now })
+      .eq('id', convo.id).eq('user_id', userId)
+      .select().single();
+    if (convoErr) throw convoErr;
+
+    res.json({ conversation: updated, user_message: userMsg, assistant_message: assistantMsg });
   } catch (err) {
     console.error('Chat send error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/chat/messages — legacy: the most recent conversation's messages
+router.get('/messages', async (req, res) => {
+  try {
+    const userId = uid(req);
+    const recent = isSupabaseConfigured()
+      ? (await supabase.from('chat_conversations').select('*').eq('user_id', userId).order('last_message_at', { ascending: false }).limit(1)).data?.[0]
+      : demoConversations.filter(c => c.user_id === userId).sort((a, b) => b.last_message_at.localeCompare(a.last_message_at))[0];
+    res.json({ data: recent ? await listMessages(recent.id) : [] });
+  } catch (err) {
+    console.error('Chat messages error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
