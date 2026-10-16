@@ -5,6 +5,7 @@ import {
   ChevronLeft, ChevronRight as ChevronRightIcon, ChevronsLeft, ChevronsRight, Scissors,
   Trash2, CheckSquare, Square, Check, Loader2
 } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../services/api';
 import GooglePhotosBrowser from '../components/google-photos/GooglePhotosBrowser';
 import VideoBreakdown from '../components/VideoBreakdown';
@@ -326,7 +327,11 @@ export default function MediaLibrary() {
   const [media, setMedia] = useState([]);
   const [tags, setTags] = useState([]);
   const [search, setSearch] = useState('');
-  const [activeFilter, setActiveFilter] = useState({});
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [activeFilter, setActiveFilter] = useState(() => {
+    const tag = searchParams.get('tag');
+    return tag ? { tag } : {};
+  });
   const [selectedAsset, setSelectedAsset] = useState(null);
   const [viewMode, setViewMode] = useState('grid');
   const [showFilters, setShowFilters] = useState(false);
@@ -342,12 +347,26 @@ export default function MediaLibrary() {
   const [uploadProgress, setUploadProgress] = useState(''); // status text
   const fileInputRef = React.useRef(null);
 
+  const urlTag = searchParams.get('tag');
+  useEffect(() => {
+    if ((activeFilter.tag || null) === urlTag) return;
+    const next = new URLSearchParams(searchParams);
+    if (activeFilter.tag) next.set('tag', activeFilter.tag); else next.delete('tag');
+    setSearchParams(next, { replace: true });
+  }, [activeFilter.tag]);
+  useEffect(() => {
+    setActiveFilter(f => ((f.tag || null) === urlTag ? f : { ...f, tag: urlTag || undefined }));
+  }, [urlTag]);
+
   const totalPages = Math.max(1, Math.ceil(totalAssets / PAGE_SIZE));
 
   const fetchMedia = (params = {}) => {
     const offset = ((params.page || page) - 1) * PAGE_SIZE;
     const queryParams = { ...activeFilter, limit: PAGE_SIZE, offset, ...params };
     delete queryParams.page;
+    for (const key of Object.keys(queryParams)) {
+      if (queryParams[key] === undefined || queryParams[key] === null || queryParams[key] === '') delete queryParams[key];
+    }
     if (search) queryParams.search = search;
     api.getMedia(queryParams).then(r => {
       setMedia(r.data || []);
@@ -609,6 +628,21 @@ export default function MediaLibrary() {
           </div>
         </div>
       </div>
+
+      {activeFilter.tag && (() => {
+        const activeTag = tags.find(t => t.id === activeFilter.tag);
+        const clearTag = () => setActiveFilter(f => ({ ...f, tag: undefined }));
+        return (
+          <div className="flex items-center gap-2 mb-4 text-sm">
+            <span className="text-surface-500">Showing assets tagged</span>
+            <span className="badge text-white" style={{ backgroundColor: activeTag?.color || '#ec4899' }}>
+              {activeTag?.name || '…'}
+              <button type="button" className="ml-1.5 leading-none" onClick={clearTag} aria-label="Clear tag filter">×</button>
+            </span>
+            <button type="button" className="text-xs text-surface-400 hover:text-surface-600 underline" onClick={clearTag}>Show all assets</button>
+          </div>
+        );
+      })()}
 
       {/* Filter Panel */}
       {showFilters && (

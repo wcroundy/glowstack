@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Tags, Plus, Trash2, Sparkles, Loader2, AlertCircle,
   CheckCircle2, Hash, Palette, FolderOpen, Wand2, X, DollarSign, CreditCard,
   ThumbsUp, ThumbsDown, Lightbulb, Check, Image as ImageIcon, History, Clock,
-  Pencil, ChevronDown,
+  Pencil, ChevronDown, Search,
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -81,6 +82,7 @@ export default function TagsManager() {
 
   // Filter
   const [filterCategory, setFilterCategory] = useState('');
+  const [tagSearch, setTagSearch] = useState('');
 
   useEffect(() => {
     loadTags();
@@ -470,14 +472,16 @@ export default function TagsManager() {
     }
   };
 
-  const filteredTags = filterCategory
-    ? tags.filter(t => t.category === filterCategory)
-    : tags;
-
   const categoryLabel = (cat) => {
     if (cat === 'ai_suggested') return 'AI Suggested';
     return categories.find(c => c.name === cat)?.label || cat;
   };
+
+  const searchTerm = tagSearch.trim().toLowerCase();
+  const filteredTags = tags.filter(t =>
+    (!filterCategory || t.category === filterCategory) &&
+    (!searchTerm || t.name.toLowerCase().includes(searchTerm) || categoryLabel(t.category || 'custom').toLowerCase().includes(searchTerm))
+  );
 
   // Group tags by category for display
   const groupedTags = {};
@@ -662,6 +666,35 @@ export default function TagsManager() {
         </div>
       )}
 
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400" />
+        <input
+          type="text"
+          className="input pl-10 pr-9"
+          placeholder="Search tags by name or category…"
+          aria-label="Search tags"
+          value={tagSearch}
+          onChange={e => setTagSearch(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Escape') setTagSearch(''); }}
+        />
+        {tagSearch && (
+          <button
+            type="button"
+            onClick={() => setTagSearch('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-surface-400 hover:text-surface-600"
+            aria-label="Clear search"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+      {searchTerm && (
+        <p className="text-xs text-surface-500 -mt-3">
+          {filteredTags.length} of {tags.length} tag{tags.length === 1 ? '' : 's'} match “{tagSearch.trim()}”
+        </p>
+      )}
+
       {/* Category Filter + Management */}
       <div className="space-y-3">
         <div className="flex items-center gap-2 flex-wrap">
@@ -801,13 +834,18 @@ export default function TagsManager() {
         <div className="card p-12 text-center">
           <Tags className="w-10 h-10 text-surface-300 mx-auto mb-3" />
           <h3 className="font-semibold text-surface-700 mb-1">
-            {tags.length === 0 ? 'No tags yet' : 'No tags in this category'}
+            {tags.length === 0 ? 'No tags yet' : searchTerm ? `No tags match “${tagSearch.trim()}”` : 'No tags in this category'}
           </h3>
           <p className="text-sm text-surface-400 mb-4">
             {tags.length === 0
               ? 'Create your first tag to start organizing your media assets.'
-              : 'Try selecting a different category filter.'}
+              : searchTerm
+                ? 'Try a different search, or clear it to see every tag.'
+                : 'Try selecting a different category filter.'}
           </p>
+          {searchTerm && (
+            <button onClick={() => setTagSearch('')} className="btn-secondary text-sm">Clear search</button>
+          )}
           {tags.length === 0 && (
             <button onClick={() => setShowCreate(true)} className="btn-primary text-sm">
               <Plus className="w-4 h-4" /> Create First Tag
@@ -906,20 +944,24 @@ export default function TagsManager() {
                       key={tag.id}
                       className="card px-4 py-3 flex items-center justify-between group hover:shadow-md transition-shadow"
                     >
-                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <Link
+                        to={`/media?tag=${tag.id}`}
+                        title={`View assets tagged ${tag.name}`}
+                        className="flex items-center gap-3 min-w-0 flex-1 group/link"
+                      >
                         <div
                           className="w-3 h-3 rounded-full flex-shrink-0"
                           style={{ backgroundColor: tag.color || '#ec4899' }}
                         />
                         <div className="min-w-0 flex-1">
-                          <p className="font-medium text-sm text-surface-800 truncate">{tag.name}</p>
+                          <p className="font-medium text-sm text-surface-800 truncate group-hover/link:text-brand-600">{tag.name}</p>
                           <p className="text-xs text-surface-400">
                             {tag.usage_count || 0} asset{(tag.usage_count || 0) !== 1 ? 's' : ''}
                             <span className="mx-1">·</span>
                             {categoryLabel(tag.category || 'custom')}
                           </p>
                         </div>
-                      </div>
+                      </Link>
 
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
                         <button
