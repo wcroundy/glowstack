@@ -36,7 +36,15 @@ async function request(path, options = {}) {
 
 export const api = {
   // Media
-  getMedia: (params) => request(`/media?${new URLSearchParams(params)}`),
+  getMedia: (params) => {
+    // Array values become repeated params (?search=a&search=b)
+    const qs = new URLSearchParams();
+    for (const [key, value] of Object.entries(params || {})) {
+      if (Array.isArray(value)) value.forEach(v => qs.append(key, v));
+      else qs.append(key, value);
+    }
+    return request(`/media?${qs}`);
+  },
   getMediaCounts: () => request('/media/counts'),
   getMediaById: (id) => request(`/media/${id}`),
   suggestMedia: (tagIds, limit = 12) => request(`/media/suggest?${new URLSearchParams({ tags: tagIds, limit })}`),

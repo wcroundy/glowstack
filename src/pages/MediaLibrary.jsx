@@ -323,15 +323,29 @@ function MediaDetail({ asset, onClose }) {
 
 const PAGE_SIZE = 50;
 
+// URL → criteria. `tag` is the older single-tag form (still used by Tag Manager links).
+function parseTagIds(params) {
+  const ids = [params.get('tag'), ...(params.get('tags') || '').split(',')].map(t => (t || '').trim()).filter(Boolean);
+  return [...new Set(ids)];
+}
+function parseTerms(params) {
+  return [...new Set((params.get('q') || '').split(',').map(t => t.trim()).filter(Boolean))];
+}
+
 export default function MediaLibrary() {
   const [media, setMedia] = useState([]);
   const [tags, setTags] = useState([]);
-  const [search, setSearch] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
-  const [activeFilter, setActiveFilter] = useState(() => {
-    const tag = searchParams.get('tag');
-    return tag ? { tag } : {};
-  });
+  // Active criteria: tags (all must match) + text terms (all must match) + the
+  // type/source/favorite filters. `draft` is text still being typed in the search box;
+  // it filters live as an extra term until Enter/comma turns it into a chip.
+  const [tagIds, setTagIds] = useState(() => parseTagIds(searchParams));
+  const [terms, setTerms] = useState(() => parseTerms(searchParams));
+  const [draft, setDraft] = useState('');
+  const [debouncedDraft, setDebouncedDraft] = useState('');
+  const [suggestIndex, setSuggestIndex] = useState(-1);
+  const [inputFocused, setInputFocused] = useState(false);
+  const [activeFilter, setActiveFilter] = useState({});
   const [selectedAsset, setSelectedAsset] = useState(null);
   const [viewMode, setViewMode] = useState('grid');
   const [showFilters, setShowFilters] = useState(false);
@@ -347,27 +361,102 @@ export default function MediaLibrary() {
   const [uploadProgress, setUploadProgress] = useState(''); // status text
   const fileInputRef = React.useRef(null);
 
-  const urlTag = searchParams.get('tag');
+  // Keep tags/terms in the URL (shareable, survives refresh), and follow the URL when
+  // it changes from outside (e.g. a tag link from Tag Manager).
+  const urlTagsKey = parseTagIds(searchParams).join(',');
+  const urlTermsKey = parseTerms(searchParams).join(',');
   useEffect(() => {
-    if ((activeFilter.tag || null) === urlTag) return;
+    if (tagIds.join(',') === urlTagsKey && terms.join(',') === urlTermsKey) return;
     const next = new URLSearchParams(searchParams);
-    if (activeFilter.tag) next.set('tag', activeFilter.tag); else next.delete('tag');
+    next.delete('tag');
+    if (tagIds.length) next.set('tags', tagIds.join(',')); else next.delete('tags');
+    if (terms.length) next.set('q', terms.join(',')); else next.delete('q');
     setSearchParams(next, { replace: true });
-  }, [activeFilter.tag]);
+  }, [tagIds, terms]);
   useEffect(() => {
-    setActiveFilter(f => ((f.tag || null) === urlTag ? f : { ...f, tag: urlTag || undefined }));
-  }, [urlTag]);
+    const urlTagIds = urlTagsKey ? urlTagsKey.split(',') : [];
+    const urlTerms = urlTermsKey ? urlTermsKey.split(',') : [];
+    setTagIds(cur => (cur.join(',') === urlTagsKey ? cur : urlTagIds));
+    setTerms(cur => (cur.join(',') === urlTermsKey ? cur : urlTerms));
+  }, [urlTagsKey, urlTermsKey]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedDraft(draft.trim()), 250);
+    return () => clearTimeout(t);
+  }, [draft]);
+
+  const searchTerms = debouncedDraft ? [...terms, debouncedDraft] : terms;
+  const searchKey = JSON.stringify([searchTerms, tagIds]);
+
+  const addTag = (id) => {
+    setTagIds(cur => (cur.includes(id) ? cur : [...cur, id]));
+    setDraft('');
+    setDebouncedDraft('');
+    setSuggestIndex(-1);
+  };
+  const removeTag = (id) => setTagIds(cur => cur.filter(t => t !== id));
+  const addTerm = (raw) => {
+    const value = raw.trim();
+    if (!value) return;
+    // Typing a tag's exact name is the same as picking that tag
+    const exact = tags.find(t => t.name.toLowerCase() === value.toLowerCase());
+    if (exact) return addTag(exact.id);
+    setTerms(cur => (cur.some(t => t.toLowerCase() === value.toLowerCase()) ? cur : [...cur, value]));
+    setDraft('');
+    setDebouncedDraft('');
+    setSuggestIndex(-1);
+  };
+  const removeTerm = (term) => setTerms(cur => cur.filter(t => t !== term));
+  const clearAllCriteria = () => { setTagIds([]); setTerms([]); setDraft(''); setDebouncedDraft(''); };
+
+  const draftLower = draft.trim().toLowerCase();
+  const suggestions = draftLower
+    ? tags
+        .filter(t => !tagIds.includes(t.id) && t.name.toLowerCase().includes(draftLower))
+        .sort((x, y) => {
+          const xs = x.name.toLowerCase().startsWith(draftLower) ? 0 : 1;
+          const ys = y.name.toLowerCase().startsWith(draftLower) ? 0 : 1;
+          return xs - ys || (y.usage_count || 0) - (x.usage_count || 0);
+        })
+        .slice(0, 8)
+    : [];
+
+  const handleSearchKeyDown = (e) => {
+    if (e.key === 'ArrowDown' && suggestions.length) {
+      e.preventDefault();
+      setSuggestIndex(i => (i + 1) % suggestions.length);
+    } else if (e.key === 'ArrowUp' && suggestions.length) {
+      e.preventDefault();
+      setSuggestIndex(i => (i <= 0 ? suggestions.length - 1 : i - 1));
+    } else if (e.key === 'Enter' || e.key === ',') {
+      if (e.key === ',' && !draft.trim()) return e.preventDefault();
+      e.preventDefault();
+      if (suggestIndex >= 0 && suggestions[suggestIndex]) addTag(suggestions[suggestIndex].id);
+      else addTerm(draft);
+    } else if (e.key === 'Backspace' && !draft) {
+      // Backspace in an empty box peels off the most recent chip
+      if (terms.length || tagIds.length) {
+        e.preventDefault();
+        // chips are shown tags-first, so the last chip is the last term, else the last tag
+        if (terms.length) setTerms(cur => cur.slice(0, -1)); else setTagIds(cur => cur.slice(0, -1));
+      }
+    } else if (e.key === 'Escape') {
+      setDraft('');
+      setSuggestIndex(-1);
+    }
+  };
 
   const totalPages = Math.max(1, Math.ceil(totalAssets / PAGE_SIZE));
 
   const fetchMedia = (params = {}) => {
     const offset = ((params.page || page) - 1) * PAGE_SIZE;
     const queryParams = { ...activeFilter, limit: PAGE_SIZE, offset, ...params };
+    if (tagIds.length) queryParams.tags = tagIds.join(',');
     delete queryParams.page;
     for (const key of Object.keys(queryParams)) {
       if (queryParams[key] === undefined || queryParams[key] === null || queryParams[key] === '') delete queryParams[key];
     }
-    if (search) queryParams.search = search;
+    if (searchTerms.length) queryParams.search = searchTerms;
     api.getMedia(queryParams).then(r => {
       setMedia(r.data || []);
       setTotalAssets(r.total || 0);
@@ -385,7 +474,7 @@ export default function MediaLibrary() {
   useEffect(() => {
     setPage(1);
     fetchMedia({ page: 1 });
-  }, [search, activeFilter]);
+  }, [searchKey, activeFilter]);
 
   // Page change
   useEffect(() => {
@@ -600,10 +689,42 @@ export default function MediaLibrary() {
           <input
             type="text"
             className="input pl-10"
-            placeholder="Search by title, tags, AI description, products..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
+            placeholder={tagIds.length || terms.length ? 'Add another tag or search term…' : 'Search by title, tags, AI description, products…'}
+            value={draft}
+            onChange={e => { setDraft(e.target.value); setSuggestIndex(-1); }}
+            onKeyDown={handleSearchKeyDown}
+            onFocus={() => setInputFocused(true)}
+            onBlur={() => setTimeout(() => setInputFocused(false), 150)}
+            aria-label="Search media"
+            autoComplete="off"
           />
+          {inputFocused && draftLower && (
+            <div className="absolute z-20 left-0 right-0 mt-1 card p-1 shadow-lg max-h-72 overflow-auto">
+              {suggestions.map((tag, i) => (
+                <button
+                  key={tag.id}
+                  type="button"
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={() => addTag(tag.id)}
+                  className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm text-left ${i === suggestIndex ? 'bg-brand-50' : 'hover:bg-surface-50'}`}
+                >
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: tag.color || '#ec4899' }} />
+                  <span className="flex-1 truncate">{tag.name}</span>
+                  <span className="text-xs text-surface-400">tag{tag.usage_count ? ` · ${tag.usage_count}` : ''}</span>
+                </button>
+              ))}
+              <button
+                type="button"
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => addTerm(draft)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm text-left hover:bg-surface-50"
+              >
+                <Search className="w-3.5 h-3.5 text-surface-400 shrink-0" />
+                <span className="flex-1 truncate">Search text for “{draft.trim()}”</span>
+                <span className="text-xs text-surface-400">Enter</span>
+              </button>
+            </div>
+          )}
         </div>
         <div className="flex gap-2">
           <button
@@ -629,20 +750,30 @@ export default function MediaLibrary() {
         </div>
       </div>
 
-      {activeFilter.tag && (() => {
-        const activeTag = tags.find(t => t.id === activeFilter.tag);
-        const clearTag = () => setActiveFilter(f => ({ ...f, tag: undefined }));
-        return (
-          <div className="flex items-center gap-2 mb-4 text-sm">
-            <span className="text-surface-500">Showing assets tagged</span>
-            <span className="badge text-white" style={{ backgroundColor: activeTag?.color || '#ec4899' }}>
-              {activeTag?.name || '…'}
-              <button type="button" className="ml-1.5 leading-none" onClick={clearTag} aria-label="Clear tag filter">×</button>
+      {(tagIds.length > 0 || terms.length > 0) && (
+        <div className="flex flex-wrap items-center gap-2 mb-4 text-sm">
+          <span className="text-surface-500">Showing assets matching</span>
+          {tagIds.map(id => {
+            const tag = tags.find(t => t.id === id);
+            return (
+              <span key={id} className="badge text-white" style={{ backgroundColor: tag?.color || '#ec4899' }}>
+                {tag?.name || '…'}
+                <button type="button" className="ml-1.5 leading-none" onClick={() => removeTag(id)} aria-label={`Remove tag ${tag?.name || ''}`}>×</button>
+              </span>
+            );
+          })}
+          {terms.map(term => (
+            <span key={term} className="badge bg-surface-200 text-surface-700">
+              “{term}”
+              <button type="button" className="ml-1.5 leading-none" onClick={() => removeTerm(term)} aria-label={`Remove search term ${term}`}>×</button>
             </span>
-            <button type="button" className="text-xs text-surface-400 hover:text-surface-600 underline" onClick={clearTag}>Show all assets</button>
-          </div>
-        );
-      })()}
+          ))}
+          <button type="button" className="text-xs text-surface-400 hover:text-surface-600 underline" onClick={clearAllCriteria}>
+            {tagIds.length + terms.length > 1 ? 'Clear all' : 'Show all assets'}
+          </button>
+          <span className="text-xs text-surface-400 ml-auto">{totalAssets} match{totalAssets === 1 ? '' : 'es'}</span>
+        </div>
+      )}
 
       {/* Filter Panel */}
       {showFilters && (
@@ -694,9 +825,9 @@ export default function MediaLibrary() {
               {tags.slice(0, 15).map(tag => (
                 <button
                   key={tag.id}
-                  className={`badge cursor-pointer transition-colors ${activeFilter.tag === tag.id ? 'text-white' : 'bg-surface-100 text-surface-600 hover:bg-surface-200'}`}
-                  style={activeFilter.tag === tag.id ? { backgroundColor: tag.color, color: 'white' } : {}}
-                  onClick={() => setActiveFilter(f => ({ ...f, tag: f.tag === tag.id ? undefined : tag.id }))}
+                  className={`badge cursor-pointer transition-colors ${tagIds.includes(tag.id) ? 'text-white' : 'bg-surface-100 text-surface-600 hover:bg-surface-200'}`}
+                  style={tagIds.includes(tag.id) ? { backgroundColor: tag.color, color: 'white' } : {}}
+                  onClick={() => (tagIds.includes(tag.id) ? removeTag(tag.id) : addTag(tag.id))}
                 >
                   {tag.name}
                 </button>

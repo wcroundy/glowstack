@@ -18,8 +18,9 @@ router.get('/', async (req, res) => {
     if (!isSupabaseConfigured()) {
       let assets = [...demoMedia];
       const { search, tag, tags, type, source, favorite, sort } = req.query;
-      if (search) {
-        const q = search.toLowerCase();
+      // `search` may repeat; every term must match (AND)
+      for (const term of [].concat(search || [])) {
+        const q = String(term).toLowerCase();
         assets = assets.filter(a =>
           (a.title || '').toLowerCase().includes(q) ||
           (a.ai_description || '').toLowerCase().includes(q) ||
@@ -86,7 +87,13 @@ router.get('/', async (req, res) => {
       .is('parent_asset_id', null);
 
     requiredTagIds.forEach((id, i) => { query = query.eq(`tagfilter${i}.tag_id`, id); });
-    if (search) query = query.or(`title.ilike.%${search}%,ai_description.ilike.%${search}%`);
+    // `search` may repeat (?search=a&search=b); each term must match the title or
+    // description, and chained .or() calls are ANDed together. Characters that are
+    // syntax in a PostgREST filter string are dropped from the term.
+    for (const term of [].concat(search || [])) {
+      const safe = String(term).replace(/[,()%*\\"]/g, ' ').trim();
+      if (safe) query = query.or(`title.ilike.%${safe}%,ai_description.ilike.%${safe}%`);
+    }
     if (type) query = query.eq('file_type', type);
     if (source) query = query.eq('source', source);
     if (favorite === 'true') query = query.eq('is_favorite', true);
