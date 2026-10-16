@@ -179,12 +179,12 @@ export const api = {
   deleteTagCategory: (id) => request(`/tags/categories/${id}`, { method: 'DELETE' }),
 
   // AI Auto-Tag
-  aiAutoTag: ({ assetIds, untaggedOnly, limit, offset } = {}) => request('/ai/auto-tag', { method: 'POST', body: JSON.stringify({ assetIds, untaggedOnly, limit, offset }) }),
+  aiAutoTag: ({ assetIds, untaggedOnly, tagIds, limit, offset } = {}) => request('/ai/auto-tag', { method: 'POST', body: JSON.stringify({ assetIds, untaggedOnly, tagIds, limit, offset }) }),
   aiAcceptSuggestedTags: (tags) => request('/ai/accept-suggested-tags', { method: 'POST', body: JSON.stringify({ tags }) }),
 
   // Auto-Tag Run History
   getAutoTagRuns: (limit) => request(`/tags/auto-tag-runs?${new URLSearchParams({ limit: limit || 20 })}`),
-  createAutoTagRun: (scope) => request('/tags/auto-tag-runs', { method: 'POST', body: JSON.stringify({ scope }) }),
+  createAutoTagRun: (scope, tagIds) => request('/tags/auto-tag-runs', { method: 'POST', body: JSON.stringify({ scope, tag_ids: tagIds }) }),
   updateAutoTagRun: (id, data) => request(`/tags/auto-tag-runs/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
 
   // Meta (Instagram + Facebook)

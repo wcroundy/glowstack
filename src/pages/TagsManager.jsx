@@ -4,7 +4,7 @@ import {
   Tags, Plus, Trash2, Sparkles, Loader2, AlertCircle,
   CheckCircle2, Hash, Palette, FolderOpen, Wand2, X, DollarSign, CreditCard,
   ThumbsUp, ThumbsDown, Lightbulb, Check, Image as ImageIcon, History, Clock,
-  Pencil, ChevronDown, Search,
+  Pencil, ChevronDown, Search, ScanSearch,
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -15,6 +15,12 @@ const TAG_COLORS = [
 ];
 
 // Fallback categories if API fails or during loading
+// A tag is "new" until it has been checked against the whole library — never run on
+// older photos, or its AI instructions changed since the last time it was.
+const isNewTag = (t) => !t.last_library_run_at
+  || (t.instructions_updated_at && Date.parse(t.instructions_updated_at) > Date.parse(t.last_library_run_at));
+const MAX_TARGET_TAGS = 25;
+
 const DEFAULT_CATEGORIES = [
   { name: 'content_type', label: 'Content Type', color: '#3b82f6', is_default: true },
   { name: 'aesthetic', label: 'Aesthetic', color: '#ec4899', is_default: true },
@@ -35,6 +41,7 @@ export default function TagsManager() {
   const [newName, setNewName] = useState('');
   const [newColor, setNewColor] = useState('#ec4899');
   const [newCategory, setNewCategory] = useState('custom');
+  const [newInstructions, setNewInstructions] = useState('');
   const [creating, setCreating] = useState(false);
 
   // Delete confirmation
@@ -47,7 +54,9 @@ export default function TagsManager() {
   const [showAutoTagConfirm, setShowAutoTagConfirm] = useState(false);
   const [assetCount, setAssetCount] = useState(null);
   const [untaggedCount, setUntaggedCount] = useState(null);
-  const [autoTagScope, setAutoTagScope] = useState('untagged'); // 'all' | 'untagged'
+  const [autoTagScope, setAutoTagScope] = useState('untagged'); // 'all' | 'untagged' | 'tags'
+  const [selectedTagIds, setSelectedTagIds] = useState([]); // for 'tags' scope
+  const [tagPickerSearch, setTagPickerSearch] = useState('');
   const [showQuotaError, setShowQuotaError] = useState(false);
   const [quotaErrorMessage, setQuotaErrorMessage] = useState('');
   const [quotaErrorProvider, setQuotaErrorProvider] = useState('openai');
@@ -77,7 +86,7 @@ export default function TagsManager() {
 
   // Tag editing (full edit: name, color, category)
   const [editingTagId, setEditingTagId] = useState(null);
-  const [editTagData, setEditTagData] = useState({ name: '', color: '', category: '' });
+  const [editTagData, setEditTagData] = useState({ name: '', color: '', category: '', ai_instructions: '' });
   const [savingTag, setSavingTag] = useState(false);
 
   // Filter
@@ -161,12 +170,12 @@ export default function TagsManager() {
 
   const startEditTag = (tag) => {
     setEditingTagId(tag.id);
-    setEditTagData({ name: tag.name, color: tag.color || '#ec4899', category: tag.category || 'custom' });
+    setEditTagData({ name: tag.name, color: tag.color || '#ec4899', category: tag.category || 'custom', ai_instructions: tag.ai_instructions || '' });
   };
 
   const cancelEditTag = () => {
     setEditingTagId(null);
-    setEditTagData({ name: '', color: '', category: '' });
+    setEditTagData({ name: '', color: '', category: '', ai_instructions: '' });
   };
 
   const handleSaveTag = async (tagId) => {
@@ -178,9 +187,15 @@ export default function TagsManager() {
         name: editTagData.name.trim(),
         color: editTagData.color,
         category: editTagData.category,
+        ai_instructions: editTagData.ai_instructions.trim(),
       };
       await api.updateTag(tagId, updates);
-      setTags(prev => prev.map(t => t.id === tagId ? { ...t, ...updates } : t));
+      // New instructions make the tag "new" again until it's re-run on the library
+      setTags(prev => prev.map(t => {
+        if (t.id !== tagId) return t;
+        const changed = (t.ai_instructions || '') !== updates.ai_instructions;
+        return { ...t, ...updates, ai_instructions: updates.ai_instructions || null, ...(changed ? { instructions_updated_at: new Date().toISOString() } : {}) };
+      }));
       setEditingTagId(null);
     } catch (err) {
       setError(err.message?.includes('duplicate') ? 'A tag with that name already exists' : 'Failed to update tag');
@@ -195,11 +210,12 @@ export default function TagsManager() {
     setCreating(true);
     setError('');
     try {
-      const tag = await api.createTag({ name: newName.trim(), color: newColor, category: newCategory });
+      const tag = await api.createTag({ name: newName.trim(), color: newColor, category: newCategory, ai_instructions: newInstructions.trim() });
       setTags(prev => [tag, ...prev]);
       setNewName('');
       setNewColor('#ec4899');
       setNewCategory('custom');
+      setNewInstructions('');
       setShowCreate(false);
     } catch (err) {
       setError('Failed to create tag');
@@ -243,7 +259,7 @@ export default function TagsManager() {
 
   const [countsLoading, setCountsLoading] = useState(false);
 
-  const promptAutoTag = async () => {
+  const promptAutoTag = async (scope) => {
     // Show modal immediately, then load counts in background
     setAssetCount(null);
     setUntaggedCount(null);
@@ -262,7 +278,13 @@ export default function TagsManager() {
       setVideoCount(counts.videos || 0);
       setSceneThumbnailCount(counts.totalSceneThumbnails || 0);
       setImageOnlyCount(counts.images || 0);
-      setAutoTagScope(counts.untagged > 0 ? 'untagged' : 'all');
+      if (scope === 'tags') {
+        setAutoTagScope('tags');
+        setSelectedTagIds(tags.filter(isNewTag).slice(0, MAX_TARGET_TAGS).map(t => t.id));
+        setTagPickerSearch('');
+      } else {
+        setAutoTagScope(counts.untagged > 0 ? 'untagged' : 'all');
+      }
     } catch (err) {
       setError('Failed to get asset count');
       setShowAutoTagConfirm(false);
@@ -288,6 +310,7 @@ export default function TagsManager() {
     setRetryNotice('');
 
     const scopeCount = autoTagScope === 'untagged' ? untaggedCount : assetCount;
+    const targetTagIds = autoTagScope === 'tags' ? selectedTagIds : undefined;
     let totalProcessed = 0;
     let totalTagged = 0;
     let totalNewTags = 0;
@@ -299,7 +322,7 @@ export default function TagsManager() {
     // Create a run record
     let runId = null;
     try {
-      const run = await api.createAutoTagRun(autoTagScope);
+      const run = await api.createAutoTagRun(autoTagScope, targetTagIds);
       runId = run.id;
     } catch (_) {} // non-critical
 
@@ -311,7 +334,8 @@ export default function TagsManager() {
         try {
           result = await api.aiAutoTag({
             untaggedOnly: autoTagScope === 'untagged',
-            limit: BATCH_SIZE,
+            tagIds: targetTagIds,
+            limit: targetTagIds ? 40 : BATCH_SIZE,
             offset,
           });
         } catch (batchErr) {
@@ -373,7 +397,9 @@ export default function TagsManager() {
         totalNewTags,
         aiPowered: true,
         suggestedTags: finalSuggestions,
-        message: `AI analyzed ${totalProcessed.toLocaleString()} assets and applied ${totalNewTags.toLocaleString()} tags to ${totalTagged.toLocaleString()} assets`,
+        message: targetTagIds
+          ? `AI checked ${totalProcessed.toLocaleString()} assets for ${targetTagIds.length} tag${targetTagIds.length === 1 ? '' : 's'} and applied ${totalNewTags.toLocaleString()} tags to ${totalTagged.toLocaleString()} assets`
+          : `AI analyzed ${totalProcessed.toLocaleString()} assets and applied ${totalNewTags.toLocaleString()} tags to ${totalTagged.toLocaleString()} assets`,
       };
 
       setAutoTagResult(finalResult);
@@ -387,7 +413,7 @@ export default function TagsManager() {
           total_images_tagged: totalTagged,
           total_tags_applied: totalNewTags,
           suggested_tags_count: finalSuggestions.length,
-        }).catch(() => {});
+        }).catch(() => {}).finally(() => { loadTags(); loadHistory(); }); // completing the run marks targeted tags as checked
       }
       loadHistory();
 
@@ -506,7 +532,7 @@ export default function TagsManager() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={promptAutoTag}
+            onClick={() => promptAutoTag()}
             disabled={autoTagging || tags.length === 0}
             className="btn-secondary text-sm flex items-center gap-2"
           >
@@ -524,6 +550,24 @@ export default function TagsManager() {
           </button>
         </div>
       </div>
+
+      {/* New tags that older photos were never checked for */}
+      {!autoTagging && (() => {
+        const fresh = tags.filter(isNewTag);
+        if (!fresh.length) return null;
+        return (
+          <div className="card p-4 flex flex-col sm:flex-row sm:items-center gap-3 border-brand-200 bg-brand-50/50">
+            <ScanSearch className="w-5 h-5 text-brand-500 shrink-0" />
+            <div className="flex-1 text-sm text-surface-700">
+              <span className="font-medium">{fresh.length} new tag{fresh.length === 1 ? '' : 's'}</span> {fresh.length === 1 ? "hasn't" : "haven't"} been checked against your existing photos yet:{' '}
+              <span className="text-surface-500">{fresh.slice(0, 6).map(t => t.name).join(', ')}{fresh.length > 6 ? `, +${fresh.length - 6} more` : ''}</span>
+            </div>
+            <button onClick={() => promptAutoTag('tags')} className="btn-primary text-sm whitespace-nowrap">
+              <Wand2 className="w-4 h-4" /> Check library for {fresh.length === 1 ? 'it' : 'these'}
+            </button>
+          </div>
+        );
+      })()}
 
       {/* Batch Progress */}
       {autoTagging && batchProgress && (
@@ -640,6 +684,21 @@ export default function TagsManager() {
                   ))}
                 </div>
               </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-surface-500 mb-1.5">
+                <Sparkles className="w-3 h-3 inline mr-1" />What should AI look for? <span className="font-normal text-surface-400">(optional)</span>
+              </label>
+              <textarea
+                value={newInstructions}
+                onChange={e => setNewInstructions(e.target.value)}
+                rows={2}
+                maxLength={500}
+                placeholder="Describe it the way you'd explain it to an assistant, e.g. “the pink Blush Basics logo hoodie — not other pink sweatshirts”"
+                className="input w-full text-sm"
+              />
+              <p className="text-[11px] text-surface-400 mt-1">Use this for things AI wouldn't know from the name alone: your own products, people, places, or how you define a style.</p>
             </div>
 
             <div className="flex items-center gap-2 pt-1">
@@ -898,6 +957,16 @@ export default function TagsManager() {
                         ))}
                       </div>
 
+                      <textarea
+                        value={editTagData.ai_instructions}
+                        onChange={e => setEditTagData(d => ({ ...d, ai_instructions: e.target.value }))}
+                        rows={2}
+                        maxLength={500}
+                        placeholder="What should AI look for? (optional)"
+                        className="input w-full text-xs"
+                        aria-label="What should AI look for"
+                      />
+
                       {/* Category + actions */}
                       <div className="flex items-center gap-2">
                         <select
@@ -954,7 +1023,15 @@ export default function TagsManager() {
                           style={{ backgroundColor: tag.color || '#ec4899' }}
                         />
                         <div className="min-w-0 flex-1">
-                          <p className="font-medium text-sm text-surface-800 truncate group-hover/link:text-brand-600">{tag.name}</p>
+                          <p className="font-medium text-sm text-surface-800 truncate group-hover/link:text-brand-600 flex items-center gap-1.5">
+                            <span className="truncate">{tag.name}</span>
+                            {tag.ai_instructions && (
+                              <span title={`AI looks for: ${tag.ai_instructions}`} className="shrink-0 text-brand-400"><Sparkles className="w-3 h-3" /></span>
+                            )}
+                            {isNewTag(tag) && (
+                              <span title="Not yet checked against your existing photos" className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-brand-600 bg-brand-50 px-1.5 rounded">New</span>
+                            )}
+                          </p>
                           <p className="text-xs text-surface-400">
                             {tag.usage_count || 0} asset{(tag.usage_count || 0) !== 1 ? 's' : ''}
                             <span className="mx-1">·</span>
@@ -1045,9 +1122,9 @@ export default function TagsManager() {
                       <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
                         run.scope === 'untagged'
                           ? 'bg-blue-50 text-blue-600'
-                          : 'bg-purple-50 text-purple-600'
+                          : run.scope === 'tags' ? 'bg-amber-50 text-amber-700' : 'bg-purple-50 text-purple-600'
                       }`}>
-                        {run.scope === 'untagged' ? 'Untagged only' : 'All images'}
+                        {run.scope === 'untagged' ? 'Untagged only' : run.scope === 'tags' ? `${run.tag_ids?.length || ''} specific tag${run.tag_ids?.length === 1 ? '' : 's'}` : 'All images'}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right text-surface-700 tabular-nums">
@@ -1245,6 +1322,13 @@ export default function TagsManager() {
       {/* AI Auto-Tag Confirmation Modal */}
       {showAutoTagConfirm && (() => {
         const scopeCount = autoTagScope === 'untagged' ? (untaggedCount || 0) : (assetCount || 0);
+        const pickerTerm = tagPickerSearch.trim().toLowerCase();
+        const pickerTags = tags
+          .filter(t => !pickerTerm || t.name.toLowerCase().includes(pickerTerm) || selectedTagIds.includes(t.id))
+          .sort((a, b) => (isNewTag(b) - isNewTag(a)) || (selectedTagIds.includes(b.id) - selectedTagIds.includes(a.id)) || a.name.localeCompare(b.name))
+          .slice(0, 60);
+        const toggleTarget = (id) => setSelectedTagIds(cur => cur.includes(id) ? cur.filter(x => x !== id) : cur.length >= MAX_TARGET_TAGS ? cur : [...cur, id]);
+        const blocked = scopeCount === 0 || (autoTagScope === 'tags' && selectedTagIds.length === 0);
         return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => !countsLoading && setShowAutoTagConfirm(false)}>
           <div className="bg-white rounded-2xl max-w-md w-full shadow-xl" onClick={e => e.stopPropagation()}>
@@ -1281,7 +1365,7 @@ export default function TagsManager() {
               {/* Scope toggle */}
               <div className="space-y-2">
                 <p className="text-xs font-medium text-surface-500">Tag which assets?</p>
-                <div className="flex gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   <button
                     onClick={() => setAutoTagScope('untagged')}
                     className={`flex-1 text-sm px-3 py-2.5 rounded-xl border font-medium transition-colors ${
@@ -1304,13 +1388,58 @@ export default function TagsManager() {
                     All assets
                     <span className="block text-xs font-normal mt-0.5 opacity-70">{(assetCount || 0).toLocaleString()} assets</span>
                   </button>
+                  <button
+                    onClick={() => { setAutoTagScope('tags'); if (!selectedTagIds.length) setSelectedTagIds(tags.filter(isNewTag).slice(0, MAX_TARGET_TAGS).map(t => t.id)); }}
+                    className={`flex-1 text-sm px-3 py-2.5 rounded-xl border font-medium transition-colors ${
+                      autoTagScope === 'tags'
+                        ? 'border-brand-300 bg-brand-50 text-brand-700'
+                        : 'border-surface-200 bg-white text-surface-600 hover:bg-surface-50'
+                    }`}
+                  >
+                    Specific tags
+                    <span className="block text-xs font-normal mt-0.5 opacity-70">all assets</span>
+                  </button>
                 </div>
               </div>
 
+              {autoTagScope === 'tags' && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-medium text-surface-500">Check every asset for these tags</p>
+                    <span className="text-xs text-surface-400">{selectedTagIds.length}/{MAX_TARGET_TAGS} selected</span>
+                  </div>
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-surface-400" />
+                    <input
+                      value={tagPickerSearch}
+                      onChange={e => setTagPickerSearch(e.target.value)}
+                      placeholder="Find a tag…"
+                      aria-label="Find a tag to include"
+                      className="input pl-8 py-1.5 text-xs"
+                    />
+                  </div>
+                  <div className="max-h-48 overflow-y-auto border border-surface-200 rounded-xl divide-y divide-surface-100">
+                    {pickerTags.length === 0 && <p className="text-xs text-surface-400 px-3 py-2">No tags match.</p>}
+                    {pickerTags.map(t => (
+                      <label key={t.id} className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-surface-50">
+                        <input type="checkbox" checked={selectedTagIds.includes(t.id)} onChange={() => toggleTarget(t.id)} />
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: t.color || '#ec4899' }} />
+                        <span className="truncate flex-1">{t.name}</span>
+                        {isNewTag(t) && <span className="text-[10px] font-semibold uppercase text-brand-600">New</span>}
+                        {t.ai_instructions && <Sparkles className="w-3 h-3 text-brand-400 shrink-0" title={t.ai_instructions} />}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <p className="text-sm text-surface-700">
+                {autoTagScope === 'tags' ? (
+                  <>This will check all <span className="font-semibold">{scopeCount.toLocaleString()}</span> assets for just the {selectedTagIds.length} selected tag{selectedTagIds.length === 1 ? '' : 's'}, about 8 photos per AI request, using each tag's “what to look for” notes. Tags already on assets are kept.</>
+                ) : (<>
                 This will analyze <span className="font-semibold">{scopeCount.toLocaleString()}</span> asset{scopeCount !== 1 ? 's' : ''} using
-                your connected Media Analysis AI (set up in Integrations) and apply matching tags from your tag library.
-                {videoCount > 0 && (
+                your connected Media Analysis AI (set up in Integrations) and apply matching tags from your tag library.</>)}
+                {videoCount > 0 && autoTagScope !== 'tags' && (
                   <span className="text-surface-500"> Videos are analyzed using all their scene thumbnails for more accurate tagging.</span>
                 )}
               </p>
@@ -1321,7 +1450,8 @@ export default function TagsManager() {
                 const totalImages = imageOnlyCount + sceneThumbnailCount;
                 const avgScenesPerVideo = videoCount > 0 ? sceneThumbnailCount / videoCount : 0;
                 // Rough proportion: if tagging a subset, scale images accordingly
-                const estimatedImages = scopeCount === assetCount
+                // Targeted runs look at one image per asset (a video's cover frame)
+                const estimatedImages = autoTagScope === 'tags' ? scopeCount : scopeCount === assetCount
                   ? totalImages
                   : Math.round(scopeCount * (totalImages / Math.max(assetCount, 1)));
                 return (
@@ -1343,7 +1473,7 @@ export default function TagsManager() {
               <div className="flex items-center gap-3 pt-2">
                 <button
                   onClick={handleAutoTag}
-                  disabled={scopeCount === 0}
+                  disabled={blocked}
                   className="btn-primary text-sm flex-1 flex items-center justify-center gap-2"
                 >
                   <Sparkles className="w-4 h-4" />

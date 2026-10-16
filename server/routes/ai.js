@@ -2,6 +2,7 @@ import { generateContentIdeas } from './contentKnowledge.js';
 import { Router } from 'express';
 import { supabase, isSupabaseConfigured } from '../services/supabase.js';
 import { demoMedia, demoInsights } from '../services/demoData.js';
+import { tagAssetsForTags, describeTags } from '../services/targetedTagging.js';
 import * as aiProviders from '../services/aiProviders.js';
 
 const router = Router();
@@ -119,7 +120,22 @@ router.post('/auto-tag', async (req, res) => {
     const userId = req.userId || 'default';
     const visionConfig = await aiProviders.getVisionConfig(userId);
 
-    const { assetIds, untaggedOnly, limit = 50, offset = 0 } = req.body; // optional filters
+    const { assetIds, untaggedOnly, tagIds, limit = 50, offset = 0 } = req.body; // optional filters
+
+    // Targeted run: every asset, but only for the chosen tags (e.g. ones added since the
+    // library was last tagged). Several photos per AI call, so it's much cheaper.
+    if (Array.isArray(tagIds) && tagIds.length) {
+      if (!visionConfig) return res.status(400).json({ error: 'ai_not_configured', message: 'Connect an AI vision provider in Integrations to auto-tag.' });
+      const targetedLimit = Math.min(parseInt(limit) || 40, visionConfig.transport === 'mcp' ? 16 : 48);
+      try {
+        return res.json(await tagAssetsForTags(userId, { tagIds, limit: targetedLimit, offset: parseInt(offset) || 0 }));
+      } catch (err) {
+        const partial = err.partial || {};
+        console.error('Targeted auto-tag error:', err.message);
+        const status = err.code?.startsWith('ai_mcp_') ? 503 : err.code === 'ai_insufficient_quota' ? 402 : err.code === 'ai_rate_limited' ? 429 : 500;
+        return res.status(status).json({ error: err.code || 'auto_tag_failed', message: err.message, provider: err.provider, ...partial });
+      }
+    }
     const batchLimit = Math.min(parseInt(limit) || 50, visionConfig?.transport === 'mcp' ? 1 : 100);
     const batchOffset = parseInt(offset) || 0;
 
@@ -250,7 +266,10 @@ Return a JSON object with two arrays:
 
 Be generous with existing tag matching. For suggested tags, focus on specific, reusable beauty/fashion categories that would help organize a media library. Don't suggest tags that are too similar to existing ones.`;
 
-          const userText = `Existing tags: ${tagList}\n\nFilename: ${asset.file_name}\nTitle: ${asset.title || ''}${isVideo ? `\nThis is a video with ${imageCount} scene thumbnail${imageCount !== 1 ? 's' : ''}.` : ''}\n\nReturn JSON with "existing" matches and "suggested" new tags.`;
+          // Tags the creator defined: what the AI should look for, which it may not infer from the name
+          const defined = allTags.filter(t => t.ai_instructions);
+          const definitions = defined.length ? `\n\nTag definitions from the creator (apply these tags exactly as defined):\n${describeTags(defined)}` : '';
+          const userText = `Existing tags: ${tagList}${definitions}\n\nFilename: ${asset.file_name}\nTitle: ${asset.title || ''}${isVideo ? `\nThis is a video with ${imageCount} scene thumbnail${imageCount !== 1 ? 's' : ''}.` : ''}\n\nReturn JSON with "existing" matches and "suggested" new tags.`;
 
           const { text: content } = await aiProviders.visionComplete(userId, {
             systemPrompt, userText, imageUrls, maxTokens: 500, temperature: 0.3,
@@ -433,6 +452,8 @@ router.post('/accept-suggested-tags', async (req, res) => {
           name: suggestion.name,
           color: suggestion.color || '#6366f1',
           category: suggestion.category || 'ai_suggested',
+          // Born from a run over the library, so not "new" for targeted re-runs
+          last_library_run_at: new Date().toISOString(),
         })
         .select()
         .single();

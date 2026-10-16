@@ -25,21 +25,33 @@ router.get('/', async (req, res) => {
   }
 });
 
+// What the AI should look for when applying a tag (optional, plain text)
+function cleanInstructions(value) {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 500);
+  return text || null;
+}
+
 // POST /api/tags
 router.post('/', async (req, res) => {
   try {
     const { name, color, category } = req.body;
     if (!name) return res.status(400).json({ error: 'Name is required' });
+    const instructions = cleanInstructions(req.body.ai_instructions);
 
     if (!isSupabaseConfigured()) {
-      const tag = { id: 't-' + Date.now(), name, color: color || '#ec4899', category: category || 'custom' };
+      const tag = { id: 't-' + Date.now(), name, color: color || '#ec4899', category: category || 'custom', ai_instructions: instructions, last_library_run_at: null };
       demoTags.push(tag);
       return res.json(tag);
     }
 
     const { data, error } = await supabase
       .from('tags')
-      .insert({ name, color: color || '#ec4899', category: category || 'custom' })
+      // last_library_run_at stays NULL: a new tag hasn't been checked against older photos
+      .insert({
+        name, color: color || '#ec4899', category: category || 'custom',
+        ai_instructions: instructions,
+        instructions_updated_at: instructions ? new Date().toISOString() : null,
+      })
       .select()
       .single();
     if (error) throw error;
@@ -77,9 +89,10 @@ router.post('/auto-tag-runs', async (req, res) => {
       return res.json({ id: 'demo-run' });
     }
     const { scope } = req.body;
+    const tagIds = Array.isArray(req.body.tag_ids) ? req.body.tag_ids.filter(id => /^[0-9a-f-]{36}$/i.test(id)).slice(0, 50) : null;
     const { data, error } = await supabase
       .from('auto_tag_runs')
-      .insert({ scope: scope || 'all', status: 'running' })
+      .insert({ scope: scope || 'all', status: 'running', tag_ids: tagIds?.length ? tagIds : null })
       .select()
       .single();
     if (error) throw error;
@@ -97,7 +110,8 @@ router.patch('/auto-tag-runs/:id', async (req, res) => {
       return res.json({ message: 'Updated (demo)' });
     }
     const { id } = req.params;
-    const updates = req.body; // status, total_images_processed, total_images_tagged, etc.
+    const ALLOWED = ['status', 'total_images_processed', 'total_images_tagged', 'total_tags_applied', 'suggested_tags_count', 'accepted_tags_count', 'ai_powered', 'error_message'];
+    const updates = Object.fromEntries(Object.entries(req.body || {}).filter(([k]) => ALLOWED.includes(k)));
     const { data, error } = await supabase
       .from('auto_tag_runs')
       .update({ ...updates, completed_at: new Date().toISOString() })
@@ -105,6 +119,18 @@ router.patch('/auto-tag-runs/:id', async (req, res) => {
       .select()
       .single();
     if (error) throw error;
+
+    // A finished run that looked at every asset marks its tags as checked against the
+    // library (as of when the run started, so edits made mid-run still count as new).
+    if (data?.status === 'completed') {
+      let mark = null;
+      if (data.tag_ids?.length) mark = supabase.from('tags').update({ last_library_run_at: data.started_at }).in('id', data.tag_ids);
+      else if (data.scope === 'all') mark = supabase.from('tags').update({ last_library_run_at: data.started_at }).lte('created_at', data.started_at);
+      if (mark) {
+        const { error: markErr } = await mark;
+        if (markErr) console.error('Marking tags as run failed:', markErr.message);
+      }
+    }
     res.json(data);
   } catch (err) {
     console.error('Auto-tag runs PATCH error:', err.message);
@@ -241,6 +267,12 @@ router.patch('/:id', async (req, res) => {
     if (req.body.name) updates.name = req.body.name;
     if (req.body.color) updates.color = req.body.color;
     if (req.body.category !== undefined) updates.category = req.body.category;
+    if (req.body.ai_instructions !== undefined) {
+      updates.ai_instructions = cleanInstructions(req.body.ai_instructions);
+      // Changed instructions make the tag "new" again until it's re-run on the library
+      const { data: current } = await supabase.from('tags').select('ai_instructions').eq('id', req.params.id).maybeSingle();
+      if ((current?.ai_instructions || null) !== updates.ai_instructions) updates.instructions_updated_at = new Date().toISOString();
+    }
     const { data, error } = await supabase
       .from('tags')
       .update(updates)
